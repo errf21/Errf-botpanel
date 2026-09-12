@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "telbotv2",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+
+  // Non-secret configuration only.
+  // Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, PASARGUARD_API_KEY)
+  // are managed with `wrangler secret put <NAME>` and live in `.dev.vars` locally.
+  "vars": {
+    "ADMIN_CHAT_ID": "",
+    "PASARGUARD_PANEL_URL": "https://zerofee.ok-exor.ir"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "telbot-db",
+      // Fill in the real id after running: npx wrangler d1 create telbot-db
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+
+  "migrations_dir": "migrations",
+
+  "observability": {
+    "enabled": true
+  }
+}

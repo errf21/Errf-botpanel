@@ -1,0 +1,11 @@
+# Copy to .dev.vars for local development. NEVER commit real values.
+# Local dev only; in production use `wrangler secret put <NAME>`.
+
+# Bot token from @BotFather
+TELEGRAM_BOT_TOKEN=
+
+# Random string you choose; Telegram echoes it in the X-Telegram-Bot-Api-Secret-Token header
+TELEGRAM_WEBHOOK_SECRET=
+
+# PasarGuard panel API key (used from Phase 5; keep empty until then)
+PASARGUARD_API_KEY=

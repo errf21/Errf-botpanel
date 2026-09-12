@@ -1,0 +1,19 @@
+{
+  "name": "telbotv2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "db:create": "wrangler d1 create telbot-db",
+    "db:migrate:local": "wrangler d1 migrations apply telbot-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply telbot-db --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260911.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}
