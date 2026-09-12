@@ -44,7 +44,11 @@ export function stepView(state: ConversationState, catalog: Catalog): StepView |
       };
     case 'WAITING_DURATION':
       return {
-        text: fa.durationPrompt(catalog.duration.minDays, catalog.duration.maxDays),
+        text: fa.durationPrompt(
+          catalog.duration.minDays,
+          catalog.duration.maxDays,
+          catalog.duration.allowCustom,
+        ),
         keyboard: durationKeyboard(enabledDurationDays(catalog), catalog.duration.allowCustom),
       };
     case 'WAITING_DEVICE_LIMIT':

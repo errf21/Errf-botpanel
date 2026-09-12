@@ -52,6 +52,12 @@ export function orderSummaryLines(order: OrderRow): string[] {
     `🆔 ${order.id}`,
     fa.summaryPrice(price),
   ];
+  // Phase 6: renewals must be unmistakable in the review queue / forwards.
+  if (order.kind === 'renewal') {
+    const serviceId =
+      typeof snapshot['renews_order_id'] === 'string' ? snapshot['renews_order_id'] : '—';
+    lines.push(fa.adminRenewalKind(serviceId));
+  }
   const name = snapshot['config_name'];
   const gb = snapshot['volume_gb'];
   const days = snapshot['duration_days'];
@@ -124,7 +130,9 @@ async function notifyCustomerOfReview(
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
   const text =
     decision === 'approve'
-      ? fa.notifyApproved(order.id, formatPrice(order.amount, order.currency))
+      ? order.kind === 'renewal'
+        ? fa.notifyApprovedRenewal(order.id, formatPrice(order.amount, order.currency))
+        : fa.notifyApproved(order.id, formatPrice(order.amount, order.currency))
       : fa.notifyRejected(order.id, reason ?? fa.adminRejectDefaultReason);
   await api.sendMessage(chatId, text);
 }

@@ -14,6 +14,7 @@ migrations/0002_phase2.sql  conversation_states + update_dedupe
 migrations/0003_phase3.sql  orders.idempotency_key + seeded catalog/pricing docs
 migrations/0004_phase4.sql  payment_info seed + admin_actions table
 migrations/0005_phase5.sql  provision_attempts/subscription_url + provisioning doc seed
+migrations/0006_phase6.sql  orders.kind/service_expires_at + renewal states & docs
 src/index.ts                Fetch router: /health, /telegram/webhook
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
 src/dispatch.ts             Update pipeline: dedupe → register → route to handlers
@@ -21,30 +22,33 @@ src/admin.ts                Admin authorization, receipt forwarding, review acti
 src/routes/health.ts        Liveness + D1 connectivity + binding status
 src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
 src/telegram/api.ts         Telegram Bot API client (token only in env)
-src/telegram/menu.ts        Callback vocabulary + keyboards (incl. admin `adm:`)
+src/telegram/menu.ts        Callback vocabulary + keyboards (incl. admin `adm:`, service `svc:`)
 src/telegram/texts.ts       All user-facing text (Persian-first), one place
 src/handlers/commands.ts    /start /cancel /help /pending /failed (admin)
-src/handlers/callbacks.ts   Menu + flow + admin-review/retry buttons (format AND allowlist)
+src/handlers/callbacks.ts   Menu + flow + service + admin-review/retry buttons (format AND allowlist)
 src/handlers/messages.ts    Text → state machine; admin reject-reason interception
 src/handlers/payment.ts     Receipt submission, payment instructions, orders/queue views
 src/handlers/provisioning.ts Phase 5 admin queue: /failed + `adm:rt` retry taps
-src/state/machine.ts        Pure conversation state machine
+src/handlers/services.ts    Phase 6 My Services: list + detail (+live panel status)
+src/handlers/renewal.ts     Phase 6 renewal ladder (duration → summary → confirm)
+src/state/machine.ts        Pure conversation state machine (incl. renewal ladder)
 src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
 src/catalog/pricing.ts      Pure integer price engine (rates + breakdown snapshot)
 src/catalog/payment.ts      Load + validate payment_info JSON (degrade-safe)
 src/catalog/provisioning.ts Load + validate provisioning-policy JSON (degrade-safe)
-src/pasarguard/client.ts    PasarGuard REST client: X-Api-Key, timeouts, typed errors
-src/provision/provision.ts  THE ONLY provisioning path: claim → pre-check → create → audit
-src/db/orders.ts            Orders: atomic create, idempotency, guarded receipt/review/provision transitions
+src/catalog/renewal.ts      Load + validate renewal-policy JSON (kill switch, degrade-safe)
+src/pasarguard/client.ts    PasarGuard REST client: X-Api-Key, timeouts, typed errors (GET/POST/PUT)
+src/provision/provision.ts  THE ONLY provisioning path: purchase-create + renewal-extend, audit
+src/db/orders.ts            Orders: atomic create, idempotency, guarded receipt/review/provision/renewal
 src/db/admin_actions.ts     Short-lived pending admin reject (reason prompt)
 src/db/customers.ts         Customers: idempotent upsert, is_admin flag, contact/admin-chat lookup
 src/db/{states,dedupe}.ts   Conversation sessions (24h TTL) + webhook replay guard
-src/orders/checkout.ts      Draft → priced → durable order (single creation path, replay-safe)
+src/orders/checkout.ts      Draft → priced → durable order (purchase + renewal, replay-safe)
 src/handlers/purchase.ts    Buy steps + summary + confirmation (values re-checked vs DB catalog)
 src/lib/security.ts         ULID order IDs, constant-time secret comparison
-src/lib/validate.ts         Payload guards: callbacks (incl. admin+ULID), media, sanitizers
+src/lib/validate.ts         Payload guards: callbacks (admin+service+ULID), media, sanitizers
 src/lib/http.ts             Response helpers
-tests/                      node --test: machine, validation, price, e2e phases 2–5
+tests/                      node --test: machine, validation, price, e2e phases 2–6
 .dev.vars.example           Template for local secrets (copy → .dev.vars)
 ```
 
@@ -198,9 +202,54 @@ configured and rejects requests with a wrong token (401).
   network writes and the order simply remains `approved` (Phase 1–4 behavior
   unchanged on every existing path).
 - The API key travels only in the `x-api-key` HTTPS header, is never logged and
-  never reaches any Telegram text. Two panel wire-format assumptions remain
-  (SI 10⁹-byte `data_limit`, `X-Api-Key` acceptance): confirm with **read-only**
-  authenticated GETs before the first real production deploy.
+  never reaches any Telegram text. The panel wire formats were re-confirmed in
+  Phase 6 directly against the dashboard's own bundles (`/statics/api-*.js`,
+  its user-edit dialog and the `+1m/+2m/+3m` quick buttons): SI `data_limit`
+  bytes, absolute unix-second `expire`, `X-Api-Key` auth. Final live proof
+  still comes from **read-only** authenticated GETs before the first real
+  production deploy.
+
+## Services & renewals model (Phase 6)
+
+- A **service IS a completed purchase order** — no separate table. The order
+  gains `kind` (`purchase|renewal`), and services carry `renew_target_unix` /
+  `service_expires_at` for exact renewal bookkeeping.
+- **My Services** (`menu:services`) lists the customer's completed purchases
+  from D1 with a local-computed status (🟢 active / ⏳ near / ‼️ expired).
+  A service **detail** optionally enriches with a live panel read
+  (`GET by-username`: panel status, absolute expire, used/total traffic) and
+  **degrades safely to the D1 snapshot when the panel key/URL is missing or
+  the call fails** — an unconfigured panel changes no existing Phase 1–5 path.
+- **Renewal is duration-only** (the Phase-6 decision): the ladder asks for 1/2/3
+  months (presets, **never custom text**) → summary → confirm → a durable
+  `kind='renewal'` order priced `ceil(days/days_per_month) × month_rate`
+  (integer, rate-snapshotted like a purchase) that reuses the SAME
+  receipt + manual admin-review pipeline. `step:back` steps out of the ladder.
+- Renewals are **always allowed** (`renewal.near_expiry_days` only lights up
+  the "soon" badge). An **expired** service renews from `now`, not from its
+  past expiry — `target = max(now, live/local expire) + days`.
+- The renewal `svc:` callbacks embed a full 28-char order id, so they get a
+  strict allowlisted pattern (`svc:(det|ref|rnw):<28>`) parsed by
+  `parseServiceCallback`; every action re-checks **ownership in the WHERE
+  clause** (`customer_id`) server-side — a forged or cross-user id is a
+  neutral toast with zero data leak.
+- Applying an approved renewal (also via `waitUntil`): one guarded claim
+  `approved→provisioning` → resolve the owned **service row** → read current
+  expire → claim an ABSOLUTE `renew_target_unix` on the renewal row **before**
+  any panel write → if the panel already shows `>= target` ADOPT it (no PUT),
+  else `PUT by-username {expire: target}` → verify `>= target` → mark the
+  renewal `completed` + book the service's local `service_expires_at`
+  **forward-only** (a late/parallel bookkeeping can never shorten it) +
+  `service_extended` audit on the service row. Failure → `failed` + retryable
+  through `/failed` exactly like a purchase; retries **converge on the already
+  claimed target** so an ambiguous write can never stack a double extension.
+  It never touches `pasarguard_user_id`/`subscription_url` (they are the
+  service's UNIQUE identity).
+- The renewal policy lives in a versioned `renewal` settings doc (0006):
+  `enabled` is a kill switch that makes the apply step + UI degrade to "not
+  available right now" with **strict fail-closed zero DB/network writes** on a
+  missing/malformed doc; the single `provisioning.enabled` flag remains the
+  one master switch over ALL panel writes (creates AND extensions).
 
 ## Roadmap
 
@@ -208,8 +257,8 @@ configured and rejects requests with a wrong token (401).
 - **Phase 2**: registration, main menu, callbacks, conversation state machine ✅
 - **Phase 3**: catalog config layer, integer pricing, buy steps → summary → idempotent order creation ✅
 - **Phase 4**: payment receipt upload + admin approval queue (manual verification) ✅
-- Phase 5 (this): PasarGuard integration + automatic provisioning (idempotent) ✅
-- Phase 6: My Services + status + renewals
+- **Phase 5**: PasarGuard integration + automatic provisioning (idempotent) ✅
+- **Phase 6**: My Services + live/snapshot status + months-only renewals ✅
 - Phase 7: support + referrals + wallet
 - Phase 8: bot personality / friendly UX
 - Phase 9: security hardening + duplicate prevention + tests

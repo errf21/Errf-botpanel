@@ -7,6 +7,7 @@ export interface OrderRow {
   id: string;
   customer_id: number;
   state: string;
+  kind: string;
   selections: string;
   amount: number;
   currency: string;
@@ -19,6 +20,9 @@ export interface OrderRow {
   pasarguard_user_id: string | null;
   subscription_url: string | null;
   service_created_at: string | null;
+  service_expires_at: string | null;
+  renews_order_id: string | null;
+  renew_target_unix: number | null;
   provision_attempts: number;
   failure_reason: string | null;
   created_at: string;
@@ -31,6 +35,10 @@ export interface NewOrderFields {
   amount: number;
   currency: string;
   idempotencyKey: string;
+  /** Phase 6: 'purchase' (default) or 'renewal'. */
+  kind?: 'purchase' | 'renewal';
+  /** Phase 6: service (purchase order) a renewal extends. */
+  renewsOrderId?: string | null;
 }
 
 export async function insertOrderWithEvent(
@@ -40,16 +48,18 @@ export async function insertOrderWithEvent(
   await db.batch([
     db
       .prepare(
-        `INSERT INTO orders (id, customer_id, state, selections, amount, currency, idempotency_key)
-         VALUES (?1, ?2, 'pending_payment', ?3, ?4, ?5, ?6)`,
+        `INSERT INTO orders (id, customer_id, state, kind, selections, amount, currency, idempotency_key, renews_order_id)
+         VALUES (?1, ?2, 'pending_payment', ?3, ?4, ?5, ?6, ?7, ?8)`,
       )
       .bind(
         order.id,
         order.customerId,
+        order.kind ?? 'purchase',
         order.selections,
         order.amount,
         order.currency,
         order.idempotencyKey,
+        order.renewsOrderId ?? null,
       ),
     db
       .prepare(
@@ -304,7 +314,7 @@ export async function claimOrderForProvisioning(
     .run();
 
   const after = await getOrderById(db, opts.orderId);
-  if (!after || after.state !== 'provisioning') return { ok: false, error: 'state_changed' };
+  if (!after) return { ok: false, error: 'not_found' };
   return { ok: true, order: after };
 }
 
@@ -354,7 +364,13 @@ export type ProvisionFinalizeOutcome =
 /** provisioning → completed. A UNIQUE clash on pasarguard_user_id is a hard stop. */
 export async function completeProvisionedOrder(
   db: D1Database,
-  opts: { orderId: string; pasarguardUserId: string | null; subscriptionUrl: string | null },
+  opts: {
+    orderId: string;
+    pasarguardUserId: string | null;
+    subscriptionUrl: string | null;
+    /** Phase 6: local expiry stamp for freshly provisioned purchases. */
+    serviceExpiresAt?: string | null;
+  },
 ): Promise<ProvisionFinalizeOutcome> {
   try {
     const updated = await db
@@ -364,11 +380,12 @@ export async function completeProvisionedOrder(
                 pasarguard_user_id = COALESCE(?2, pasarguard_user_id),
                 subscription_url = COALESCE(?3, subscription_url),
                 service_created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                service_expires_at = COALESCE(?4, service_expires_at),
                 failure_reason = NULL,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           WHERE id = ?1 AND state = 'provisioning'`,
       )
-      .bind(opts.orderId, opts.pasarguardUserId, opts.subscriptionUrl)
+      .bind(opts.orderId, opts.pasarguardUserId, opts.subscriptionUrl, opts.serviceExpiresAt ?? null)
       .run();
     if (changeCount(updated) === 0) {
       const fresh = await getOrderById(db, opts.orderId);
@@ -392,6 +409,43 @@ export async function completeProvisionedOrder(
     )
     .run();
 
+  const after = await getOrderById(db, opts.orderId);
+  if (!after) return { ok: false, error: 'not_found' };
+  return { ok: true, order: after };
+}
+
+/**
+ * provisioning → completed for a RENEWAL order. Deliberately does NOT touch
+ * pasarguard_user_id / subscription_url / service_created_at: those belong to
+ * the service (purchase) order and one service links exactly one owner row
+ * (UNIQUE guard from 0001). The extension effect is booked onto the SERVICE
+ * row via bookRenewalOnService.
+ */
+export async function completeRenewedOrder(
+  db: D1Database,
+  opts: { orderId: string; targetUnix: number | null },
+): Promise<ProvisionFinalizeOutcome> {
+  const updated = await db
+    .prepare(
+      `UPDATE orders
+          SET state = 'completed',
+              failure_reason = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?1 AND state = 'provisioning' AND kind = 'renewal'`,
+    )
+    .bind(opts.orderId)
+    .run();
+  if (changeCount(updated) === 0) {
+    const fresh = await getOrderById(db, opts.orderId);
+    return fresh ? { ok: false, error: 'state_changed' } : { ok: false, error: 'not_found' };
+  }
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
+       VALUES (?1, 'system', 'renewal_succeeded', 'provisioning', 'completed', ?2)`,
+    )
+    .bind(opts.orderId, JSON.stringify({ new_target_unix: opts.targetUnix }))
+    .run();
   const after = await getOrderById(db, opts.orderId);
   if (!after) return { ok: false, error: 'not_found' };
   return { ok: true, order: after };
@@ -446,4 +500,149 @@ export async function listOrdersFailed(
     .bind(limit)
     .all<OrderRow>();
   return result.results;
+}
+
+/* —— Phase 6: services + renewals ————————————————————————————————
+ * A "service" IS a completed purchase order (no separate table): renewal
+ * orders link back via renews_order_id. All reads here are strictly scoped
+ * by customer_id; handlers must never render a row fetched without it.
+ */
+
+/** States of a renewal order that still "occupy" the service (one at a time). */
+export const ACTIVE_RENEWAL_STATES =
+  "('pending_payment','awaiting_review','approved','provisioning')";
+
+export interface ServiceRow extends OrderRow {
+  applied_renewals: number;
+  active_renewals: number;
+}
+
+const SERVICE_AGGREGATES = `(
+   SELECT COUNT(*) FROM orders r
+    WHERE r.renews_order_id = o.id AND r.kind = 'renewal' AND r.state = 'completed'
+  ) AS applied_renewals,
+  (
+   SELECT COUNT(*) FROM orders r
+    WHERE r.renews_order_id = o.id AND r.kind = 'renewal'
+      AND r.state IN ${ACTIVE_RENEWAL_STATES}
+  ) AS active_renewals`;
+
+/** The customer's services: every completed purchase order. */
+export async function listServicesForCustomer(
+  db: D1Database,
+  customerId: number,
+  limit: number,
+): Promise<ServiceRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT o.*, ${SERVICE_AGGREGATES}
+         FROM orders o
+        WHERE o.customer_id = ?1 AND o.kind = 'purchase' AND o.state = 'completed'
+        ORDER BY o.service_created_at DESC, o.created_at DESC
+        LIMIT ?2`,
+    )
+    .bind(customerId, limit)
+    .all<ServiceRow>();
+  return result.results;
+}
+
+/** One owned completed-purchase service row, aggregates included. */
+export async function getOwnedService(
+  db: D1Database,
+  customerId: number,
+  orderId: string,
+): Promise<ServiceRow | null> {
+  return db
+    .prepare(
+      `SELECT o.*, ${SERVICE_AGGREGATES}
+         FROM orders o
+        WHERE o.id = ?1 AND o.customer_id = ?2 AND o.kind = 'purchase' AND o.state = 'completed'`,
+    )
+    .bind(orderId, customerId)
+    .first<ServiceRow>();
+}
+
+/** In-flight renewal for a service (blocks starting a second one). */
+export async function findActiveRenewalForService(
+  db: D1Database,
+  serviceOrderId: string,
+): Promise<OrderRow | null> {
+  return db
+    .prepare(
+      `SELECT * FROM orders
+        WHERE renews_order_id = ?1 AND kind = 'renewal' AND state IN ${ACTIVE_RENEWAL_STATES}
+        ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(serviceOrderId)
+    .first<OrderRow>();
+}
+
+export type RenewalTargetClaimOutcome =
+  | { ok: true; targetUnix: number | null }
+  | { ok: false; error: 'not_found' | 'state_changed' };
+
+/**
+ * Claim the ABSOLUTE renewal target on the order BEFORE the panel PUT, the
+ * same "claim then act" discipline as the username in Phase 5: replays and
+ * parallel claims converge on one stored target, so a retry can extend at
+ * most once. Returns the stored target (null only when the row vanished).
+ */
+export async function claimRenewalTarget(
+  db: D1Database,
+  opts: { orderId: string; targetUnix: number },
+): Promise<RenewalTargetClaimOutcome> {
+  const updated = await db
+    .prepare(
+      `UPDATE orders
+          SET renew_target_unix = ?2,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?1 AND kind = 'renewal' AND state = 'provisioning' AND renew_target_unix IS NULL`,
+    )
+    .bind(opts.orderId, opts.targetUnix)
+    .run();
+  if (changeCount(updated) > 0) return { ok: true, targetUnix: opts.targetUnix };
+  const fresh = await getOrderById(db, opts.orderId);
+  if (!fresh) return { ok: false, error: 'not_found' };
+  if (fresh.state !== 'provisioning') return { ok: false, error: 'state_changed' };
+  return { ok: true, targetUnix: fresh.renew_target_unix }; // someone (an earlier attempt) won — adopt
+}
+
+/**
+ * Book a completed renewal on its service row: extend the local expiry
+ * FORWARD only (a late/parallel bookkeeping write can never shorten it) and
+ * attach a `service_extended` audit event pointing at the renewal order.
+ */
+export async function bookRenewalOnService(
+  db: D1Database,
+  opts: { serviceOrderId: string; renewalOrderId: string; expiresIso: string },
+): Promise<boolean> {
+  const updated = await db
+    .prepare(
+      `UPDATE orders
+          SET service_expires_at = ?2,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?1 AND kind = 'purchase' AND state = 'completed'
+          AND (service_expires_at IS NULL OR service_expires_at < ?2)`,
+    )
+    .bind(opts.serviceOrderId, opts.expiresIso)
+    .run();
+  if (changeCount(updated) === 0) {
+    const current = await getOrderById(db, opts.serviceOrderId);
+    if (!current) return false;
+    if (current.service_expires_at !== null && current.service_expires_at >= opts.expiresIso) {
+      return true; // already extended to at least this point — converge
+    }
+    return false;
+  }
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, data)
+       VALUES (?1, 'system', 'service_extended', ?2)`,
+    )
+    .bind(
+      opts.serviceOrderId,
+      JSON.stringify({ renewal_order_id: opts.renewalOrderId, expires_at: opts.expiresIso }),
+    )
+    .run();
+  return true;
 }

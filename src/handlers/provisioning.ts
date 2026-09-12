@@ -56,9 +56,11 @@ export async function handleProvisionRetry(
     const toast =
       result.skip === 'disabled'
         ? fa.adminProvisionDisabledToast
-        : result.skip === 'unconfigured'
-          ? fa.adminPanelUnavailableToast
-          : fa.adminPanelUnavailableToast;
+        : result.skip === 'renewal_disabled'
+          ? fa.renewDisabledNotice
+          : result.skip === 'unconfigured'
+            ? fa.adminPanelUnavailableToast
+            : fa.adminPanelUnavailableToast;
     return { toast, alert: true, retireText: null };
   }
   switch (result.error) {

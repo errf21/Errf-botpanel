@@ -27,7 +27,7 @@ export const ORDER_STATES = [
 
 export type OrderState = (typeof ORDER_STATES)[number];
 
-/** Conversation state-machine states — must match the 0002 migration CHECK list. */
+/** Conversation state-machine states — must match the migration CHECK list. */
 export const CONVERSATION_STATES = [
   'IDLE',
   'BUYING',
@@ -37,6 +37,8 @@ export const CONVERSATION_STATES = [
   'WAITING_DEVICE_LIMIT',
   'WAITING_ORDER_CONFIRMATION',
   'WAITING_PAYMENT_RECEIPT',
+  'WAITING_RENEWAL_DURATION',
+  'WAITING_RENEWAL_CONFIRMATION',
 ] as const;
 
 export type ConversationState = (typeof CONVERSATION_STATES)[number];
@@ -51,6 +53,8 @@ export interface StateData {
   order_token?: string;
   /** Set only after a durable order row exists. */
   order_id?: string;
+  /** Phase 6: purchase order (service) a renewal draft extends. */
+  renews_order_id?: string;
   [key: string]: unknown;
 }
 

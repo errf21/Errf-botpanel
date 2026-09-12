@@ -3,6 +3,7 @@ import {
   extractCallbackTarget,
   isValidCallbackData,
   parseAdminCallback,
+  parseServiceCallback,
 } from '../lib/validate.ts';
 import {
   CB,
@@ -25,6 +26,14 @@ import { answerProvisionRetry, handleProvisionRetry } from './provisioning.ts';
 import { isBusy, reduce } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { showMyOrders } from './payment.ts';
+import { refreshOwnedService, showMyServices, viewOwnedService } from './services.ts';
+import {
+  applyRenewalDuration,
+  confirmRenewal,
+  renewalGoBack,
+  resumeRenewal,
+  startRenewal,
+} from './renewal.ts';
 import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
@@ -63,6 +72,26 @@ export async function handleCallback(
     return;
   }
 
+  // ———— Phase 6: service callbacks (each handler re-checks OWNERSHIP) ————
+  if (data.startsWith('svc:')) {
+    const parsed = parseServiceCallback(data);
+    if (!parsed) {
+      await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+      return;
+    }
+    if (parsed.action === 'det') {
+      await viewOwnedService(ctx, callbackQueryId, parsed.orderId);
+      return;
+    }
+    if (parsed.action === 'ref') {
+      await refreshOwnedService(ctx, callbackQueryId, parsed.orderId, messageChatId, messageId);
+      return;
+    }
+    const renewSession = await getSession(ctx.db, ctx.customerId);
+    await startRenewal(ctx, renewSession, parsed.orderId, callbackQueryId);
+    return;
+  }
+
   const session = await getSession(ctx.db, ctx.customerId);
 
   const replyToMenu = async (text: string): Promise<void> => {
@@ -80,6 +109,23 @@ export async function handleCallback(
   if (route.kind === 'option') {
     const kind: StepKind =
       route.namespace === 'vol' ? 'volume' : route.namespace === 'dur' ? 'duration' : 'device';
+
+    // Phase 6: the same `dur:` vocabulary powers the renewal ladder; the
+    // session state alone decides which flow a tap belongs to.
+    if (kind === 'duration' && session.state === 'WAITING_RENEWAL_DURATION') {
+      if (route.value === 'custom') {
+        await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+        return;
+      }
+      const loaded = await loadCatalog(ctx.db);
+      if (!loaded.ok) {
+        await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+        return;
+      }
+      await applyRenewalDuration(ctx, session, loaded.catalog, route.value, callbackQueryId);
+      return;
+    }
+
     if (session.state !== STEP_EXPECTED_STATE[kind]) {
       await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
       return;
@@ -141,6 +187,11 @@ export async function handleCallback(
           await sendSummary(ctx, session, loaded.catalog);
         } else if (session.state === 'WAITING_PAYMENT_RECEIPT') {
           await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
+        } else if (
+          session.state === 'WAITING_RENEWAL_DURATION' ||
+          session.state === 'WAITING_RENEWAL_CONFIRMATION'
+        ) {
+          await resumeRenewal(ctx, session, loaded.catalog);
         } else {
           const view = stepView(session.state, loaded.catalog);
           if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
@@ -162,6 +213,8 @@ export async function handleCallback(
         await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
         return;
       }
+      // Phase 6: renewal confirmation steps back into the duration ladder.
+      if (await renewalGoBack(ctx, session, loaded.catalog, callbackQueryId) === 'handled') return;
       await goBack(ctx, session, loaded.catalog, callbackQueryId);
       return;
     }
@@ -172,13 +225,20 @@ export async function handleCallback(
         await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
         return;
       }
+      if (session.state === 'WAITING_RENEWAL_CONFIRMATION') {
+        await confirmRenewal(ctx, session, loaded.catalog, callbackQueryId);
+        return;
+      }
       await confirmPurchase(ctx, session, loaded.catalog, callbackQueryId);
       return;
     }
 
-    case CB.MENU_SERVICES:
-      await replyToMenu(fa.comingSoonServices);
+    case CB.MENU_SERVICES: {
+      // Phase 6: was a "coming soon" stub before.
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await showMyServices(ctx);
       return;
+    }
     case CB.MENU_ORDERS: {
       await ctx.api.answerCallbackQuery(callbackQueryId);
       await showMyOrders(ctx);

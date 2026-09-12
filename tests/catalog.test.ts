@@ -125,7 +125,9 @@ test('loadCatalog: reads all four settings rows from D1 (real SQL via shim)', as
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.catalog.volume.minGb, 10);
-  assert.deepEqual(enabledDurationDays(result.catalog), [30, 90, 180, 365]);
+  // Phase 6: duration seed = whole months (30/60/90), no 180/365 anymore.
+  assert.deepEqual(enabledDurationDays(result.catalog), [30, 60, 90]);
+  assert.equal(result.catalog.duration.allowCustom, false);
   assert.deepEqual(enabledDeviceCounts(result.catalog), [1, 3, 5]);
   assert.equal(result.catalog.pricing.currency, 'IRT');
   assert.equal(result.catalog.pricing.gbRate, 12000);

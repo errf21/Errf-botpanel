@@ -152,7 +152,7 @@ export async function showMyOrders(ctx: UpdateContext): Promise<void> {
       fa.ordersEntry(
         index + 1,
         order.id.slice(0, 10),
-        statusFa(order.state),
+        statusFa(order.state) + (order.kind === 'renewal' ? ` ${fa.ordersKindRenewal}` : ''),
         formatPrice(order.amount, order.currency),
         order.created_at.slice(0, 10),
       ),

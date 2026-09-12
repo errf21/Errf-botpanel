@@ -2,7 +2,7 @@ import type {
   TelegramInlineKeyboardButton,
   TelegramInlineKeyboardMarkup,
 } from '../types.ts';
-import { fa } from './texts.ts';
+import { durationLabelFa, fa } from './texts.ts';
 
 /**
  * Callback data vocabulary. Anything not in this exact set is rejected —
@@ -73,6 +73,61 @@ export function failedQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardM
       button(`🔁 ${orderId.slice(0, 10)}…`, adminCallback('rt', orderId)),
     ]),
   };
+}
+
+/* ———— Phase 6: My Services + renewals ————
+ * `svc:` callbacks carry a full 28-char order id (beyond the generic
+ * pattern's 24-char payload cap), so they get their OWN builder/parser pair
+ * exactly like `adm:` — produced ONLY here, consumed ONLY by
+ * `parseServiceCallback()`, and every action re-checks ownership server-side.
+ */
+export type ServiceAction = 'det' | 'ref' | 'rnw';
+
+export function serviceCallback(action: ServiceAction, orderId: string): string {
+  return `svc:${action}:${orderId}`;
+}
+
+/** Services list: one detail button per service, then a menu row. */
+export function servicesListKeyboard(
+  entries: Array<{ orderId: string; label: string }>,
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = entries.map((entry) => [
+    button(entry.label, serviceCallback('det', entry.orderId)),
+  ]);
+  rows.push([button(fa.backToMenu, CB.ACT_BACK_MENU)]);
+  return { inline_keyboard: rows };
+}
+
+/** Service detail: optional renewal + refresh row, service list, menu. */
+export function serviceDetailKeyboard(
+  orderId: string,
+  opts: { canRenew: boolean },
+): TelegramInlineKeyboardMarkup {
+  const top: TelegramInlineKeyboardButton[] = [];
+  if (opts.canRenew) top.push(button('🔁 تمدید سرویس', serviceCallback('rnw', orderId)));
+  const rows: TelegramInlineKeyboardButton[][] = [
+    ...(top.length > 0 ? [top] : []),
+    [button('🔄 بروزرسانی وضعیت', serviceCallback('ref', orderId))],
+    [button('📦 سرویس‌های من', CB.MENU_SERVICES)],
+    [button(fa.backToMenu, CB.ACT_BACK_MENU)],
+  ];
+  return { inline_keyboard: rows };
+}
+
+/** Renewal duration: preset buttons only (labels month-aware upstream). */
+export function renewalDurationKeyboard(
+  presets: number[],
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [];
+  for (let i = 0; i < presets.length; i += 2) {
+    const row: TelegramInlineKeyboardButton[] = [];
+    for (const value of presets.slice(i, i + 2)) {
+      row.push(button(durationLabelFa(value), `dur:${value}`));
+    }
+    rows.push(row);
+  }
+  rows.push([button('❌ لغو', CB.ACT_CANCEL)]);
+  return { inline_keyboard: rows };
 }
 
 export type KnownCallback = (typeof CB)[keyof typeof CB];
@@ -175,7 +230,7 @@ export function durationKeyboard(
   presets: number[],
   allowCustom: boolean,
 ): TelegramInlineKeyboardMarkup {
-  return optionKeyboard('dur', presets, allowCustom, (v) => `${v} روز`);
+  return optionKeyboard('dur', presets, allowCustom, (v) => durationLabelFa(v));
 }
 
 export function deviceKeyboard(

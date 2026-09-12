@@ -19,8 +19,9 @@ export const fa = {
     '/cancel — بازگشت به منو و لغو عملیات جاری',
     '/help — همین پیام',
     '/pending — (مدیران) فیش‌های در انتظار بررسی',
-    '/failed — (مدیران) سفارش‌های ناموفقِ راه‌اندازی',
+    '/failed — (مدیران) سفارش‌های ناموفقِ راه‌اندازی/تمدید',
     '',
+    '📦 در «سرویس‌های من» می‌توانید وضعیت و انقضای سرویس‌ها را ببینید و آن‌ها را تمدید کنید.',
     'برای شروع، دکمه‌های زیر را بزنید.',
   ].join('\n'),
 
@@ -40,9 +41,7 @@ export const fa = {
   buyInProgress: '🛒 فرآیند خرید جاری را ادامه دهید یا برای لغو «بازگشت به منو» را بزنید.',
 
   // Sections not yet implemented
-  comingSoonServices: '📦 بخش «سرویس‌های من» در فاز ۶ اضافه می‌شود.',
   comingSoonSupport: '🆘 بخش «پشتیبانی» در فاز ۷ اضافه می‌شود.',
-
   accountHeader: '👤 اطلاعات حساب شما',
   accountUsername: (v: string) => `نام کاربری: ${v}`,
   accountNone: '—',
@@ -63,8 +62,9 @@ export const fa = {
     '🔧 فعلاً امکان انتخاب گزینه‌ها وجود ندارد. کمی بعد دوباره امتحان کنید.',
   volumePrompt: (min: number, max: number) =>
     `📦 حجم سرویس را انتخاب کنید.\n\nحداقل ${min} و حداکثر ${max} گیگابایت.\nبرای مقدار دلخواه، عدد را تایپ کنید (یا دکمه‌ی «دلخواه»).`,
-  durationPrompt: (min: number, max: number) =>
-    `⏳ مدت سرویس را انتخاب کنید.\n\nبین ${min} تا ${max} روز.\nبرای مقدار دلخواه، عدد روز را تایپ کنید.`,
+  durationPrompt: (min: number, max: number, allowCustom = true) =>
+    `⏳ مدت سرویس را انتخاب کنید.\n\n${durationLabelFa(min)} تا ${durationLabelFa(max)}.` +
+    (allowCustom ? '\nبرای مقدار دلخواه، عدد روز را تایپ کنید.' : ''),
   devicePrompt: (min: number, max: number) =>
     `📱 تعداد دستگاه‌های مجاز:\n\nبین ${min} تا ${max}.\nبرای مقدار دلخواه، عدد را تایپ کنید.`,
   customVolumeLabel: '✍️ مقدار دلخواه',
@@ -177,11 +177,83 @@ export const fa = {
   adminProvisionDisabledToast: '⚠️ ساخت خودکار سرویس فعلاً غیرفعال است.',
   adminProvisionDone: (id: string) => `🔁 نتیجه‌ی تلاش مجدد ثبت شد\n🆔 ${id}`,
   adminProvisionStale: (id: string) => `ℹ️ وضعیت سفارش ${id} تغییر کرده است؛ نیازی به این دکمه نیست.`,
+
+  // ————— Phase 6: My Services + status + renewals —————
+  servicesHeader: '📦 سرویس‌های شما',
+  servicesEmpty: 'هنوز سرویس فعالی ندارید.\nاز منوی «🛒 خرید سرویس» شروع کنید.',
+  serviceStatusActive: '🟢 فعال',
+  serviceStatusExpiring: '⏳ رو به اتمام',
+  serviceStatusExpired: '‼️ منقضی‌شده',
+  serviceStatusUnknown: '⚪ نامشخص',
+  servicesEntry: (n: number, shortId: string, status: string, expires: string) =>
+    `${n}. 🆔 ${shortId} — ${status}\n   انقضا: ${expires}`,
+  serviceNotFound: '🚫 سرویسی با این شناسه ندارید یا در دسترس نیست.',
+  serviceBusyFirst: '🛑 ابتدا فرآیند فعلی را کامل کنید یا /cancel بفرستید.',
+
+  svcDetailHeader: (name: string) => `📦 سرویس «${name}»`,
+  svcPanelActive: '🟢 فعال',
+  svcPanelLimited: '🟡 محدود (حجم)',
+  svcPanelExpired: '‼️ منقضی‌شده',
+  svcPanelDisabled: '⛔ غیرفعال',
+  svcPanelOnHold: '⏸ در انتظار',
+  svcPendingRenewal: (shortId: string) => `🔁 تمدید در جریان: سفارش ${shortId}…`,
+  svcToastPanel: '✅ وضعیت لحظه‌ای از پنل',
+  svcToastSnapshot: '🖥 پنل در دسترس نبود؛ وضعیت محلی',
+  svcId: (id: string) => `🆔 شناسه سرویس: ${id}`,
+  svcPanelUsername: (v: string) => `👤 نام در پنل: ${v}`,
+  svcCreated: (v: string) => `📅 ساخته‌شده: ${v}`,
+  svcExpires: (v: string) => `⏳ تاریخ انقضا: ${v}`,
+  svcDaysLeft: (days: number) => `🔂 باقی‌مانده: ${digitsFa(days)} روز`,
+  svcExpiredDaysAgo: (days: number) => `⚠️ ${digitsFa(days)} روز پیش منقضی شده است`,
+  svcUsage: (used: string, total: string) => `📊 مصرف ترافیک: ${used} از ${total} گیگ`,
+  svcLink: '🔗 لینک اشتراک:',
+  svcSnapshotNote: '🖥 پنل در دسترس نبود؛ اطلاعات از آخرین وضعیت محلی نمایش داده می‌شود.',
+  svcLiveNote: '🖥 وضعیت لحظه‌ای از پنل',
+
+  renewDisabledNotice: '🔧 امکان تمدید فعلاً غیرفعال است.',
+  renewInProgressNotice: (id: string) =>
+    `🔁 یک درخواست تمدید برای این سرویس باز است.\n\n🆔 سفارش تمدید: ${id}\n\nوضعیت آن را از «💳 سفارش‌های من» پیگیری کنید.`,
+  renewIntro: (name: string, expires: string) =>
+    `🔁 تمدید سرویس «${name}»\n\n📅 انقضای فعلی: ${expires}\n\nبرای تمدید، مدت را انتخاب کنید.\nقیمت هر ماه تمدید جداگانه محاسبه می‌شود و پرداخت مانند خرید، با فیش و تأیید دستی است.`,
+  renewDurationPrompt: '⏳ مدت تمدید را انتخاب کنید:\n\n۱ ماه • ۲ ماه • ۳ ماه',
+  renewSummaryHeader: '🧾 خلاصه‌ی تمدید',
+  renewSummaryService: (name: string) => `📦 سرویس: «${name}»`,
+  renewSummaryAdd: (months: number) => `➕ مدت تمدید: ${digitsFa(months)} ماه`,
+  renewSummaryFrom: (v: string) => `📅 انقضای فعلی: ${v}`,
+  renewSummaryUntil: (v: string) => `📅 انقضای جدید (تقریبی): ${v}`,
+  renewConfirmed: (id: string) =>
+    `✅ درخواست تمدید ثبت شد!\n\n🆔 کد: ${id}\n\n👇 اطلاعات واریز در پیام بعدی ارسال می‌شود.`,
+  renewApplied: (id: string, expiresDate: string) =>
+    `🎉 سرویس شما تمدید شد!\n\n🆔 سفارش: ${id}\n📅 انقضای جدید: ${expiresDate}\n\nاز «📦 سرویس‌های من» می‌توانید وضعیت را ببینید.`,
+  renewFailedNotice: (id: string) =>
+    `⚠️ تمدید سرویسِ سفارش پیش از حد مجاز به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nمسئولان در جریان قرار گرفتند و موضوع پیگیری می‌شود؛ نیازی به پرداخت مجدد نیست.`,
+  adminRenewalFailed: (id: string, reason: string) =>
+    `⚠️ تمدید سرویس ناموفق بود\n🆔 ${id}\n📝 ${reason.slice(0, 200)}\n\nبا دکمه‌ی زیر می‌توانید دوباره تلاش کنید (تا سقف مجاز).`,
+  adminRenewalKind: (serviceId: string) => `🔄 تمدید سرویس ${serviceId}`,
+  notifyApprovedRenewal: (id: string, amount: string) =>
+    `🎉 پرداخت تمدید شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nتمدید به‌زودی روی سرویس اعمال می‌شود.`,
+  ordersKindRenewal: '(تمدید)',
 } as const;
 
 /** Format integer money with Persian thousands + currency word. */
 export function formatPrice(amount: number, currency: string): string {
   const word = currency === 'IRT' ? 'تومان' : currency === 'IRR' ? 'ریال' : currency;
   return `${amount.toLocaleString('fa-IR')} ${word}`;
+}
+
+const FA_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
+
+/** ASCII digits → Persian (display only; storage/wire stay ASCII). */
+export function digitsFa(value: number | string): string {
+  return String(value).replace(/[0-9]/g, (d) => FA_DIGITS[Number(d)] ?? d);
+}
+
+/** Duration display: whole months read as «X ماه», everything else keeps days. */
+export function durationLabelFa(days: number, daysPerMonth = 30): string {
+  const months = daysPerMonth > 0 ? days / daysPerMonth : NaN;
+  if (Number.isSafeInteger(months) && months >= 1) {
+    return `${digitsFa(months)} ماه`;
+  }
+  return `${digitsFa(days)} روز`;
 }
 

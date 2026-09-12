@@ -20,6 +20,9 @@ export type ConversationEvent =
   | 'devices_chosen'
   | 'order_confirmed'
   | 'receipt_received'
+  | 'renew_start'
+  | 'renew_duration_chosen'
+  | 'renew_confirmed'
   | 'step_back'
   | 'cancel'
   | 'back_to_menu'
@@ -36,6 +39,11 @@ const FORWARD: Partial<
   devices_chosen: [['WAITING_DEVICE_LIMIT', 'WAITING_ORDER_CONFIRMATION']],
   order_confirmed: [['WAITING_ORDER_CONFIRMATION', 'WAITING_PAYMENT_RECEIPT']],
   receipt_received: [['WAITING_PAYMENT_RECEIPT', 'WAITING_PAYMENT_RECEIPT']],
+  // Phase 6 renewals: a compact two-step ladder that hands over to the SAME
+  // WAITING_PAYMENT_RECEIPT state, so receipt/admin/provisioning reuse it all.
+  renew_start: [['IDLE', 'WAITING_RENEWAL_DURATION']],
+  renew_duration_chosen: [['WAITING_RENEWAL_DURATION', 'WAITING_RENEWAL_CONFIRMATION']],
+  renew_confirmed: [['WAITING_RENEWAL_CONFIRMATION', 'WAITING_PAYMENT_RECEIPT']],
 };
 
 export function isConversationState(value: string): value is ConversationState {
@@ -53,6 +61,8 @@ const BACK_MAP: Partial<Record<ConversationState, ConversationState>> = {
   WAITING_DEVICE_LIMIT: 'WAITING_DURATION',
   WAITING_ORDER_CONFIRMATION: 'WAITING_DEVICE_LIMIT',
   WAITING_PAYMENT_RECEIPT: 'WAITING_PAYMENT_RECEIPT',
+  // Renewal ladder back (its duration step backs out to IDLE via the map miss).
+  WAITING_RENEWAL_CONFIRMATION: 'WAITING_RENEWAL_DURATION',
 };
 
 /**

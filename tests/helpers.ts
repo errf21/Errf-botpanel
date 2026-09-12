@@ -150,6 +150,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0003_phase3.sql',
     'migrations/0004_phase4.sql',
     'migrations/0005_phase5.sql',
+    'migrations/0006_phase6.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }

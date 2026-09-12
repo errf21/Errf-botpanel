@@ -16,6 +16,7 @@ import { performAdminReview } from '../admin.ts';
 import { acceptsTextInput, reduce } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { submitReceipt } from './payment.ts';
+import { resumeRenewal } from './renewal.ts';
 import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
@@ -74,6 +75,16 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
     }
     if (session.state === 'WAITING_PAYMENT_RECEIPT') {
       await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
+      return;
+    }
+    // Phase 6: renewal ladder steps never accept free text (months only).
+    if (
+      session.state === 'WAITING_RENEWAL_DURATION' ||
+      session.state === 'WAITING_RENEWAL_CONFIRMATION'
+    ) {
+      const loaded = await loadCatalog(ctx.db);
+      if (loaded.ok) await resumeRenewal(ctx, session, loaded.catalog);
+      else await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
       return;
     }
     await ctx.api.sendMessage(ctx.chatId, fa.idleInputHint, mainMenuKeyboard());

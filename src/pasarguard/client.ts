@@ -1,18 +1,21 @@
 /**
- * PasarGuard panel API client (Phase 5).
+ * PasarGuard panel API client (Phase 5 + 6).
  *
  * The contract below was derived from the panel's own published JS bundle
  * (read-only GET inspection of /dashboard/ statics): the dashboard talks to
  * `/api/...` endpoints and ships a `subscription_url` (possibly root-relative)
- * on every user object. Server-to-server auth uses an API key created in the
- * panel's admin UI.
+ * on every user object. Phase 6 re-read the bundle and confirmed the partial
+ * update primitive: `PUT /api/user/by-username/{name}` with only dirty
+ * fields, `expire` as absolute unix seconds (user edit dialog + quick
+ * buttons +7d/+1m/+2m/+3m → 30/60/90d).
  *
  * Safety rules:
  *  - The API key is sent ONLY as the `x-api-key` header over HTTPS; it is
  *    never logged, never included in error details, never stored in D1.
  *  - NO automatic retries here: a retry of an ambiguous write could double
- *    create a service. Idempotency is handled one level up
- *    (`provision.ts` pre-checks `by-username` before every create).
+ *    apply a write. Idempotency is handled one level up
+ *    (`provision.ts`: pre-check by-username/claimed target before every
+ *    create/modify, verify after).
  *  - Responses are parsed defensively; unexpected shapes degrade to typed
  *    errors instead of throwing.
  */
@@ -45,6 +48,46 @@ export interface PanelUser {
   username: string | null;
   status: string | null;
   subscriptionUrl: string | null;
+  /** Absolute expiry in unix seconds (null = none/unlimited). */
+  expire: number | null;
+  /** Traffic bytes (null = unknown / unlimited). Wire unit: bytes. */
+  dataLimit: number | null;
+  usedTraffic: number | null;
+}
+
+/**
+ * Panel dates arrive either as unix seconds or ISO strings (defensively,
+ * since the field is optional per response). Anything nonsensical parses to
+ * null — we never guess a date the customer could act on.
+ */
+export function coerceUnixSeconds(value: unknown): number | null {
+  let seconds: number | null = null;
+  if (typeof value === 'number' && Number.isFinite(value)) seconds = value;
+  else if (typeof value === 'string' && value.trim() !== '') {
+    const numeric = Number(value);
+    seconds = Number.isFinite(numeric) ? numeric : Date.parse(value) / 1000;
+  }
+  if (seconds === null || Number.isNaN(seconds)) return null;
+  if (seconds > 1e12) seconds = Math.floor(seconds / 1000); // ms → s
+  seconds = Math.floor(seconds);
+  if (seconds === 0) return null; // panel "no expiry" marker
+  if (seconds < 0 || seconds > 4_000_000_000) return null;
+  return seconds;
+}
+
+/** Byte counts only ever arrive as finite non-negative numbers. */
+function coerceBytes(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  if (value === 0) return null; // 0 = unlimited on the panel
+  return Math.floor(value);
+}
+
+function numberField(obj: Record<string, unknown> | null, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return null;
 }
 
 export interface CreateUserPayload {
@@ -60,6 +103,16 @@ export interface CreateUserPayload {
   group_ids: number[];
   /** Order cross-reference written into the panel's note field. */
   note: string;
+}
+
+/**
+ * Phase 6 renewal patch: an ABSOLUTE expiry in unix seconds. Partial bodies
+ * are supported by the panel (its own edit dialog sends only dirty fields),
+ * so extension touches `expire` — and nothing else.
+ */
+export interface ModifyUserPayload {
+  expire: number;
+  status?: 'active' | 'on_hold' | 'disabled';
 }
 
 function failure(status: number, detail: string, kind?: PanelErrorKind): { ok: false; status: number; detail: string; kind: PanelErrorKind } {
@@ -146,6 +199,9 @@ export function extractPanelUser(json: unknown): PanelUser | null {
         username: stringField(record, ['username']),
         status: stringField(record, ['status']),
         subscriptionUrl: stringField(record, ['subscription_url', 'subscriptionUrl']),
+        expire: coerceUnixSeconds(record['expire']),
+        dataLimit: coerceBytes(numberField(record, ['data_limit'])),
+        usedTraffic: coerceBytes(numberField(record, ['used_traffic'])),
       };
     }
   }
@@ -197,8 +253,31 @@ export class PasarGuardClient {
     return this.#request<PanelUser | null>('GET', `/api/user/by-id/${encodeURIComponent(id)}`);
   }
 
+  /**
+   * PUT /api/user/by-username/{name} — partial modify (Phase 6 renewals set
+   * an absolute `expire`). NEVER auto-retried blindly: callers pre-check the
+   * stored target and post-verify with getUserByUsername, and absolute expiry
+   * re-application is a no-op by construction.
+   */
+  modifyUserByUsername(
+    username: string,
+    patch: ModifyUserPayload,
+  ): Promise<PanelResult<PanelUser | null>> {
+    if (!/^[A-Za-z0-9]{3,32}$/.test(username)) {
+      return Promise.resolve(failure(0, 'username_charset', 'rejected'));
+    }
+    if (!Number.isSafeInteger(patch.expire) || patch.expire < 1 || patch.expire > 4_000_000_000) {
+      return Promise.resolve(failure(0, 'expire_target_range', 'rejected'));
+    }
+    return this.#request<PanelUser | null>(
+      'PUT',
+      `/api/user/by-username/${encodeURIComponent(username)}`,
+      patch,
+    );
+  }
+
   async #request<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     path: string,
     body?: unknown,
   ): Promise<PanelResult<T | null>> {
@@ -244,8 +323,8 @@ export class PasarGuardClient {
       return { ok: true, data: (extractPanelUser(json) ?? null) as T | null };
     }
 
-    // POST: a 2xx with an unusable envelope is still a SUCCESS signal —
-    // the create happened; callers confirm details with by-username/by-id.
+    // POST/PUT: a 2xx with an unusable envelope is still a SUCCESS signal —
+    // the mutation happened; callers confirm details with by-username/by-id.
     if (json === null) return { ok: true, data: null as T | null };
     const parsed = extractPanelUser(json);
     return { ok: true, data: parsed as T | null };

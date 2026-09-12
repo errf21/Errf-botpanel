@@ -121,10 +121,10 @@ export function catalogLimits(catalog: {
 }): {
   min_gb: number;
   max_gb: number;
-  min_days: number;
-  max_days: number;
   min_devices: number;
   max_devices: number;
+  min_days: number;
+  max_days: number;
 } {
   return {
     min_gb: catalog.volume.minGb,
@@ -133,5 +133,63 @@ export function catalogLimits(catalog: {
     max_days: catalog.duration.maxDays,
     min_devices: catalog.device.minCount,
     max_devices: catalog.device.maxCount,
+  };
+}
+
+/* ———— Phase 6: renewals ————
+ * A renewal extends the SAME service (same volume/devices) by additional
+ * months. Only the time component is re-charged:
+ *
+ *   months = ceil(renewal_days / days_per_month)
+ *   total  = months * month_rate
+ *
+ * Integer-only; the applied rates are snapshotted exactly like a purchase so
+ * a later price edit cannot retroactively change a placed renewal.
+ */
+export interface RenewalBreakdown {
+  schema: 1;
+  kind: 'renewal';
+  currency: string;
+  rates: {
+    month_rate: number;
+    days_per_month: number;
+  };
+  /** Days being added (the selected renewal duration). */
+  duration_days: number;
+  months: number;
+  duration_cost: number;
+  total: number;
+}
+
+export function calculateRenewalPrice(
+  pricing: PricingConfig,
+  selection: { durationDays: number },
+): { ok: true; breakdown: RenewalBreakdown } | { ok: false; error: string } {
+  if (
+    !safeInt(pricing.monthRate, 1_000_000_000) ||
+    !safeInt(pricing.daysPerMonth, 365) ||
+    pricing.daysPerMonth < 1
+  ) {
+    return { ok: false, error: 'pricing_config' };
+  }
+  if (!safeInt(selection.durationDays, 1_000_000) || selection.durationDays < 1) {
+    return { ok: false, error: 'selection_range' };
+  }
+  const months = Math.ceil(selection.durationDays / pricing.daysPerMonth);
+  if (!safeInt(months, 100_000)) return { ok: false, error: 'range' };
+  const durationCost = product(months, pricing.monthRate);
+  if (durationCost === null) return { ok: false, error: 'overflow' };
+  return {
+    ok: true,
+    breakdown: {
+      schema: 1,
+      kind: 'renewal',
+      currency: pricing.currency,
+      rates: { month_rate: pricing.monthRate, days_per_month: pricing.daysPerMonth },
+      duration_days: selection.durationDays,
+      months,
+      duration_cost: durationCost,
+      total: durationCost,
+    },
   };
 }
