@@ -1,7 +1,7 @@
-import type { Env } from './types';
-import { handleHealth } from './routes/health';
-import { handleWebhook } from './routes/webhook';
-import { text } from './lib/http';
+import type { Env } from './types.ts';
+import { handleHealth } from './routes/health.ts';
+import { handleWebhook } from './routes/webhook.ts';
+import { text } from './lib/http.ts';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

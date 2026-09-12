@@ -27,6 +27,26 @@ export const ORDER_STATES = [
 
 export type OrderState = (typeof ORDER_STATES)[number];
 
+/** Conversation state-machine states — must match the 0002 migration CHECK list. */
+export const CONVERSATION_STATES = [
+  'IDLE',
+  'BUYING',
+  'WAITING_CONFIG_NAME',
+  'WAITING_VOLUME',
+  'WAITING_DURATION',
+  'WAITING_DEVICE_LIMIT',
+  'WAITING_ORDER_CONFIRMATION',
+  'WAITING_PAYMENT_RECEIPT',
+] as const;
+
+export type ConversationState = (typeof CONVERSATION_STATES)[number];
+
+/** JSON payload attached to a conversation state (draft selections, etc.). */
+export interface StateData {
+  config_name?: string;
+  [key: string]: unknown;
+}
+
 /**
  * Minimal typed view over Telegram Bot API objects.
  * Full handlers arrive in Phase 2; only what the skeleton needs today.
@@ -34,7 +54,8 @@ export type OrderState = (typeof ORDER_STATES)[number];
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
-  callback_query?: unknown;
+  callback_query?: TelegramCallbackQuery;
+  edited_message?: TelegramMessage;
 }
 
 export interface TelegramMessage {
@@ -42,6 +63,50 @@ export interface TelegramMessage {
   from?: TelegramUser;
   chat?: { id: number; type?: string };
   text?: string;
+}
+
+export interface TelegramCallbackQuery {
+  id: string;
+  from?: TelegramUser;
+  data?: string;
+  message?: { message_id?: number; chat?: { id?: number } };
+}
+
+export interface TelegramInlineKeyboardButton {
+  text: string;
+  callback_data: string;
+}
+
+export interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: TelegramInlineKeyboardButton[][];
+}
+
+/** Structural subset of TelegramApi that handlers need (avoids import cycles). */
+export interface TelegramApiLike {
+  sendMessage(
+    chatId: number,
+    text: string,
+    buttons?: TelegramInlineKeyboardMarkup,
+  ): Promise<unknown>;
+  editMessageText(
+    chatId: number,
+    messageId: number,
+    text: string,
+    buttons?: TelegramInlineKeyboardMarkup,
+  ): Promise<unknown>;
+  answerCallbackQuery(id: string, text?: string, showAlert?: boolean): Promise<void>;
+}
+
+/** Per-update context assembled by the webhook dispatcher. */
+export interface UpdateContext {
+  env: Env;
+  db: D1Database;
+  api: TelegramApiLike;
+  /** The human acting on this update (already validated + registered). */
+  actor: TelegramUser;
+  chatId: number;
+  /** Internal customers.id — resolved before any handler runs. */
+  customerId: number;
 }
 
 export interface TelegramUser {

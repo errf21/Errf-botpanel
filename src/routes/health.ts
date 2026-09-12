@@ -1,5 +1,5 @@
-import type { Env } from '../types';
-import { json } from '../lib/http';
+import type { Env } from '../types.ts';
+import { json } from '../lib/http.ts';
 
 /**
  * GET /health

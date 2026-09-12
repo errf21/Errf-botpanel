@@ -1,13 +1,15 @@
-import type { Env, TelegramUpdate } from '../types';
-import { json } from '../lib/http';
-import { timingSafeEqual } from '../lib/security';
+import type { Env, TelegramUpdate } from '../types.ts';
+import { json } from '../lib/http.ts';
+import { timingSafeEqual } from '../lib/security.ts';
+import { processTelegramUpdate } from '../dispatch.ts';
 
 /**
  * POST /telegram/webhook
  *
- * Phase 1 scope only: authentication + safe acknowledgement.
- * Update dispatching (menu, purchase flow, …) lands in later phases;
- * a 200 response prevents Telegram retries from hammering the worker.
+ * Phase 2: same hard authentication gates as Phase 1 (503 fail-closed,
+ * 401 bad token, 400 unparseable) — then the validated update is handed to
+ * the dispatcher. Handler errors are contained: we still ACK 200 so Telegram
+ * doesn't retry-hammer the worker.
  */
 export async function handleWebhook(
   request: Request,
@@ -30,8 +32,12 @@ export async function handleWebhook(
     return json({ error: 'invalid_json' }, 400);
   }
 
-  // Phase 2+: route update to the state machine here.
-  console.log(`telegram update received: ${update.update_id}`);
-
+  // ACK unconditionally — a failing DB/edge case here must not trigger a
+  // Telegram retry storm; real failures are logged by the dispatcher.
+  try {
+    await processTelegramUpdate(update, env);
+  } catch {
+    console.error(`webhook_dispatch_error update_id=${String(update.update_id)}`);
+  }
   return json({ ok: true });
 }

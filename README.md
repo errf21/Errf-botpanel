@@ -10,14 +10,27 @@ Payment verification is intentionally **manual** (admin approval); everything el
 ```
 wrangler.jsonc              Worker config: D1 binding, non-secret vars
 migrations/0001_init.sql    D1 foundation schema (orders, audit trail, settings)
+migrations/0002_phase2.sql  conversation_states + update_dedupe
 src/index.ts                Fetch router: /health, /telegram/webhook
-src/types.ts                Env bindings, OrderState enum, Telegram types
+src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
+src/dispatch.ts             Update pipeline: dedupe → register → route to handlers
 src/routes/health.ts        Liveness + D1 connectivity + binding status
-src/routes/webhook.ts       Authenticated Telegram webhook entry (ack only in Phase 1)
+src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
+src/telegram/api.ts         Telegram Bot API client (token only in env)
+src/telegram/menu.ts        Callback vocabulary + main-menu keyboards
+src/telegram/texts.ts       All user-facing text (Persian-first), one place
+src/handlers/commands.ts    /start /cancel /help
+src/handlers/callbacks.ts   Menu + flow buttons (format AND allowlist validated)
+src/handlers/messages.ts    Text input → state machine (config-name step today)
+src/state/machine.ts        Pure conversation state machine (extensible by Phase 3)
+src/db/{customers,states,dedupe}.ts   Repositories (idempotent upserts, session TTL)
 src/lib/security.ts         ULID order IDs, constant-time secret comparison
+src/lib/validate.ts         Payload guards: callback format, ids, config names
 src/lib/http.ts             Response helpers
+tests/                      node --test: machine logic, payload validation, e2e loop
 .dev.vars.example           Template for local secrets (copy → .dev.vars)
 ```
+
 
 ## Prerequisites
 
@@ -58,6 +71,7 @@ prices never requires rewriting bot logic.
 
 ```bash
 npm run typecheck        # tsc --noEmit
+npm test                 # node --test (state machine, payload validation, D1+dispatcher e2e)
 npm run dev              # wrangler dev  (uses .dev.vars + local D1 copy)
 
 curl http://localhost:8787/health                  # status + checks
@@ -86,8 +100,8 @@ configured and rejects requests with a wrong token (401).
 
 ## Roadmap
 
-- **Phase 1 (this)**: skeleton, config layer, webhook auth, schema ✅
-- Phase 2: users + menu + conversational state machine
+- **Phase 1**: skeleton, config layer, webhook auth, schema ✅
+- **Phase 2 (this)**: registration, main menu, callbacks, conversation state machine ✅
 - Phase 3: product options + pricing engine + order creation
 - Phase 4: payment receipt upload + admin approval queue
 - Phase 5: PasarGuard integration + automatic provisioning (idempotent)
