@@ -46,6 +46,7 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       }
       await clearPendingAdminAction(ctx.db, ctx.actor.id);
       const result = await performAdminReview({
+        env: ctx.env,
         db: ctx.db,
         api: ctx.api,
         actorId: ctx.actor.id,

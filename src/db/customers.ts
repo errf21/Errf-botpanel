@@ -1,4 +1,4 @@
-import type { TelegramUser } from '../types.ts';
+import type { Env, TelegramUser } from '../types.ts';
 
 /**
  * Customer repository. Telegram user id (as string) is the external identity;
@@ -95,5 +95,27 @@ export async function getCustomerContact(
     .prepare('SELECT telegram_user_id, first_name FROM customers WHERE id = ?1')
     .bind(customerId)
     .first<CustomerContact>();
+}
+
+/** Chat ids that receive admin traffic: env admin + every is_admin row. */
+export async function resolveAdminChatIds(env: Env, db: D1Database): Promise<number[]> {
+  const ids = new Set<number>();
+  const configured = env.ADMIN_CHAT_ID?.trim() ?? '';
+  if (/^[0-9]{1,20}$/.test(configured)) {
+    const num = Number(configured);
+    if (Number.isSafeInteger(num) && num > 0) ids.add(num);
+  }
+  try {
+    const rows = await db
+      .prepare('SELECT telegram_user_id FROM customers WHERE is_admin = 1')
+      .all<{ telegram_user_id: string }>();
+    for (const row of rows.results) {
+      const num = Number(row.telegram_user_id);
+      if (Number.isSafeInteger(num) && num > 0) ids.add(num);
+    }
+  } catch {
+    // DB failure degrades to env-only targeting, never crashes the update.
+  }
+  return [...ids];
 }
 

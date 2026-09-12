@@ -15,6 +15,12 @@ export interface OrderRow {
   payment_reference: string | null;
   verified_by: string | null;
   verified_at: string | null;
+  pasarguard_username: string | null;
+  pasarguard_user_id: string | null;
+  subscription_url: string | null;
+  service_created_at: string | null;
+  provision_attempts: number;
+  failure_reason: string | null;
   created_at: string;
 }
 
@@ -241,6 +247,203 @@ export async function listRecentOrdersForCustomer(
       `SELECT * FROM orders WHERE customer_id = ?1 ORDER BY created_at DESC LIMIT ?2`,
     )
     .bind(customerId, limit)
+    .all<OrderRow>();
+  return result.results;
+}
+
+/* ———— Phase 5: guarded provisioning transitions ————
+ * Same discipline as the review transitions: one snapshot read for
+ * diagnostics, then a SINGLE conditional UPDATE whose affected-row count
+ * decides the winner. Concurrent claims/replays cannot double-run.
+ */
+
+export type ProvisionClaimOutcome =
+  | { ok: true; order: OrderRow }
+  | { ok: false; error: 'not_found' | 'state_changed' | 'attempts_exhausted' };
+
+/** approved → provisioning (claims an attempt); failed → provisioning (admin retry). */
+export async function claimOrderForProvisioning(
+  db: D1Database,
+  opts: { orderId: string; fromState: 'approved' | 'failed'; maxAttempts: number },
+): Promise<ProvisionClaimOutcome> {
+  const before = await getOrderById(db, opts.orderId);
+  if (!before) return { ok: false, error: 'not_found' };
+  if (before.state !== opts.fromState) return { ok: false, error: 'state_changed' };
+  if (before.provision_attempts >= opts.maxAttempts) {
+    return { ok: false, error: 'attempts_exhausted' };
+  }
+
+  const updated = await db
+    .prepare(
+      `UPDATE orders
+          SET state = 'provisioning',
+              provision_attempts = provision_attempts + 1,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?1 AND state = ?2 AND provision_attempts < ?3`,
+    )
+    .bind(opts.orderId, opts.fromState, opts.maxAttempts)
+    .run();
+  if (changeCount(updated) === 0) {
+    const fresh = await getOrderById(db, opts.orderId);
+    if (!fresh) return { ok: false, error: 'not_found' };
+    return {
+      ok: false,
+      error:
+        fresh.provision_attempts >= opts.maxAttempts && fresh.state === opts.fromState
+          ? 'attempts_exhausted'
+          : 'state_changed',
+    };
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
+       VALUES (?1, 'system', 'provision_started', ?2, 'provisioning', ?3)`,
+    )
+    .bind(opts.orderId, opts.fromState, JSON.stringify({ attempt: before.provision_attempts + 1 }))
+    .run();
+
+  const after = await getOrderById(db, opts.orderId);
+  if (!after || after.state !== 'provisioning') return { ok: false, error: 'state_changed' };
+  return { ok: true, order: after };
+}
+
+export type UsernameClaimOutcome =
+  | { ok: true; order: OrderRow; assignedNow: boolean }
+  | { ok: false; error: 'not_found' | 'state_changed' | 'username_taken' };
+
+/**
+ * Reserve the deterministic panel username on THIS order before any external
+ * write. UNIQUE(pasarguard_username) makes the claim atomic across orders:
+ * a violation means the name belongs elsewhere and provisioning must stop.
+ */
+export async function claimOrderUsername(
+  db: D1Database,
+  opts: { orderId: string; username: string },
+): Promise<UsernameClaimOutcome> {
+  try {
+    const updated = await db
+      .prepare(
+        `UPDATE orders
+            SET pasarguard_username = ?2,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = ?1 AND pasarguard_username IS NULL AND state = 'provisioning'`,
+      )
+      .bind(opts.orderId, opts.username)
+      .run();
+    if (changeCount(updated) > 0) {
+      const after = await getOrderById(db, opts.orderId);
+      if (!after || after.state !== 'provisioning') return { ok: false, error: 'state_changed' };
+      return { ok: true, order: after, assignedNow: true };
+    }
+  } catch {
+    return { ok: false, error: 'username_taken' }; // UNIQUE(id): claimed by another row
+  }
+  const current = await getOrderById(db, opts.orderId);
+  if (!current) return { ok: false, error: 'not_found' };
+  if (current.pasarguard_username !== null && current.state === 'provisioning') {
+    return { ok: true, order: current, assignedNow: false }; // our earlier attempt already claimed it
+  }
+  return { ok: false, error: 'state_changed' };
+}
+
+export type ProvisionFinalizeOutcome =
+  | { ok: true; order: OrderRow }
+  | { ok: false; error: 'not_found' | 'state_changed' | 'identity_conflict' };
+
+/** provisioning → completed. A UNIQUE clash on pasarguard_user_id is a hard stop. */
+export async function completeProvisionedOrder(
+  db: D1Database,
+  opts: { orderId: string; pasarguardUserId: string | null; subscriptionUrl: string | null },
+): Promise<ProvisionFinalizeOutcome> {
+  try {
+    const updated = await db
+      .prepare(
+        `UPDATE orders
+            SET state = 'completed',
+                pasarguard_user_id = COALESCE(?2, pasarguard_user_id),
+                subscription_url = COALESCE(?3, subscription_url),
+                service_created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                failure_reason = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = ?1 AND state = 'provisioning'`,
+      )
+      .bind(opts.orderId, opts.pasarguardUserId, opts.subscriptionUrl)
+      .run();
+    if (changeCount(updated) === 0) {
+      const fresh = await getOrderById(db, opts.orderId);
+      return fresh ? { ok: false, error: 'state_changed' } : { ok: false, error: 'not_found' };
+    }
+  } catch {
+    return { ok: false, error: 'identity_conflict' }; // user id already linked to another order
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
+       VALUES (?1, 'system', 'provision_succeeded', 'provisioning', 'completed', ?2)`,
+    )
+    .bind(
+      opts.orderId,
+      JSON.stringify({
+        pasarguard_user_id: opts.pasarguardUserId,
+        subscription_url: opts.subscriptionUrl,
+      }),
+    )
+    .run();
+
+  const after = await getOrderById(db, opts.orderId);
+  if (!after) return { ok: false, error: 'not_found' };
+  return { ok: true, order: after };
+}
+
+export type ProvisionFailOutcome =
+  | { ok: true; order: OrderRow }
+  | { ok: false; error: 'not_found' | 'state_changed' };
+
+/** provisioning → failed; the reason is sanitized upstream, capped here. */
+export async function failProvisionedOrder(
+  db: D1Database,
+  opts: { orderId: string; reason: string },
+): Promise<ProvisionFailOutcome> {
+  const updated = await db
+    .prepare(
+      `UPDATE orders
+          SET state = 'failed',
+              failure_reason = ?2,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?1 AND state = 'provisioning'`,
+    )
+    .bind(opts.orderId, opts.reason.slice(0, 300))
+    .run();
+  if (changeCount(updated) === 0) {
+    const fresh = await getOrderById(db, opts.orderId);
+    return fresh ? { ok: false, error: 'state_changed' } : { ok: false, error: 'not_found' };
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
+       VALUES (?1, 'system', 'provision_failed', 'provisioning', 'failed', ?2)`,
+    )
+    .bind(opts.orderId, JSON.stringify({ reason: opts.reason.slice(0, 300) }))
+    .run();
+
+  const after = await getOrderById(db, opts.orderId);
+  if (!after) return { ok: false, error: 'not_found' };
+  return { ok: true, order: after };
+}
+
+/** failed orders, newest failures first — the admin retry queue. */
+export async function listOrdersFailed(
+  db: D1Database,
+  limit: number,
+): Promise<OrderRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM orders WHERE state = 'failed' ORDER BY updated_at DESC LIMIT ?1`,
+    )
+    .bind(limit)
     .all<OrderRow>();
   return result.results;
 }

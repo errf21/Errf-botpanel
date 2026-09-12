@@ -26,7 +26,10 @@ export const CB = {
  * namespace with dedicated builders — values are produced ONLY by
  * `adminCallback()` below and parsed ONLY by `parseAdminCallback()`.
  */
-export function adminCallback(action: 'ok' | 'no' | 'skip', orderId: string): string {
+export function adminCallback(
+  action: 'ok' | 'no' | 'skip' | 'rt',
+  orderId: string,
+): string {
   return `adm:${action}:${orderId}`;
 }
 
@@ -52,6 +55,22 @@ export function adminQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardMa
     inline_keyboard: orderIds.map((orderId) => [
       button('✅', adminCallback('ok', orderId)),
       button('❌', adminCallback('no', orderId)),
+    ]),
+  };
+}
+
+/** Phase 5: single-order retry button on provisioning-failure pushes. */
+export function adminProvisionFailedKeyboard(orderId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [[button('🔁 تلاش مجدد', adminCallback('rt', orderId))]],
+  };
+}
+
+/** Phase 5: /failed queue — one retry button per failed order. */
+export function failedQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: orderIds.map((orderId) => [
+      button(`🔁 ${orderId.slice(0, 10)}…`, adminCallback('rt', orderId)),
     ]),
   };
 }

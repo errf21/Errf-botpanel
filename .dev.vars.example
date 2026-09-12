@@ -7,5 +7,8 @@ TELEGRAM_BOT_TOKEN=
 # Random string you choose; Telegram echoes it in the X-Telegram-Bot-Api-Secret-Token header
 TELEGRAM_WEBHOOK_SECRET=
 
-# PasarGuard panel API key (used from Phase 5; keep empty until then)
+# PasarGuard panel API key (Phase 5). Created in the panel's admin UI
+# (API keys); sent ONLY as the X-Api-Key header over HTTPS. Provisioning is a
+# strict no-op while this is empty — approvals then just park orders in
+# 'approved' until a key + settings row 'provisioning' exist.
 PASARGUARD_API_KEY=

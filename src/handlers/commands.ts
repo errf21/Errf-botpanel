@@ -3,6 +3,7 @@ import { clearSession } from '../db/states.ts';
 import { mainMenuKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 import { showPendingQueue } from './payment.ts';
+import { showFailedQueue } from './provisioning.ts';
 import { parseCommand } from '../lib/validate.ts';
 
 /**
@@ -31,6 +32,13 @@ export async function handleCommand(
         await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
       } else {
         await showPendingQueue(ctx);
+      }
+      return;
+    case 'failed':
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+      } else {
+        await showFailedQueue(ctx);
       }
       return;
     default:

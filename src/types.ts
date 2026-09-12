@@ -152,6 +152,11 @@ export interface UpdateContext {
   customerId: number;
   /** ADMIN_CHAT_ID env OR customers.is_admin — computed once per update. */
   isAdmin: boolean;
+  /**
+   * Phase 5: defers provisioning past the webhook ACK (Cloudflare
+   * ExecutionContext.waitUntil). Absent in tests/harnesses → inline await.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 export interface TelegramUser {

@@ -21,6 +21,7 @@ import {
   setPendingAdminAction,
 } from '../db/admin_actions.ts';
 import { performAdminReview, retireAdminMessage, type ReviewResult } from '../admin.ts';
+import { answerProvisionRetry, handleProvisionRetry } from './provisioning.ts';
 import { isBusy, reduce } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { showMyOrders } from './payment.ts';
@@ -221,13 +222,22 @@ async function handleAdminCallback(
   }
   const { action, orderId } = parsed;
 
+  if (action === 'rt') {
+    // Phase 5: retry provisioning a failed order (admin-gated like the rest).
+    const response = await handleProvisionRetry(ctx, orderId);
+    await answerProvisionRetry(ctx, callbackQueryId, messageChatId, messageId, response);
+    return;
+  }
+
   if (action === 'ok') {
     const result = await performAdminReview({
+      env: ctx.env,
       db: ctx.db,
       api: ctx.api,
       actorId: ctx.actor.id,
       orderId,
       decision: 'approve',
+      waitUntil: ctx.waitUntil,
     });
     await finishAdminReview(ctx, result, callbackQueryId, messageChatId, messageId);
     return;
@@ -252,6 +262,7 @@ async function handleAdminCallback(
   }
   await clearPendingAdminAction(ctx.db, ctx.actor.id);
   const result = await performAdminReview({
+    env: ctx.env,
     db: ctx.db,
     api: ctx.api,
     actorId: ctx.actor.id,

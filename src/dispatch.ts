@@ -21,6 +21,7 @@ import { handleMedia, handleText } from './handlers/messages.ts';
 export async function processTelegramUpdate(
   update: unknown,
   env: Env,
+  options?: { waitUntil?: (promise: Promise<unknown>) => void },
 ): Promise<void> {
   if (!isTelegramUpdate(update)) return;
   if ((await claimUpdate(env.DB, update.update_id)) !== 'fresh') return; // webhook replay
@@ -46,6 +47,7 @@ export async function processTelegramUpdate(
       chatId,
       customerId,
       isAdmin: await resolveIsAdmin(env, env.DB, actor.id),
+      waitUntil: options?.waitUntil,
     };
 
     if (callback) {

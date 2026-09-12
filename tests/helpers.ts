@@ -1,6 +1,9 @@
 /**
  * Shared e2e test harness: an in-memory SQLite D1 shim + a fetch stub that
  * records Telegram API calls (no network). Reused by phase2/3/4 tests.
+ * Phase 5 adds an optional PasarGuard panel mock: routes whose URL starts
+ * with the given base are answered by the supplied responder (and recorded)
+ * — everything else never touches the network. Tests are fully offline.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
@@ -14,13 +17,50 @@ export interface Sent {
   payload: Record<string, unknown>;
 }
 
-export function makeFetchStub() {
+export interface PanelRequest {
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown> | null;
+}
+
+export interface PanelStub {
+  calls: PanelRequest[];
+  reset: () => void;
+}
+
+/** A response for an unexpected non-Telegram/non-panel URL: loud + inert. */
+function refused(): Response {
+  return Response.json({ error: 'fetch_stub_unexpected_url' }, { status: 599 });
+}
+
+export function makeFetchStub(panel?: {
+  base: string;
+  respond: (req: PanelRequest) => Response | Promise<Response>;
+}) {
   const sent: Sent[] = [];
+  const panelCalls: PanelRequest[] = [];
   const real = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
-    const method = url.match(/\/bot[^/]+\/(\w+)$/)?.[1] ?? 'unknown';
-    const payload = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    const url = new URL(String(input));
+    if (panel !== undefined && url.origin === panel.base) {
+      const request: PanelRequest = {
+        method: String(init?.method ?? 'GET'),
+        path: url.pathname,
+        headers: Object.fromEntries(
+          Object.entries((init?.headers ?? {}) as Record<string, string>),
+        ),
+        body:
+          typeof init?.body === 'string'
+            ? (JSON.parse(init.body) as Record<string, unknown>)
+            : null,
+      };
+      panelCalls.push(request);
+      return panel.respond(request);
+    }
+    const method = url.pathname.match(/\/bot[^/]+\/(\w+)$/)?.[1] ?? 'unknown';
+    if (method === 'unknown') return refused();
+    const payload = (JSON.parse(String(init?.body ?? '{}')) ?? {}) as Record<string, unknown>;
     sent.push({
       method,
       text: payload['text'],
@@ -30,6 +70,12 @@ export function makeFetchStub() {
   }) as typeof fetch;
   return {
     sent,
+    panel: {
+      calls: panelCalls,
+      reset: () => {
+        panelCalls.length = 0;
+      },
+    } satisfies PanelStub,
     reset: () => {
       sent.length = 0;
     },
@@ -103,6 +149,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0002_phase2.sql',
     'migrations/0003_phase3.sql',
     'migrations/0004_phase4.sql',
+    'migrations/0005_phase5.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }

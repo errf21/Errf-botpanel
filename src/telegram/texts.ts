@@ -18,6 +18,8 @@ export const fa = {
     '/start — نمایش منوی اصلی',
     '/cancel — بازگشت به منو و لغو عملیات جاری',
     '/help — همین پیام',
+    '/pending — (مدیران) فیش‌های در انتظار بررسی',
+    '/failed — (مدیران) سفارش‌های ناموفقِ راه‌اندازی',
     '',
     'برای شروع، دکمه‌های زیر را بزنید.',
   ].join('\n'),
@@ -153,6 +155,28 @@ export const fa = {
 
   paymentVerifiedByLabel: (v: string) => `بررسی‌کننده: ${v}`,
   paymentReferenceLine: (v: string) => `🧾 مرجع پرداخت: ${v}`,
+
+  // ————— Phase 5: automatic provisioning (PasarGuard) —————
+  serviceReady: (id: string, url: string) =>
+    `🎉 سرویس شما ساخته و فعال شد!\n\n🆔 سفارش: ${id}\n🔗 لینک اشتراک:\n${url}\n\nاین لینک را در اپلیکیشن خود (v2rayNG / Nekobox / Streisand و…) وارد کنید.`,
+  serviceReadyWithoutLink: (id: string) =>
+    `🎉 سرویس شما ساخته شد.\n\n🆔 سفارش: ${id}\n\nلینک اتصال فعلاً قابل دریافت نیست؛ به‌زودی از بخش «سرویس‌های من» در دسترس خواهد بود. در صورت عجله با پشتیبانی در ارتباط باشید.`,
+  provisionFailedNotice: (id: string) =>
+    `⚠️ ساخت سرویسِ سفارش پیش از حد مجاز به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nمسئولان در جریان قرار گرفتند و موضوع پیگیری می‌شود؛ نیازی به پرداخت مجدد نیست.`,
+  adminProvisionFailed: (id: string, reason: string) =>
+    `⚠️ ساخت سرویس ناموفق بود\n🆔 ${id}\n📝 ${reason.slice(0, 200)}\n\nبا دکمه‌ی زیر می‌توانید دوباره تلاش کنید (تا سقف مجاز).`,
+  failedQueueHeader: '🧯 سفارش‌های ناموفقِ راه‌اندازی',
+  failedQueueEmpty: '🎉 سفارش ناموفقی وجود ندارد.',
+  failedQueueEntry: (n: number, id: string, reason: string, attempts: number) =>
+    `${n}. 🆔 ${id}\n   ⚠️ ${reason.slice(0, 160)}\n   تلاش: ${attempts}`,
+  adminRetryOkToast: '✅ سرویس ساخته شد.',
+  adminRetryFailToast: '❌ تلاش مجدد هم ناموفق بود؛ جزئیات برای مدیران ارسال شد.',
+  adminRetryStaleToast: 'این سفارش هم‌اکنون در حال پردازش یا تغییر وضعیت است.',
+  adminRetryExhaustedToast: '🚫 سقف تلاش مجدد برای این سفارش پر شده است.',
+  adminPanelUnavailableToast: '⚠️ پیکربندی پنل کامل نیست؛ بعداً دوباره تلاش کنید.',
+  adminProvisionDisabledToast: '⚠️ ساخت خودکار سرویس فعلاً غیرفعال است.',
+  adminProvisionDone: (id: string) => `🔁 نتیجه‌ی تلاش مجدد ثبت شد\n🆔 ${id}`,
+  adminProvisionStale: (id: string) => `ℹ️ وضعیت سفارش ${id} تغییر کرده است؛ نیازی به این دکمه نیست.`,
 } as const;
 
 /** Format integer money with Persian thousands + currency word. */

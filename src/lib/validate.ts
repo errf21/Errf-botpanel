@@ -16,7 +16,7 @@ const CALLBACK_DATA_PATTERN = /^[a-z]{2,6}:[a-z0-9][a-z0-9_]{0,23}$/;
  * SEPARATE strict pattern; nothing else in the system may contain uppercase.
  */
 const ORDER_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{28}$/;
-const ADMIN_CALLBACK_PATTERN = /^adm:(ok|no|skip):[0-9A-HJKMNP-TV-Z]{28}$/;
+const ADMIN_CALLBACK_PATTERN = /^adm:(ok|no|skip|rt):[0-9A-HJKMNP-TV-Z]{28}$/;
 
 export function isValidCallbackData(data: unknown): data is string {
   return (
@@ -25,7 +25,7 @@ export function isValidCallbackData(data: unknown): data is string {
   );
 }
 
-export type AdminAction = 'ok' | 'no' | 'skip';
+export type AdminAction = 'ok' | 'no' | 'skip' | 'rt';
 
 export interface AdminCallback {
   action: AdminAction;
@@ -37,7 +37,7 @@ export function parseAdminCallback(data: string): AdminCallback | null {
   if (!ADMIN_CALLBACK_PATTERN.test(data)) return null;
   const [, action, orderId] = /^adm:(\w+):(.+)$/.exec(data) ?? [];
   if (!orderId || !ORDER_ID_PATTERN.test(orderId)) return null;
-  if (action !== 'ok' && action !== 'no' && action !== 'skip') return null;
+  if (action !== 'ok' && action !== 'no' && action !== 'skip' && action !== 'rt') return null;
   return { action, orderId };
 }
 

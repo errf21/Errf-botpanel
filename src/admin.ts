@@ -5,7 +5,11 @@
  * No PasarGuard call happens here (or anywhere in Phase 4).
  */
 import type { Env, TelegramApiLike } from './types.ts';
-import { getCustomerContact, isAdminUserId } from './db/customers.ts';
+import {
+  getCustomerContact,
+  isAdminUserId,
+  resolveAdminChatIds,
+} from './db/customers.ts';
 import { clearSession } from './db/states.ts';
 import {
   approveOrderByAdmin,
@@ -13,6 +17,7 @@ import {
   rejectOrderByAdmin,
   type OrderRow,
 } from './db/orders.ts';
+import { provisionOrder } from './provision/provision.ts';
 import { isValidOrderId, type ReceiptMedia } from './lib/validate.ts';
 import { adminReceiptKeyboard } from './telegram/menu.ts';
 import { fa, formatPrice } from './telegram/texts.ts';
@@ -26,28 +31,6 @@ export async function resolveIsAdmin(
   const configured = env.ADMIN_CHAT_ID?.trim() ?? '';
   if (configured !== '' && configured === String(actorId)) return true;
   return isAdminUserId(db, actorId);
-}
-
-/** Chat ids that receive forwarded receipts: env admin + every is_admin row. */
-export async function resolveAdminChatIds(env: Env, db: D1Database): Promise<number[]> {
-  const ids = new Set<number>();
-  const configured = env.ADMIN_CHAT_ID?.trim() ?? '';
-  if (/^[0-9]{1,20}$/.test(configured)) {
-    const num = Number(configured);
-    if (Number.isSafeInteger(num) && num > 0) ids.add(num);
-  }
-  try {
-    const rows = await db
-      .prepare('SELECT telegram_user_id FROM customers WHERE is_admin = 1')
-      .all<{ telegram_user_id: string }>();
-    for (const row of rows.results) {
-      const num = Number(row.telegram_user_id);
-      if (Number.isSafeInteger(num) && num > 0) ids.add(num);
-    }
-  } catch {
-    // DB failure degrades to env-only forwarding, never crashes the update.
-  }
-  return [...ids];
 }
 
 function parseSnapshot(order: OrderRow): Record<string, unknown> {
@@ -148,15 +131,20 @@ async function notifyCustomerOfReview(
 
 /**
  * The one admin write path: guarded transition → session reset → customer
- * notice. `actorId` is taken from the verified callback/text sender only.
+ * notice → (on approval) provisioning. `actorId` is taken from the verified
+ * callback/text sender only. Phase 5: an approved order is fed to
+ * `provisionOrder`, which stays a strict no-op until the panel + provisioning
+ * document are configured, so approvals before Phase 5 wiring remain inert.
  */
 export async function performAdminReview(opts: {
+  env: Env;
   db: D1Database;
   api: TelegramApiLike;
   actorId: number;
   orderId: string;
   decision: ReviewDecision;
   reason?: string | null;
+  waitUntil?: (promise: Promise<unknown>) => void;
 }): Promise<ReviewResult> {
   const { db, api, actorId, orderId } = opts;
   if (!isValidOrderId(orderId)) return { ok: false, error: 'invalid_id' };
@@ -177,6 +165,22 @@ export async function performAdminReview(opts: {
   // The customer's receipt-waiting conversation is over either way.
   await clearSession(db, order.customer_id);
   await notifyCustomerOfReview(db, api, order, opts.decision, opts.reason ?? null);
+
+  if (opts.decision === 'approve') {
+    const provisioning = provisionOrder(
+      { env: opts.env, db, api },
+      { orderId: order.id },
+    ).then((outcome) => {
+      if (!outcome.ok && 'skip' in outcome) {
+        console.log(`provision_skipped orderId=${order.id.slice(0, 32)} reason=${outcome.skip}`);
+      }
+      return outcome;
+    });
+    // Defer past the webhook ACK in production; inline in tests/harnesses.
+    if (opts.waitUntil) opts.waitUntil(provisioning);
+    else await provisioning;
+  }
+
   return { ok: true, order };
 }
 
