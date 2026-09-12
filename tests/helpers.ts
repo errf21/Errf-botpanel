@@ -1,6 +1,6 @@
 /**
  * Shared e2e test harness: an in-memory SQLite D1 shim + a fetch stub that
- * records Telegram API calls (no network). Reused by phase2/phase3 tests.
+ * records Telegram API calls (no network). Reused by phase2/3/4 tests.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
@@ -42,7 +42,7 @@ export function makeFetchStub() {
 
 interface ShimStatement {
   bind(...values: unknown[]): ShimStatement;
-  run(): void;
+  run(): { meta: { changes: number } };
   first<T extends object>(): T | null;
   all<T extends object>(): { results: T[] };
   // batch support:
@@ -59,8 +59,10 @@ export function makeD1Shim(db: DatabaseSync) {
         return api;
       },
       run() {
-        stmt.run(...values);
+        const out = stmt.run(...values) as { changes?: number };
         values = [];
+        // Mirrors D1's D1Result.meta.changes for guarded UPDATE verification.
+        return { meta: { changes: Number(out.changes ?? 0) } };
       },
       first<T extends object>() {
         const row = stmt.get(...values) as T | undefined;
@@ -100,6 +102,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0001_init.sql',
     'migrations/0002_phase2.sql',
     'migrations/0003_phase3.sql',
+    'migrations/0004_phase4.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }
@@ -113,26 +116,76 @@ export const USER = {
   language_code: 'fa',
 };
 
+export const ADMIN = {
+  id: 111111111,
+  first_name: 'Sara',
+  username: 'sara_admin',
+  language_code: 'fa',
+};
+
 export function messageUpdate(text: string, updateId: number) {
+  return messageUpdateAs(USER, text, updateId);
+}
+
+export function messageUpdateAs(
+  user: typeof USER,
+  text: string,
+  updateId: number,
+  messageIdOffset = 100,
+) {
   return {
     update_id: updateId,
     message: {
-      message_id: 100 + updateId,
-      from: USER,
-      chat: { id: USER.id, type: 'private' },
+      message_id: messageIdOffset + updateId,
+      from: user,
+      chat: { id: user.id, type: 'private' },
       text,
     },
   };
 }
 
+/** Photo or document uploads for the receipt flow. */
+export function mediaUpdate(
+  updateId: number,
+  receipt: { kind: 'photo' | 'document'; fileId: string; caption?: string },
+  user: typeof USER = USER,
+) {
+  const media =
+    receipt.kind === 'photo'
+      ? { photo: [{ file_id: `${receipt.fileId}_small` }, { file_id: receipt.fileId }] }
+      : { document: { file_id: receipt.fileId } };
+  return {
+    update_id: updateId,
+    message: {
+      message_id: 200 + updateId,
+      from: user,
+      chat: { id: user.id, type: 'private' },
+      ...(receipt.caption ? { caption: receipt.caption } : {}),
+      ...media,
+    },
+  };
+}
+
 export function callbackUpdate(data: unknown, updateId: number) {
+  return callbackUpdateAs(data, updateId, USER);
+}
+
+export function callbackUpdateAs(
+  data: unknown,
+  updateId: number,
+  user: typeof USER,
+  messageChatId?: number,
+) {
   return {
     update_id: updateId,
     callback_query: {
       id: `cb${updateId}`,
-      from: USER,
+      from: user,
       data,
-      message: { message_id: 500, chat: { id: USER.id } },
+      message: {
+        message_id: 500 + updateId,
+        chat: { id: messageChatId ?? user.id },
+      },
     },
   };
 }

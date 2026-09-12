@@ -1,10 +1,21 @@
 import type { UpdateContext } from '../types.ts';
-import { parsePositiveInt, sanitizeConfigName } from '../lib/validate.ts';
+import {
+  parsePositiveInt,
+  sanitizeConfigName,
+  sanitizeRejectionReason,
+  type ReceiptMedia,
+} from '../lib/validate.ts';
 import { backToMenuKeyboard, mainMenuKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 import { getSession, setSession } from '../db/states.ts';
+import {
+  clearPendingAdminAction,
+  getPendingAdminAction,
+} from '../db/admin_actions.ts';
+import { performAdminReview } from '../admin.ts';
 import { acceptsTextInput, reduce } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
+import { submitReceipt } from './payment.ts';
 import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
@@ -17,9 +28,39 @@ import {
  * Accepted where `acceptsTextInput(state)`:
  *  - WAITING_CONFIG_NAME   → sanitized free-text name
  *  - WAITING_VOLUME / …    → a custom numeric ("دلخواه") value for that step
+ * Phase 4 additions (checked FIRST, they intercept an otherwise-valid flow):
+ *  - admin with a pending "reject" action → the text IS the rejection reason
+ *  - photo/document while WAITING_PAYMENT_RECEIPT → receipt (dispatch routes
+ *    media here via handleMedia).
  * Everything else is politely ignored (state preserved).
  */
 export async function handleText(ctx: UpdateContext, text: string): Promise<void> {
+  if (ctx.isAdmin) {
+    const pending = await getPendingAdminAction(ctx.db, ctx.actor.id);
+    if (pending) {
+      const reason = sanitizeRejectionReason(text);
+      if (reason === null) {
+        // too long / empty: pending action stays, ask again
+        await ctx.api.sendMessage(ctx.chatId, fa.adminRejectPromptMsg);
+        return;
+      }
+      await clearPendingAdminAction(ctx.db, ctx.actor.id);
+      const result = await performAdminReview({
+        db: ctx.db,
+        api: ctx.api,
+        actorId: ctx.actor.id,
+        orderId: pending.order_id,
+        decision: 'reject',
+        reason,
+      });
+      await ctx.api.sendMessage(
+        ctx.chatId,
+        result.ok ? fa.adminRejectedToast : fa.adminStaleToast,
+      );
+      return;
+    }
+  }
+
   const session = await getSession(ctx.db, ctx.customerId);
 
   if (!acceptsTextInput(session.state)) {
@@ -80,4 +121,25 @@ function numericStepFor(state: string): StepKind | null {
     if (state === expected) return kind;
   }
   return null;
+}
+
+/**
+ * Photo/document uploads (dispatched to here when it is not a text message).
+ * Only WAITING_PAYMENT_RECEIPT consumes them — as a (replacement) receipt.
+ * Everywhere else the media is ignored with a neutral hint, state preserved.
+ */
+export async function handleMedia(
+  ctx: UpdateContext,
+  receipt: ReceiptMedia,
+): Promise<void> {
+  const session = await getSession(ctx.db, ctx.customerId);
+  if (session.state === 'WAITING_PAYMENT_RECEIPT') {
+    await submitReceipt(ctx, session, receipt);
+    return;
+  }
+  if (session.state === 'IDLE') {
+    await ctx.api.sendMessage(ctx.chatId, fa.idleInputHint, mainMenuKeyboard());
+    return;
+  }
+  await ctx.api.sendMessage(ctx.chatId, fa.receiptExpectedMedia, backToMenuKeyboard());
 }

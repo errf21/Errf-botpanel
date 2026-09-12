@@ -70,6 +70,23 @@ export interface TelegramMessage {
   from?: TelegramUser;
   chat?: { id: number; type?: string };
   text?: string;
+  /** Phase 4: payment receipts arrive as photos/documents (caption = reference). */
+  caption?: string;
+  photo?: TelegramPhotoSize[];
+  document?: TelegramDocument;
+}
+
+export interface TelegramPhotoSize {
+  file_id: string;
+  file_unique_id?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface TelegramDocument {
+  file_id: string;
+  file_name?: string;
+  mime_type?: string;
 }
 
 export interface TelegramCallbackQuery {
@@ -95,12 +112,31 @@ export interface TelegramApiLike {
     text: string,
     buttons?: TelegramInlineKeyboardMarkup,
   ): Promise<unknown>;
+  sendPhoto(
+    chatId: number,
+    fileId: string,
+    caption: string,
+    buttons?: TelegramInlineKeyboardMarkup,
+  ): Promise<unknown>;
+  sendDocument(
+    chatId: number,
+    fileId: string,
+    caption: string,
+    buttons?: TelegramInlineKeyboardMarkup,
+  ): Promise<unknown>;
   editMessageText(
     chatId: number,
     messageId: number,
     text: string,
     buttons?: TelegramInlineKeyboardMarkup,
   ): Promise<unknown>;
+  /** Media messages can only have their caption+buttons replaced. */
+  editMessageCaption(
+    chatId: number,
+    messageId: number,
+    caption: string,
+    buttons?: TelegramInlineKeyboardMarkup,
+  ): Promise<boolean>;
   answerCallbackQuery(id: string, text?: string, showAlert?: boolean): Promise<void>;
 }
 
@@ -114,6 +150,8 @@ export interface UpdateContext {
   chatId: number;
   /** Internal customers.id — resolved before any handler runs. */
   customerId: number;
+  /** ADMIN_CHAT_ID env OR customers.is_admin — computed once per update. */
+  isAdmin: boolean;
 }
 
 export interface TelegramUser {

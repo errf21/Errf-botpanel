@@ -12,28 +12,34 @@ wrangler.jsonc              Worker config: D1 binding, non-secret vars
 migrations/0001_init.sql    D1 foundation schema (orders, audit trail, settings)
 migrations/0002_phase2.sql  conversation_states + update_dedupe
 migrations/0003_phase3.sql  orders.idempotency_key + seeded catalog/pricing docs
+migrations/0004_phase4.sql  payment_info seed + admin_actions table
 src/index.ts                Fetch router: /health, /telegram/webhook
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
 src/dispatch.ts             Update pipeline: dedupe → register → route to handlers
+src/admin.ts                Admin authorization, receipt forwarding, review actions
 src/routes/health.ts        Liveness + D1 connectivity + binding status
 src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
 src/telegram/api.ts         Telegram Bot API client (token only in env)
-src/telegram/menu.ts        Callback vocabulary + main-menu keyboards
+src/telegram/menu.ts        Callback vocabulary + keyboards (incl. admin `adm:`)
 src/telegram/texts.ts       All user-facing text (Persian-first), one place
-src/handlers/commands.ts    /start /cancel /help
-src/handlers/callbacks.ts   Menu + flow buttons (format AND allowlist validated)
-src/handlers/messages.ts    Text input → state machine (config-name step today)
-src/state/machine.ts        Pure conversation state machine (extensible by Phase 3)
+src/handlers/commands.ts    /start /cancel /help /pending (admin)
+src/handlers/callbacks.ts   Menu + flow + admin-review buttons (format AND allowlist)
+src/handlers/messages.ts    Text → state machine; admin reject-reason interception
+src/handlers/payment.ts     Receipt submission, payment instructions, orders/queue views
+src/state/machine.ts        Pure conversation state machine
 src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
 src/catalog/pricing.ts      Pure integer price engine (rates + breakdown snapshot)
-src/db/orders.ts            Order repository: atomic insert via db.batch(), idempotency lookup
+src/catalog/payment.ts      Load + validate payment_info JSON (degrade-safe)
+src/db/orders.ts            Orders: atomic create, idempotency, guarded receipt/review transitions
+src/db/admin_actions.ts     Short-lived pending admin reject (reason prompt)
+src/db/customers.ts         Customers: idempotent upsert, is_admin flag, contact lookup
+src/db/{states,dedupe}.ts   Conversation sessions (24h TTL) + webhook replay guard
 src/orders/checkout.ts      Draft → priced → durable order (single creation path, replay-safe)
 src/handlers/purchase.ts    Buy steps + summary + confirmation (values re-checked vs DB catalog)
-src/db/{customers,states,dedupe}.ts   Repositories (idempotent upserts, session TTL)
 src/lib/security.ts         ULID order IDs, constant-time secret comparison
-src/lib/validate.ts         Payload guards: callback format, ids, config names
+src/lib/validate.ts         Payload guards: callbacks (incl. admin+ULID), media, sanitizers
 src/lib/http.ts             Response helpers
-tests/                      node --test: machine logic, payload validation, e2e loop
+tests/                      node --test: machine, validation, price, e2e phases 2–4
 .dev.vars.example           Template for local secrets (copy → .dev.vars)
 ```
 
@@ -134,12 +140,37 @@ configured and rejects requests with a wrong token (401).
 - `order_events` = append-only audit trail of every transition and admin action
 - Payment receipt fields isolated from selections; admin verification tracked separately
 
+## Payment & admin review model (Phase 4)
+
+- After confirmation the customer receives payment instructions rendered from
+  the D1 `payment_info` settings doc (card/holder/IBAN/instructions — placeholders
+  in 0004, edited without redeploy) plus the order's snapshotted amount.
+- A receipt is a **photo or document message** (caption = optional payment
+  reference); text is politely ignored. Submitted in `WAITING_PAYMENT_RECEIPT`,
+  stored on the order (`receipt_file_id`/`payment_reference`), order moves
+  `pending_payment → awaiting_review` and the receipt is forwarded to every
+  admin (photo/document + approve/reject buttons). A second upload **replaces**
+  the receipt while still `awaiting_review` (audited, re-forwarded).
+- Admins = env `ADMIN_CHAT_ID` **or** `customers.is_admin = 1` (row added in
+  P1). Forwarding targets both. `/pending` re-lists awaiting orders with
+  buttons (recovery path).
+- Approval/rejection: inline buttons on the forwarded receipt. Reject asks for
+  a reason (free text, sanitized, ≤200 chars; a skip button applies a default);
+  the pending prompt lives in `admin_actions` with a 15-min TTL. Transitions
+  are **single guarded UPDATEs** (`WHERE state='awaiting_review'` + affected-row
+  check) so double taps / two admins cannot process an order twice; winners
+  audit `payment_approved|payment_rejected` with `actor='admin:<telegram_id>'`.
+- Every admin action resets the customer's conversation to IDLE, notifies the
+  customer of the outcome (with the rejection reason), and edits the admin
+  message to neutralize dead buttons. Verification is **always manual** —
+  Phase 5 (PasarGuard) only ever acts on `approved` orders.
+
 ## Roadmap
 
 - **Phase 1**: skeleton, config layer, webhook auth, schema ✅
 - **Phase 2**: registration, main menu, callbacks, conversation state machine ✅
-- **Phase 3 (this)**: catalog config layer, integer pricing, buy steps → summary → idempotent order creation ✅
-- Phase 4: payment receipt upload + admin approval queue
+- **Phase 3**: catalog config layer, integer pricing, buy steps → summary → idempotent order creation ✅
+- **Phase 4 (this)**: payment receipt upload + admin approval queue (manual verification) ✅
 - Phase 5: PasarGuard integration + automatic provisioning (idempotent)
 - Phase 6: My Services + status + renewals
 - Phase 7: support + referrals + wallet

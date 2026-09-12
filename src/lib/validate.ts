@@ -1,12 +1,103 @@
 /**
  * Telegram payload validation. NEVER trust callback data or user ids blindly.
  */
-import type { TelegramCallbackQuery, TelegramMessage, TelegramUpdate } from '../types.ts';
+import type {
+  TelegramCallbackQuery,
+  TelegramDocument,
+  TelegramMessage,
+  TelegramUpdate,
+} from '../types.ts';
 
 const CALLBACK_DATA_PATTERN = /^[a-z]{2,6}:[a-z0-9][a-z0-9_]{0,23}$/;
 
+/**
+ * Admin action callbacks embed a full order id (Crockford base32, exactly the
+ * 28 chars newOrderId mints: 12-char time + 16-char random). Kept as a
+ * SEPARATE strict pattern; nothing else in the system may contain uppercase.
+ */
+const ORDER_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{28}$/;
+const ADMIN_CALLBACK_PATTERN = /^adm:(ok|no|skip):[0-9A-HJKMNP-TV-Z]{28}$/;
+
 export function isValidCallbackData(data: unknown): data is string {
-  return typeof data === 'string' && CALLBACK_DATA_PATTERN.test(data);
+  return (
+    typeof data === 'string' &&
+    (CALLBACK_DATA_PATTERN.test(data) || ADMIN_CALLBACK_PATTERN.test(data))
+  );
+}
+
+export type AdminAction = 'ok' | 'no' | 'skip';
+
+export interface AdminCallback {
+  action: AdminAction;
+  orderId: string;
+}
+
+/** Parses ONLY data that already matched ADMIN_CALLBACK_PATTERN. */
+export function parseAdminCallback(data: string): AdminCallback | null {
+  if (!ADMIN_CALLBACK_PATTERN.test(data)) return null;
+  const [, action, orderId] = /^adm:(\w+):(.+)$/.exec(data) ?? [];
+  if (!orderId || !ORDER_ID_PATTERN.test(orderId)) return null;
+  if (action !== 'ok' && action !== 'no' && action !== 'skip') return null;
+  return { action, orderId };
+}
+
+export function isValidOrderId(value: unknown): value is string {
+  return typeof value === 'string' && ORDER_ID_PATTERN.test(value);
+}
+
+/** Telegram file ids are base64url-ish strings; bound the size, nothing more. */
+const TELEGRAM_FILE_ID_PATTERN = /^[A-Za-z0-9_-]{1,255}$/;
+
+export function isValidFileId(value: unknown): value is string {
+  return typeof value === 'string' && TELEGRAM_FILE_ID_PATTERN.test(value);
+}
+
+/** Free-text payment reference (receipt caption): visible chars, capped. */
+export function sanitizePaymentReference(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim().replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  if (text.length === 0 || text.length > 128) return null;
+  return text;
+}
+
+/** Rejection reason typed by an admin: visible chars, capped at 200. */
+export function sanitizeRejectionReason(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim().replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  if (text.length === 0 || text.length > 200) return null;
+  return text;
+}
+
+export interface ReceiptMedia {
+  kind: 'photo' | 'document';
+  fileId: string;
+  /** Sanitized caption — a payment reference if present, else absent. */
+  reference?: string;
+}
+
+/**
+ * Extracts a receipt from an incoming message: documents are taken as-is,
+ * photos resolve to the LARGEST rendition (Telegram sends them smallest-first).
+ * Anything malformed degrades to null — a forged/oversized file_id never
+ * reaches the DB.
+ */
+export function extractReceiptMedia(message: TelegramMessage | undefined): ReceiptMedia | null {
+  if (!message) return null;
+  const reference = sanitizePaymentReference(message.caption) ?? undefined;
+
+  const document: TelegramDocument | undefined = message.document;
+  if (document) {
+    if (!isValidFileId(document.file_id)) return null;
+    return { kind: 'document', fileId: document.file_id, reference };
+  }
+
+  const sizes = message.photo;
+  if (Array.isArray(sizes) && sizes.length > 0) {
+    const largest = sizes[sizes.length - 1];
+    if (!largest || !isValidFileId(largest.file_id)) return null;
+    return { kind: 'photo', fileId: largest.file_id, reference };
+  }
+  return null;
 }
 
 /** Callback option value: at most 8 digits → bounded integer, no overflow games. */

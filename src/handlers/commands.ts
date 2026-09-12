@@ -2,6 +2,7 @@ import type { UpdateContext } from '../types.ts';
 import { clearSession } from '../db/states.ts';
 import { mainMenuKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
+import { showPendingQueue } from './payment.ts';
 import { parseCommand } from '../lib/validate.ts';
 
 /**
@@ -24,6 +25,13 @@ export async function handleCommand(
       return;
     case 'cancel':
       await cancelToMenu(ctx);
+      return;
+    case 'pending':
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+      } else {
+        await showPendingQueue(ctx);
+      }
       return;
     default:
       await ctx.api.sendMessage(ctx.chatId, fa.cmdUnknown, mainMenuKeyboard());

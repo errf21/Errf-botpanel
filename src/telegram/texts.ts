@@ -34,14 +34,11 @@ export const fa = {
   configNameInvalid:
     '❌ نام کانفیگ نامعتبر است (۱ تا ۶۴ نویسه، بدون کاراکترهای کنترلی).\nدوباره تلاش کنید یا «بازگشت به منو» را بزنید.',
   configNameSaved: (name: string) =>
-    `✅ نام کانفیگ «${name}» ثبت شد.\nانتخاب حجم/مدت/دستگاه در فاز بعد فعال می‌شود.`,
+    `✅ نام کانفیگ «${name}» ثبت شد.`,
   buyInProgress: '🛒 فرآیند خرید جاری را ادامه دهید یا برای لغو «بازگشت به منو» را بزنید.',
-  buyFlowSoon:
-    '⏳ ادامه‌ی فرآیند خرید در فاز بعدی فعال می‌شود. فعلاً می‌توانید با «بازگشت به منو» خارج شوید.',
 
   // Sections not yet implemented
   comingSoonServices: '📦 بخش «سرویس‌های من» در فاز ۶ اضافه می‌شود.',
-  comingSoonOrders: '💳 بخش «سفارش‌های من» در فاز ۴ اضافه می‌شود.',
   comingSoonSupport: '🆘 بخش «پشتیبانی» در فاز ۷ اضافه می‌شود.',
 
   accountHeader: '👤 اطلاعات حساب شما',
@@ -89,14 +86,73 @@ export const fa = {
   summaryHint: 'اگر همه‌چیز درست است «تأیید» را بزنید. برای ویرایش، «بازگشت».',
 
   orderCreated: (id: string) =>
-    `✅ سفارش شما ثبت شد!\n\n🆔 کد: ${id}\n\nاطلاعات کارت و ارسال فیش پرداخت در گام بعدی فعال می‌شود.`,
+    `✅ سفارش شما ثبت شد!\n\n🆔 کد: ${id}\n\n👇 اطلاعات واریز در پیام بعدی ارسال می‌شود.`,
   orderConfirmToast: '✅ سفارش ثبت شد.',
   alreadyConfirmed: '✅ این سفارش قبلاً ثبت شده است.',
 
   paymentWaitNotice:
-    '⏳ سفارش شما ثبت شده و در انتظار پرداخت است. لینک ارسال فیش در فاز بعد فعال می‌شود.',
+    '⏳ فیش پرداخت شما در انتظار بررسی است.\n\n💡 اگر فیش اشتباه است، تصویر/فایل جدیدی بفرستید تا جایگزین شود.\nبرای پیگیری، وضعیت را در «💳 سفارش‌های من» ببینید.',
 
   missingDraftData: '⚠️ اطلاعات سفارش کامل نیست. از ابتدا شروع کنید.',
+
+  // ————— Phase 4: payment, receipts, admin review —————
+  paymentInstructionsHeader: '💳 اطلاعات واریز وجه',
+  paymentHolder: (v: string) => `👤 به نام: ${v}`,
+  paymentCard: (v: string) => `🏦 شماره کارت: ${v}`,
+  paymentIban: (v: string) => `IBAN: ${v}`,
+  paymentAmountLine: (v: string) => `💰 مبلغ قابل واریز: ${v}`,
+  paymentReceiptPrompt:
+    '🧾 پس از واریز، تصویر یا فایل فیش پرداخت را در همین گفتگو بفرستید.\n\nتوجه: بررسی فیش به‌صورت دستی انجام می‌شود و ممکن است کمی زمان ببرد.',
+  paymentInfoUnavailable:
+    '⚠️ اطلاعات واریز فعلاً در دسترس نیست. برای ادامه با پشتیبانی در ارتباط باشید.',
+
+  receiptAccepted:
+    '✅ فیش پرداخت ثبت شد و برای بررسی ارسال گردید.\nنتیجه معمولاً تا چند ساعت اعلام می‌شود؛ وضعیت را از «💳 سفارش‌های من» پیگیری کنید.',
+  receiptReplaced: '✅ فیش جدید جایگزین شد و دوباره برای بررسی ارسال گردید.',
+  receiptExpectedMedia: '🧾 لطفاً فیش را به‌صورت تصویر یا فایل (برگردان فیش) ارسال کنید؛ متن به‌تنهایی فیش محسوب نمی‌شود.',
+  receiptOrderMissing: '⚠️ سفارش مرتبط با این گفتگو پیدا نشد. از منوی خرید شروع مجدد کنید.',
+  receiptOrderNotPayable: '⚠️ این سفارش دیگر در مرحله‌ی ارسال فیش نیست. وضعیت آن را از «💳 سفارش‌های من» ببینید.',
+
+  statusPendingPayment: '⏳ در انتظار پرداخت',
+  statusAwaitingReview: '🔎 در انتظار بررسی فیش',
+  statusApproved: '✅ تأییدشده — در انتظار راه‌اندازی',
+  statusProvisioning: '⚙️ در حال راه‌اندازی سرویس',
+  statusCompleted: '🟢 سرویس فعال شد',
+  statusRejected: '❌ رد شده',
+  statusFailed: '⚠️ ناموفق',
+  statusCancelled: '🚫 لغو شده',
+
+  ordersHeader: '🧾 سفارش‌های شما (جدیدترین‌ها)',
+  ordersEmpty: 'هنوز سفارشی ثبت نکرده‌اید.\nاز منوی «🛒 خرید سرویس» شروع کنید.',
+  ordersEntry: (n: number, shortId: string, status: string, price: string, date: string) =>
+    `${n}. 🆔 ${shortId} — ${status}\n   ${price} — ${date}`,
+
+  notifyApproved: (id: string, amount: string) =>
+    `🎉 پرداخت شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nسرویس شما به‌زودی ساخته می‌شود و اطلاعات اتصال ارسال خواهد شد.`,
+  notifyRejected: (id: string, reason: string) =>
+    `❌ متأسفانه فیش پرداخت سفارش تأیید نشد.\n\n🆔 سفارش: ${id}\n📝 دلیل: ${reason}\n\nمی‌توانید دوباره خرید کنید یا با پشتیبانی گفتگو کنید.`,
+
+  adminReceiptHeader: '🧾 فیش جدید برای بررسی',
+  adminReceiptLine: (n: number, id: string, status: string, amount: string, uploader: string) =>
+    `${n}. 🆔 ${id}\n   ${status} — ${amount}\n   پرداخت‌کننده: ${uploader}`,
+  adminProcessedApprove: (id: string, adminId: string) =>
+    `✅ تأیید شد\n🆔 ${id}\nبررسی‌کننده: ${adminId}`,
+  adminProcessedReject: (id: string, adminId: string) =>
+    `❌ رد شد\n🆔 ${id}\nبررسی‌کننده: ${adminId}`,
+  adminProcessedStale: (id: string) => `ℹ️ سفارش ${id} قبلاً بررسی شده است.`,
+  adminQueueHeader: '🗂 فیش‌های در انتظار بررسی',
+  adminQueueEmpty: '🎉 در حال حاضر فیشی در انتظار بررسی نیست.',
+  adminRejectPromptMsg:
+    '⌨️ دلیل رد را بنویسید و بفرستید.\n\nاین دلیل برای مشتری ارسال می‌شود؛ یا دکمه‌ی «رد بدون دلیل» را بزنید.',
+  adminRejectDefaultReason: 'پرداخت تأیید نشد.',
+  adminApprovedToast: '✅ سفارش تأیید شد.',
+  adminRejectedToast: '❌ سفارش رد شد.',
+  adminStaleToast: 'این سفارش قبلاً بررسی شده است.',
+  adminRejectCancelled: '↩️ رد سفارش لغو شد.',
+  cmdAdminOnly: '❌ این دستور در دسترس شما نیست.',
+
+  paymentVerifiedByLabel: (v: string) => `بررسی‌کننده: ${v}`,
+  paymentReferenceLine: (v: string) => `🧾 مرجع پرداخت: ${v}`,
 } as const;
 
 /** Format integer money with Persian thousands + currency word. */

@@ -1,16 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  extractReceiptMedia,
   isValidCallbackData,
+  isValidFileId,
+  isValidOrderId,
   isValidTelegramUserId,
   isTelegramUpdate,
+  parseAdminCallback,
   parseCallbackValue,
   parseCommand,
   parsePositiveInt,
   sanitizeConfigName,
+  sanitizePaymentReference,
+  sanitizeRejectionReason,
   extractCallbackTarget,
 } from '../src/lib/validate.ts';
-import { CB, isKnownCallback, routeCallback } from '../src/telegram/menu.ts';
+import { newOrderId } from '../src/lib/security.ts';
+import { CB, adminCallback, isKnownCallback, routeCallback } from '../src/telegram/menu.ts';
 
 test('routeCallback: static allowlist, option namespaces, garbage', () => {
   assert.deepEqual(routeCallback('menu:buy'), { kind: 'known', callback: 'menu:buy' });
@@ -127,4 +134,68 @@ test('callback target extraction', () => {
   });
   assert.equal(extractCallbackTarget({ id: '' }), null);
   assert.equal(extractCallbackTarget({} as never), null);
+});
+
+// ————— Phase 4: admin callbacks, order ids, receipt media —————
+
+test('admin callback pattern: strict format + strict ULID', () => {
+  const id = newOrderId();
+  for (const action of ['ok', 'no', 'skip'] as const) {
+    const data = adminCallback(action, id);
+    assert.equal(isValidCallbackData(data), true, data);
+    assert.deepEqual(parseAdminCallback(data), { action, orderId: id });
+    assert.equal(data.length <= 64, true);
+  }
+  // ULID alphabet excludes I, L, O, U — forged ids containing them are inert.
+  const evil = 'I'.repeat(28);
+  assert.equal(isValidCallbackData(`adm:ok:${evil}`), false);
+  assert.equal(parseAdminCallback(`adm:ok:${evil}`), null);
+  assert.equal(isValidCallbackData(`adm:ok:${id.toLowerCase()}`), false); // lowercase ULID
+  assert.equal(isValidCallbackData(`adm:no:${id}extrachars`), false);
+  assert.equal(isValidCallbackData('adm:exec:' + id), false);
+  assert.equal(isValidCallbackData('adm:ok:'), false);
+  assert.equal(isValidCallbackData('adm:ok:' + id.slice(0, 27)), false);
+  assert.equal(
+    parseAdminCallback(`adm:maybe:${id}` as string),
+    null,
+  );
+  assert.equal(isValidOrderId(id), true);
+  assert.equal(isValidOrderId(newOrderId().slice(0, 27)), false);
+});
+
+test('admin callbacks never touch the plain option/allowlist routing', () => {
+  const data = adminCallback('ok', newOrderId());
+  assert.equal(isKnownCallback(data), false);
+  assert.equal(routeCallback(data).kind, 'invalid');
+});
+
+test('file id and reference sanitizers', () => {
+  assert.equal(isValidFileId('BQACAgUAAxkB8abc-_9XYZ'), true);
+  assert.equal(isValidFileId('../etc/passwd'), false);
+  assert.equal(isValidFileId('has space'), false);
+  assert.equal(isValidFileId('x'.repeat(256)), false);
+  assert.equal(sanitizePaymentReference('  1234-5678  '), '1234-5678');
+  assert.equal(sanitizePaymentReference('x'.repeat(129)), null);
+  assert.equal(sanitizePaymentReference('\u0000'), null);
+  assert.equal(sanitizeRejectionReason('کارت به کارت نبود'), 'کارت به کارت نبود');
+  assert.equal(sanitizeRejectionReason('  '), null);
+  assert.equal(sanitizeRejectionReason('ر'.repeat(201)), null);
+});
+
+test('extractReceiptMedia: largest photo, document as-is, garbage rejected', () => {
+  const photo = extractReceiptMedia({
+    message_id: 1,
+    photo: [{ file_id: 'small' }, { file_id: 'largest_ok' }],
+    caption: 'کد رهگیری ۴۴',
+  });
+  assert.deepEqual(photo, { kind: 'photo', fileId: 'largest_ok', reference: 'کد رهگیری ۴۴' });
+  assert.deepEqual(extractReceiptMedia({ message_id: 1, document: { file_id: 'doc1' } }), {
+    kind: 'document',
+    fileId: 'doc1',
+    reference: undefined,
+  });
+  assert.equal(extractReceiptMedia({ message_id: 1, photo: [{ file_id: 'bad id!' }] }), null);
+  assert.equal(extractReceiptMedia({ message_id: 1 }), null);
+  assert.equal(extractReceiptMedia({ message_id: 1, text: 'hi' }), null);
+  assert.equal(extractReceiptMedia(undefined), null);
 });

@@ -2,10 +2,16 @@ import type { Env, TelegramUpdate, UpdateContext } from './types.ts';
 import { TelegramApi } from './telegram/api.ts';
 import { upsertCustomer } from './db/customers.ts';
 import { claimUpdate, releaseUpdate } from './db/dedupe.ts';
-import { isTelegramUpdate, isValidTelegramUserId, messageText } from './lib/validate.ts';
+import {
+  extractReceiptMedia,
+  isTelegramUpdate,
+  isValidTelegramUserId,
+  messageText,
+} from './lib/validate.ts';
+import { resolveIsAdmin } from './admin.ts';
 import { handleCommand } from './handlers/commands.ts';
 import { handleCallback } from './handlers/callbacks.ts';
-import { handleText } from './handlers/messages.ts';
+import { handleMedia, handleText } from './handlers/messages.ts';
 
 /**
  * Update dispatcher: structural validation → dedupe → customer registration
@@ -39,6 +45,7 @@ export async function processTelegramUpdate(
       actor,
       chatId,
       customerId,
+      isAdmin: await resolveIsAdmin(env, env.DB, actor.id),
     };
 
     if (callback) {
@@ -47,12 +54,18 @@ export async function processTelegramUpdate(
     }
 
     const text = messageText(message);
-    if (text === null) return; // non-text messages: ignore for now
-    if (text.startsWith('/')) {
-      await handleCommand(ctx, text);
+    if (text !== null) {
+      if (text.startsWith('/')) {
+        await handleCommand(ctx, text);
+        return;
+      }
+      await handleText(ctx, text);
       return;
     }
-    await handleText(ctx, text);
+
+    // Phase 4: receipts arrive as photo/document (largest rendition).
+    const receipt = extractReceiptMedia(message);
+    if (receipt) await handleMedia(ctx, receipt);
   } catch (error) {
     // Never leak internals; keep a safe one-line record.
     const name = error instanceof Error ? `${error.name}:${error.message}` : 'unknown';

@@ -14,6 +14,7 @@ import {
   type Catalog,
 } from '../src/catalog/catalog.ts';
 import { makeD1Shim, freshDb } from './helpers.ts';
+import { loadPaymentInfo, parsePaymentInfo } from '../src/catalog/payment.ts';
 
 const VOLUME_SEED = {
   schema: 1,
@@ -143,4 +144,29 @@ test('loadCatalog: degrades safely when config is broken', async () => {
   sqlite.prepare("UPDATE settings SET value = '{\"schema\": 999}' WHERE key = 'pricing'").run();
   const partial = await loadCatalog(makeD1Shim(sqlite) as never);
   assert.equal(partial.ok, false);
+});
+
+// ————— Phase 4: payment_info document —————
+
+test('loadPaymentInfo: seeded doc validates with iban null', async () => {
+  const shim = makeD1Shim(freshDb());
+  const result = await loadPaymentInfo(shim as unknown as Parameters<typeof loadPaymentInfo>[0]);
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.match(result.info.cardNumber, /^\d{16}$/);
+    assert.equal(result.info.iban, null);
+    assert.ok(result.info.holder.length > 0);
+  }
+});
+
+test('parsePaymentInfo: rejects malformed/hostile docs', () => {
+  assert.equal(parsePaymentInfo({ schema: 2, holder: 'a', card_number: '1234567890', instructions: 'x' }).ok, false);
+  assert.equal(parsePaymentInfo({ schema: 1, holder: '', card_number: '1234567890', instructions: 'x' }).ok, false);
+  assert.equal(parsePaymentInfo({ schema: 1, holder: 'a', card_number: 'rm -rf', instructions: 'x' }).ok, false);
+  assert.equal(parsePaymentInfo({ schema: 1, holder: 'a', card_number: '1234567890', instructions: 'x', iban: 'bad iban!' }).ok, false);
+  assert.equal(parsePaymentInfo('string').ok, false);
+  assert.equal(
+    parsePaymentInfo({ schema: 1, holder: 'a', card_number: '1234567890', instructions: 'x', iban: 'IR000000000000000000000000' }).ok,
+    true,
+  );
 });

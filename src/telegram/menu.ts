@@ -21,6 +21,41 @@ export const CB = {
   ORDER_CONFIRM: 'ord:confirm',
 } as const;
 
+/**
+ * Admin action callbacks carry a ULID order id, so they live in their own
+ * namespace with dedicated builders — values are produced ONLY by
+ * `adminCallback()` below and parsed ONLY by `parseAdminCallback()`.
+ */
+export function adminCallback(action: 'ok' | 'no' | 'skip', orderId: string): string {
+  return `adm:${action}:${orderId}`;
+}
+
+export function adminReceiptKeyboard(orderId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('✅ تأیید پرداخت', adminCallback('ok', orderId)), button('❌ رد', adminCallback('no', orderId))],
+    ],
+  };
+}
+
+export function adminRejectPromptKeyboard(orderId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('❌ ثبت رد بدون دلیل', adminCallback('skip', orderId))],
+      [button(fa.backToMenu, CB.ACT_CANCEL)],
+    ],
+  };
+}
+
+export function adminQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: orderIds.map((orderId) => [
+      button('✅', adminCallback('ok', orderId)),
+      button('❌', adminCallback('no', orderId)),
+    ]),
+  };
+}
+
 export type KnownCallback = (typeof CB)[keyof typeof CB];
 
 const KNOWN_CALLBACK_VALUES: readonly string[] = Object.values(CB);

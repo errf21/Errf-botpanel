@@ -15,6 +15,7 @@ import { newOrderId } from '../lib/security.ts';
 import { checkoutOrder } from '../orders/checkout.ts';
 import { CB, deviceKeyboard, durationKeyboard, volumeKeyboard, confirmKeyboard, backToMenuKeyboard } from '../telegram/menu.ts';
 import { fa, formatPrice } from '../telegram/texts.ts';
+import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
 
 /**
@@ -192,10 +193,23 @@ export async function confirmPurchase(
     data,
   );
   await ctx.api.answerCallbackQuery(callbackQueryId, fa.orderConfirmToast, !result.created);
-  const text = result.created
-    ? fa.orderCreated(result.order.id)
-    : `${fa.alreadyConfirmed}\n\n${fa.orderCreated(result.order.id)}`;
-  await ctx.api.sendMessage(ctx.chatId, text, backToMenuKeyboard());
+  if (!result.created) {
+    // Replay of an old confirm button on an order that may have moved on.
+    await ctx.api.sendMessage(ctx.chatId, fa.alreadyConfirmed, backToMenuKeyboard());
+    await resendPaymentGuidance(ctx, result.order);
+    return;
+  }
+  await ctx.api.sendMessage(ctx.chatId, fa.orderCreated(result.order.id), backToMenuKeyboard());
+  await sendPaymentInstructions(ctx, result.order);
+}
+
+/** Replays after confirmation: payment info (still payable) or live status. */
+async function resendPaymentGuidance(ctx: UpdateContext, order: import('../db/orders.ts').OrderRow): Promise<void> {
+  if (order.state === 'pending_payment' || order.state === 'awaiting_review') {
+    await sendPaymentInstructions(ctx, order);
+  } else {
+    await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
+  }
 }
 
 /** `step:back` — the edit ladder. Draft data is preserved on the way back. */

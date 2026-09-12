@@ -1,11 +1,29 @@
 import type { TelegramCallbackQuery, UpdateContext } from '../types.ts';
-import { extractCallbackTarget, isValidCallbackData } from '../lib/validate.ts';
-import { CB, isKnownCallback, mainMenuKeyboard, backToMenuKeyboard, routeCallback } from '../telegram/menu.ts';
+import {
+  extractCallbackTarget,
+  isValidCallbackData,
+  parseAdminCallback,
+} from '../lib/validate.ts';
+import {
+  CB,
+  adminRejectPromptKeyboard,
+  isKnownCallback,
+  mainMenuKeyboard,
+  backToMenuKeyboard,
+  routeCallback,
+} from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 import { getCustomer } from '../db/customers.ts';
 import { getSession, setSession } from '../db/states.ts';
+import {
+  clearPendingAdminAction,
+  getPendingAdminAction,
+  setPendingAdminAction,
+} from '../db/admin_actions.ts';
+import { performAdminReview, retireAdminMessage, type ReviewResult } from '../admin.ts';
 import { isBusy, reduce } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
+import { showMyOrders } from './payment.ts';
 import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
@@ -37,6 +55,13 @@ export async function handleCallback(
   }
 
   const { callbackQueryId, messageChatId, messageId } = target;
+
+  // ———— admin review callbacks: authorization BEFORE anything else ————
+  if (data.startsWith('adm:')) {
+    await handleAdminCallback(ctx, data, callbackQueryId, messageChatId, messageId);
+    return;
+  }
+
   const session = await getSession(ctx.db, ctx.customerId);
 
   const replyToMenu = async (text: string): Promise<void> => {
@@ -81,6 +106,14 @@ export async function handleCallback(
   switch (route.callback) {
     case CB.ACT_CANCEL:
     case CB.ACT_BACK_MENU: {
+      if (ctx.isAdmin) {
+        const pending = await getPendingAdminAction(ctx.db, ctx.actor.id);
+        if (pending) {
+          await clearPendingAdminAction(ctx.db, ctx.actor.id);
+          await ctx.api.answerCallbackQuery(callbackQueryId, fa.adminRejectCancelled);
+          return;
+        }
+      }
       if (!isBusy(session.state)) {
         await replyToMenu(fa.idleInputHint);
         return;
@@ -145,9 +178,11 @@ export async function handleCallback(
     case CB.MENU_SERVICES:
       await replyToMenu(fa.comingSoonServices);
       return;
-    case CB.MENU_ORDERS:
-      await replyToMenu(fa.comingSoonOrders);
+    case CB.MENU_ORDERS: {
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await showMyOrders(ctx);
       return;
+    }
     case CB.MENU_SUPPORT:
       await replyToMenu(fa.comingSoonSupport);
       return;
@@ -165,4 +200,98 @@ export async function handleCallback(
       return;
     }
   }
+}
+
+/**
+ * Handles `adm:ok:` / `adm:no:` / `adm:skip:`. Called ONLY after the callback
+ * passed format validation AND the actor is a verified admin, so every branch
+ * can assume `data` matches the strict admin pattern.
+ */
+async function handleAdminCallback(
+  ctx: UpdateContext,
+  data: string,
+  callbackQueryId: string,
+  messageChatId: number | null,
+  messageId: number | null,
+): Promise<void> {
+  const parsed = parseAdminCallback(data);
+  if (!ctx.isAdmin || !parsed) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+    return;
+  }
+  const { action, orderId } = parsed;
+
+  if (action === 'ok') {
+    const result = await performAdminReview({
+      db: ctx.db,
+      api: ctx.api,
+      actorId: ctx.actor.id,
+      orderId,
+      decision: 'approve',
+    });
+    await finishAdminReview(ctx, result, callbackQueryId, messageChatId, messageId);
+    return;
+  }
+
+  if (action === 'no') {
+    await setPendingAdminAction(ctx.db, ctx.actor.id, orderId);
+    await ctx.api.answerCallbackQuery(callbackQueryId);
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      fa.adminRejectPromptMsg,
+      adminRejectPromptKeyboard(orderId),
+    );
+    return;
+  }
+
+  // action === 'skip': only meaningful with a live pending reject for THIS order.
+  const pending = await getPendingAdminAction(ctx.db, ctx.actor.id);
+  if (!pending || pending.order_id !== orderId) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+    return;
+  }
+  await clearPendingAdminAction(ctx.db, ctx.actor.id);
+  const result = await performAdminReview({
+    db: ctx.db,
+    api: ctx.api,
+    actorId: ctx.actor.id,
+    orderId,
+    decision: 'reject',
+    reason: fa.adminRejectDefaultReason,
+  });
+  await finishAdminReview(ctx, result, callbackQueryId, messageChatId, messageId);
+}
+
+/** Shared outcome reporting for approve/skip-reject button presses. */
+async function finishAdminReview(
+  ctx: UpdateContext,
+  result: ReviewResult,
+  callbackQueryId: string,
+  messageChatId: number | null,
+  messageId: number | null,
+): Promise<void> {
+  if (!result.ok) {
+    await ctx.api.answerCallbackQuery(
+      callbackQueryId,
+      result.error === 'not_found' || result.error === 'invalid_id'
+        ? fa.invalidChoice
+        : fa.adminStaleToast,
+      true,
+    );
+    return;
+  }
+
+  const approved = result.order.state === 'approved';
+  await ctx.api.answerCallbackQuery(
+    callbackQueryId,
+    approved ? fa.adminApprovedToast : fa.adminRejectedToast,
+  );
+  await retireAdminMessage(
+    ctx.api,
+    messageChatId,
+    messageId,
+    approved
+      ? fa.adminProcessedApprove(result.order.id, String(ctx.actor.id))
+      : fa.adminProcessedReject(result.order.id, String(ctx.actor.id)),
+  );
 }
