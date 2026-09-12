@@ -44,6 +44,13 @@ export type ConversationState = (typeof CONVERSATION_STATES)[number];
 /** JSON payload attached to a conversation state (draft selections, etc.). */
 export interface StateData {
   config_name?: string;
+  volume_gb?: number;
+  duration_days?: number;
+  device_count?: number;
+  /** ULID minted when the confirmation step appears = order idempotency key. */
+  order_token?: string;
+  /** Set only after a durable order row exists. */
+  order_id?: string;
   [key: string]: unknown;
 }
 

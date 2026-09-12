@@ -76,5 +76,26 @@ test('busy flag and text-input gating', () => {
   assert.equal(isBusy('IDLE'), false);
   assert.equal(isBusy('WAITING_VOLUME'), true);
   assert.equal(acceptsTextInput('WAITING_CONFIG_NAME'), true);
+  assert.equal(acceptsTextInput('WAITING_VOLUME'), true);
+  assert.equal(acceptsTextInput('WAITING_DURATION'), true);
+  assert.equal(acceptsTextInput('WAITING_DEVICE_LIMIT'), true);
+  assert.equal(acceptsTextInput('WAITING_ORDER_CONFIRMATION'), false);
   assert.equal(acceptsTextInput('IDLE'), false);
+});
+
+test('step_back climbs the edit ladder one rung at a time', () => {
+  assert.equal(reduce('WAITING_VOLUME', 'step_back'), 'WAITING_CONFIG_NAME');
+  assert.equal(reduce('WAITING_DURATION', 'step_back'), 'WAITING_VOLUME');
+  assert.equal(reduce('WAITING_DEVICE_LIMIT', 'step_back'), 'WAITING_DURATION');
+  assert.equal(reduce('WAITING_ORDER_CONFIRMATION', 'step_back'), 'WAITING_DEVICE_LIMIT');
+});
+
+test('step_back from frozen/paid state never rewinds a durable order context', () => {
+  assert.equal(reduce('WAITING_PAYMENT_RECEIPT', 'step_back'), 'WAITING_PAYMENT_RECEIPT');
+});
+
+test('step_back from early/idle states lands on IDLE', () => {
+  assert.equal(reduce('IDLE', 'step_back'), 'IDLE');
+  assert.equal(reduce('BUYING', 'step_back'), 'IDLE');
+  assert.equal(reduce('WAITING_CONFIG_NAME', 'step_back'), 'IDLE');
 });

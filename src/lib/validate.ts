@@ -3,10 +3,32 @@
  */
 import type { TelegramCallbackQuery, TelegramMessage, TelegramUpdate } from '../types.ts';
 
-const CALLBACK_DATA_PATTERN = /^[a-z]{2,6}:[a-z][a-z0-9_]{1,24}$/;
+const CALLBACK_DATA_PATTERN = /^[a-z]{2,6}:[a-z0-9][a-z0-9_]{0,23}$/;
 
 export function isValidCallbackData(data: unknown): data is string {
   return typeof data === 'string' && CALLBACK_DATA_PATTERN.test(data);
+}
+
+/** Callback option value: at most 8 digits → bounded integer, no overflow games. */
+export function parseCallbackValue(value: string): number | 'custom' | null {
+  if (value === 'custom') return 'custom';
+  if (!/^[0-9]{1,8}$/.test(value)) return null;
+  const num = Number(value);
+  return Number.isSafeInteger(num) && num >= 0 ? num : null;
+}
+
+const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
+const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+
+/** Normalizes Persian/Arabic-Indic digits + separators, then requires pure 1–8 digits. */
+export function parsePositiveInt(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  let text = raw.trim().replace(/\s+/gu, '').replace(/[٬,]/g, '');
+  text = text.replace(/[۰-۹]/g, (d) => String(PERSIAN_DIGITS.indexOf(d)));
+  text = text.replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d)));
+  if (!/^[0-9]{1,8}$/.test(text)) return null;
+  const num = Number(text);
+  return Number.isSafeInteger(num) && num >= 0 ? num : null;
 }
 
 export function isValidTelegramUserId(id: unknown): id is number {

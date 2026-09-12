@@ -58,4 +58,50 @@ export const fa = {
   invalidChoice: '❌ گزینه نامعتبر.',
   backToMenu: '🔙 بازگشت به منو',
   idleInputHint: 'برای شروع یک گزینه از منو را انتخاب کنید.',
+
+  // ————— Phase 3: purchase options, summary, confirmation —————
+  catalogUnavailable:
+    '🔧 فعلاً امکان انتخاب گزینه‌ها وجود ندارد. کمی بعد دوباره امتحان کنید.',
+  volumePrompt: (min: number, max: number) =>
+    `📦 حجم سرویس را انتخاب کنید.\n\nحداقل ${min} و حداکثر ${max} گیگابایت.\nبرای مقدار دلخواه، عدد را تایپ کنید (یا دکمه‌ی «دلخواه»).`,
+  durationPrompt: (min: number, max: number) =>
+    `⏳ مدت سرویس را انتخاب کنید.\n\nبین ${min} تا ${max} روز.\nبرای مقدار دلخواه، عدد روز را تایپ کنید.`,
+  devicePrompt: (min: number, max: number) =>
+    `📱 تعداد دستگاه‌های مجاز:\n\nبین ${min} تا ${max}.\nبرای مقدار دلخواه، عدد را تایپ کنید.`,
+  customVolumeLabel: '✍️ مقدار دلخواه',
+  customHint: '✍️ حالا عدد دلخواه را همین‌جا تایپ کن و بفرست.',
+  rejectedRange: (min: number, max: number) =>
+    `⚠️ عدد باید بین ${min} تا ${max} باشد. دوباره تلاش کنید یا «بازگشت» را بزنید.`,
+  rejectedPresetDisabled: '⚠️ این گزینه فعلاً غیرفعال است؛ یکی دیگر را انتخاب کنید.',
+  rejectedNotWhole: '⚠️ لطفاً فقط یک عدد صحیح بفرستید.',
+  staleChoice: '🔄 این گزینه مربوط به مرحله‌ی دیگری است. مرحله‌ی فعلی را ادامه دهید.',
+  stepBack: '↩️ بازگشت به مرحله قبل',
+  confirmYes: '✅ تأیید و ثبت سفارش',
+
+  summaryHeader: '🧾 خلاصه سفارش',
+  summaryName: (v: string) => `🏷 نام کانفیگ: ${v}`,
+  summaryVolume: (gb: number) => `📦 حجم: ${gb} گیگابایت`,
+  summaryDuration: (days: number, months: number) =>
+    `⏳ مدت: ${days} روز (${months} ماه)`,
+  summaryDevices: (n: number) => `📱 دستگاه: ${n}`,
+  summaryPrice: (v: string) => `💰 قیمت کل: ${v}`,
+  summaryId: (id: string) => `🆔 کد سفارش: ${id}`,
+  summaryHint: 'اگر همه‌چیز درست است «تأیید» را بزنید. برای ویرایش، «بازگشت».',
+
+  orderCreated: (id: string) =>
+    `✅ سفارش شما ثبت شد!\n\n🆔 کد: ${id}\n\nاطلاعات کارت و ارسال فیش پرداخت در گام بعدی فعال می‌شود.`,
+  orderConfirmToast: '✅ سفارش ثبت شد.',
+  alreadyConfirmed: '✅ این سفارش قبلاً ثبت شده است.',
+
+  paymentWaitNotice:
+    '⏳ سفارش شما ثبت شده و در انتظار پرداخت است. لینک ارسال فیش در فاز بعد فعال می‌شود.',
+
+  missingDraftData: '⚠️ اطلاعات سفارش کامل نیست. از ابتدا شروع کنید.',
 } as const;
+
+/** Format integer money with Persian thousands + currency word. */
+export function formatPrice(amount: number, currency: string): string {
+  const word = currency === 'IRT' ? 'تومان' : currency === 'IRR' ? 'ریال' : currency;
+  return `${amount.toLocaleString('fa-IR')} ${word}`;
+}
+

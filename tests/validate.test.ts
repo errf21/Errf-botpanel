@@ -4,11 +4,47 @@ import {
   isValidCallbackData,
   isValidTelegramUserId,
   isTelegramUpdate,
+  parseCallbackValue,
   parseCommand,
+  parsePositiveInt,
   sanitizeConfigName,
   extractCallbackTarget,
 } from '../src/lib/validate.ts';
-import { CB, isKnownCallback } from '../src/telegram/menu.ts';
+import { CB, isKnownCallback, routeCallback } from '../src/telegram/menu.ts';
+
+test('routeCallback: static allowlist, option namespaces, garbage', () => {
+  assert.deepEqual(routeCallback('menu:buy'), { kind: 'known', callback: 'menu:buy' });
+  assert.deepEqual(routeCallback('ord:confirm'), { kind: 'known', callback: 'ord:confirm' });
+  assert.deepEqual(routeCallback('step:back'), { kind: 'known', callback: 'step:back' });
+  assert.deepEqual(routeCallback('vol:10'), { kind: 'option', namespace: 'vol', value: 10 });
+  assert.deepEqual(routeCallback('dev:custom'), { kind: 'option', namespace: 'dev', value: 'custom' });
+  assert.equal(routeCallback('vol:999999999999').kind, 'invalid'); // > 8 digits
+  assert.equal(routeCallback('vol:0x10').kind, 'invalid');
+  assert.equal(routeCallback('exec:rmi_rf_root').kind, 'invalid');
+  assert.equal(routeCallback('VOL:10').kind, 'invalid');
+});
+
+test('parseCallbackValue rejects overflowing/hostile numeric payloads', () => {
+  assert.equal(parseCallbackValue('12'), 12);
+  assert.equal(parseCallbackValue('custom'), 'custom');
+  assert.equal(parseCallbackValue('123456789'), null); // > 8 digits
+  assert.equal(parseCallbackValue('-5'), null);
+  assert.equal(parseCallbackValue('1e9'), null);
+  assert.equal(parseCallbackValue('٠٤'), null); // non-latin digits not callback format
+});
+
+test('parsePositiveInt: persian/arabic digits, separators, bounds', () => {
+  assert.equal(parsePositiveInt('۱۲'), 12);
+  assert.equal(parsePositiveInt('٣٤'), 34);
+  assert.equal(parsePositiveInt(' 45 '), 45);
+  assert.equal(parsePositiveInt('1٬000'), 1000);
+  assert.equal(parsePositiveInt('0'), 0); // allow 0; range checks reject later
+  assert.equal(parsePositiveInt('-3'), null);
+  assert.equal(parsePositiveInt('12.5'), null);
+  assert.equal(parsePositiveInt('۱۲۳۴۵۶۷۸۹۰'), null); // 10 digits
+  assert.equal(parsePositiveInt('hello'), null);
+  assert.equal(parsePositiveInt(''), null);
+});
 
 test('allowlist rejects well-formed but unknown callback names (layer 2)', () => {
   assert.equal(isValidCallbackData('exec:rmi_rf_root'), true); // format ok...

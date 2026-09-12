@@ -20,6 +20,7 @@ export type ConversationEvent =
   | 'devices_chosen'
   | 'order_confirmed'
   | 'receipt_received'
+  | 'step_back'
   | 'cancel'
   | 'back_to_menu'
   | 'none';
@@ -42,6 +43,19 @@ export function isConversationState(value: string): value is ConversationState {
 }
 
 /**
+ * Edit ladder: back returns to the previous purchase step. Once the order is
+ * durable (WAITING_PAYMENT_RECEIPT) drafts are frozen — going back there
+ * would desync the committed order from the conversation.
+ */
+const BACK_MAP: Partial<Record<ConversationState, ConversationState>> = {
+  WAITING_VOLUME: 'WAITING_CONFIG_NAME',
+  WAITING_DURATION: 'WAITING_VOLUME',
+  WAITING_DEVICE_LIMIT: 'WAITING_DURATION',
+  WAITING_ORDER_CONFIRMATION: 'WAITING_DEVICE_LIMIT',
+  WAITING_PAYMENT_RECEIPT: 'WAITING_PAYMENT_RECEIPT',
+};
+
+/**
  * Legal moves only. Invalid events leave the state untouched (fail-safe);
  * cancel/back are universally legal and always land on IDLE.
  */
@@ -50,6 +64,7 @@ export function reduce(
   event: ConversationEvent,
 ): ConversationState {
   if (event === 'cancel' || event === 'back_to_menu') return 'IDLE';
+  if (event === 'step_back') return BACK_MAP[state] ?? 'IDLE';
   const rules = FORWARD[event];
   if (!rules) return state;
   const match = rules.find(([from]) => from === state);
@@ -62,9 +77,16 @@ export function isBusy(state: ConversationState): boolean {
 }
 
 /**
- * States accepted for customer text input. Phase 3 registers WAITING_VOLUME
- * prompts etc. by extending this (text is ignored elsewhere by design).
+ * States that consume free-text input. Text is parsed as a name in
+ * WAITING_CONFIG_NAME and as a custom numeric value in each option step.
  */
+const TEXT_ACCEPTING_STATES: readonly ConversationState[] = [
+  'WAITING_CONFIG_NAME',
+  'WAITING_VOLUME',
+  'WAITING_DURATION',
+  'WAITING_DEVICE_LIMIT',
+];
+
 export function acceptsTextInput(state: ConversationState): boolean {
-  return state === 'WAITING_CONFIG_NAME';
+  return TEXT_ACCEPTING_STATES.includes(state);
 }

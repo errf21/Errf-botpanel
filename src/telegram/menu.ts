@@ -17,11 +17,49 @@ export const CB = {
   MENU_SUPPORT: 'menu:support',
   ACT_CANCEL: 'act:cancel',
   ACT_BACK_MENU: 'act:back_menu',
+  STEP_BACK: 'step:back',
+  ORDER_CONFIRM: 'ord:confirm',
 } as const;
 
 export type KnownCallback = (typeof CB)[keyof typeof CB];
 
 const KNOWN_CALLBACK_VALUES: readonly string[] = Object.values(CB);
+
+/** Option-namespace values are catalog-derived (validated in handlers). */
+export type OptionNamespace = 'vol' | 'dur' | 'dev';
+
+export type RouteResult =
+  | { kind: 'known'; callback: KnownCallback }
+  | { kind: 'option'; namespace: OptionNamespace; value: 'custom' | number }
+  | { kind: 'invalid' };
+
+const NAMESPACE_STEP: Record<OptionNamespace, 'volume' | 'duration' | 'device'> = {
+  vol: 'volume',
+  dur: 'duration',
+  dev: 'device',
+};
+
+export function stepForNamespace(ns: OptionNamespace): 'volume' | 'duration' | 'device' {
+  return NAMESPACE_STEP[ns];
+}
+
+/** Classify validated callback data against the static allowlist + option namespaces. */
+export function routeCallback(data: string): RouteResult {
+  if (isKnownCallback(data)) return { kind: 'known', callback: data };
+  const match = /^(vol|dur|dev):(.+)$/.exec(data);
+  if (match) {
+    const ns = match[1] as OptionNamespace;
+    const raw = match[2] ?? '';
+    if (raw === 'custom') return { kind: 'option', namespace: ns, value: 'custom' };
+    if (/^[0-9]{1,8}$/.test(raw)) {
+      const num = Number(raw);
+      if (Number.isSafeInteger(num)) {
+        return { kind: 'option', namespace: ns, value: num };
+      }
+    }
+  }
+  return { kind: 'invalid' };
+}
 
 export function isKnownCallback(data: string): data is KnownCallback {
   return KNOWN_CALLBACK_VALUES.includes(data);
@@ -44,3 +82,61 @@ export function mainMenuKeyboard(): TelegramInlineKeyboardMarkup {
 export function backToMenuKeyboard(): TelegramInlineKeyboardMarkup {
   return { inline_keyboard: [[button(fa.backToMenu, CB.ACT_BACK_MENU)]] };
 }
+
+/**
+ * Phase 3: catalog-driven option keyboards. Rows follow the configured preset
+ * order (two per row), then a custom-input hint row and the back/cancel row.
+ * Values are plain integers — validation happens server-side against the
+ * freshly loaded catalog, never against what the button promised.
+ */
+function optionKeyboard(
+  namespace: OptionNamespace,
+  presets: number[],
+  allowCustom: boolean,
+  labelOf: (value: number) => string,
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [];
+  for (let i = 0; i < presets.length; i += 2) {
+    const row: TelegramInlineKeyboardButton[] = [];
+    for (const value of presets.slice(i, i + 2)) {
+      row.push(button(labelOf(value), `${namespace}:${value}`));
+    }
+    rows.push(row);
+  }
+  if (allowCustom) {
+    rows.push([button(fa.customVolumeLabel, `${namespace}:custom`)]);
+  }
+  rows.push([button(fa.stepBack, CB.STEP_BACK), button('❌ لغو', CB.ACT_CANCEL)]);
+  return { inline_keyboard: rows };
+}
+
+export function volumeKeyboard(
+  presets: number[],
+  allowCustom: boolean,
+): TelegramInlineKeyboardMarkup {
+  return optionKeyboard('vol', presets, allowCustom, (v) => `${v} گیگ`);
+}
+
+export function durationKeyboard(
+  presets: number[],
+  allowCustom: boolean,
+): TelegramInlineKeyboardMarkup {
+  return optionKeyboard('dur', presets, allowCustom, (v) => `${v} روز`);
+}
+
+export function deviceKeyboard(
+  presets: number[],
+  allowCustom: boolean,
+): TelegramInlineKeyboardMarkup {
+  return optionKeyboard('dev', presets, allowCustom, (v) => `${v} دستگاه`);
+}
+
+export function confirmKeyboard(): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button(fa.confirmYes, CB.ORDER_CONFIRM)],
+      [button(fa.stepBack, CB.STEP_BACK), button('❌ لغو', CB.ACT_CANCEL)],
+    ],
+  };
+}
+
