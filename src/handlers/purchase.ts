@@ -28,7 +28,7 @@ import { provisionOrder } from '../provision/provision.ts';
 import { newOrderId } from '../lib/security.ts';
 import { checkoutOrder, planWalletPayment, walletCreditFromSnapshot, type WalletPlan } from '../orders/checkout.ts';
 import { CB, deviceKeyboard, durationKeyboard, volumeKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard, configNameKeyboard, mainMenuKeyboard } from '../telegram/menu.ts';
-import { fa, formatPrice } from '../telegram/texts.ts';
+import { fa, formatPrice, deviceReaction, volumeReaction } from '../telegram/texts.ts';
 import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
 
@@ -77,15 +77,23 @@ export function stepView(state: ConversationState, catalog: Catalog): StepView |
 
 function rejectionMessage(catalog: Catalog, kind: StepKind, reason: string): string {
   if (reason === 'range') {
-    const range =
-      kind === 'volume'
-        ? [catalog.volume.minGb, catalog.volume.maxGb]
-        : kind === 'duration'
-          ? [catalog.duration.minDays, catalog.duration.maxDays]
-          : [catalog.device.minCount, catalog.device.maxCount];
-    return fa.rejectedRange(range[0] ?? 0, range[1] ?? 0);
+    // Phase 8B: flow-specific wording — every step answers in its own domain.
+    if (kind === 'volume') {
+      return fa.rejectedVolumeRange(catalog.volume.minGb, catalog.volume.maxGb);
+    }
+    if (kind === 'duration') {
+      return fa.rejectedDurationRange(catalog.duration.minDays, catalog.duration.maxDays);
+    }
+    return fa.rejectedDeviceRange(catalog.device.minCount, catalog.device.maxCount);
   }
   return fa.rejectedPresetDisabled;
+}
+
+/** The one-line personality reaction riding on the next bubble, if any. */
+function stepReaction(kind: StepKind, value: number): string | null {
+  if (kind === 'device') return deviceReaction(value);
+  if (kind === 'volume') return volumeReaction(value);
+  return null;
 }
 
 /**
@@ -126,13 +134,20 @@ export async function applyStepChoice(
     // The confirmation step mints the durable draft identity exactly once.
     if (typeof data['order_token'] !== 'string') data['order_token'] = newOrderId();
     await setSession(ctx.db, ctx.customerId, next, data);
-    await sendSummary(ctx, { state: next, data }, catalog);
+    await sendSummary(ctx, { state: next, data }, catalog, stepReaction(kind, value));
     return;
   }
 
   await setSession(ctx.db, ctx.customerId, next, data);
   const view = stepView(next, catalog);
-  if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
+  if (view) {
+    const reaction = stepReaction(kind, value);
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      reaction ? `${reaction}\n\n${view.text}` : view.text,
+      view.keyboard,
+    );
+  }
 }
 
 /** Renders the summary strictly from server-side draft data. */
@@ -140,6 +155,7 @@ export async function sendSummary(
   ctx: UpdateContext,
   session: Session,
   catalog: Catalog,
+  prelude: string | null = null,
 ): Promise<void> {
   const price = extractDraft(session);
   if (!price) {
@@ -154,7 +170,11 @@ export async function sendSummary(
   }
   const b = computed.breakdown;
   const balance = await payableWalletBalance(ctx.db, ctx.customerId);
-  const lines = [
+  const lines: string[] = [];
+  // Phase 8B: an optional one-line reaction rides on THIS bubble only
+  // (fresh choice); a re-render of the summary never repeats it.
+  if (prelude !== null) lines.push(prelude);
+  lines.push(
     fa.summaryHeader,
     fa.summaryName(String(session.data['config_name'])),
     fa.summaryVolume(b.volume_gb),
@@ -162,7 +182,7 @@ export async function sendSummary(
     fa.summaryDevices(b.device_count),
     fa.summaryPrice(formatPrice(b.total, b.currency)),
     fa.summaryId(String(session.data['order_token'])),
-  ];
+  );
   if (balance !== null && balance > 0) {
     lines.push(fa.summaryWalletLine(formatPrice(balance, 'IRT')));
     const full = balance >= b.total;

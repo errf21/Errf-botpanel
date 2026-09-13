@@ -96,10 +96,12 @@ export async function handleCommand(
 
 export async function showMenu(ctx: UpdateContext): Promise<void> {
   await clearSession(ctx.db, ctx.customerId);
-  const name = ctx.actor.first_name ? `${fa.welcomeHeader} ${ctx.actor.first_name}!` : fa.welcomeHeader;
+  // Phase 8B: «درود زیبا» when no first name is known (configname.test and
+  // phase8b.test pin the greeting wording and its forbidden variant).
+  const greeting = fa.welcomeGreeting(ctx.actor.first_name || null);
   await ctx.api.sendMessage(
     ctx.chatId,
-    `${name}\n${fa.welcomeIntro}\n\n${fa.menuPrompt}`,
+    `${greeting}\n${fa.welcomeIntro}\n\n${fa.menuPrompt}`,
     mainMenuKeyboard(),
   );
 }

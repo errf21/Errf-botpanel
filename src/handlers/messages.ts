@@ -285,7 +285,9 @@ async function handleBackToMenuText(ctx: UpdateContext): Promise<void> {
   }
   const session = await getSession(ctx.db, ctx.customerId);
   if (!isBusy(session.state)) {
-    await ctx.api.sendMessage(ctx.chatId, fa.idleInputHint, mainMenuKeyboard());
+    // Phase 8B: a deliberate back-tap is NOT off-topic input — soft nudge,
+    // the «مشتی…» fallback stays reserved for genuinely out-of-flow text.
+    await ctx.api.sendMessage(ctx.chatId, fa.idleMenuNudge, mainMenuKeyboard());
     return;
   }
   await cancelToMenu(ctx); // clears session, sends menu

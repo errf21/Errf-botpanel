@@ -67,7 +67,8 @@ test('full purchase: start → buy → name → custom 12GB → 30d → devices 
   stub.reset();
   await dispatch(messageUpdate('۵', 104)); // Persian 5
   assert.equal(session().state, 'WAITING_VOLUME');
-  assert.ok(String(stub.sendCalls()[0]?.text).includes('بین'));
+  // Phase 8B: flow-specific rejection — the volume step answers in «حجم».
+  assert.ok(String(stub.sendCalls()[0]?.text).includes('حجم'));
 
   // custom 12 GB (not a preset) → accepted via allow_custom
   stub.reset();

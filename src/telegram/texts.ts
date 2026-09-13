@@ -1,17 +1,32 @@
 /**
  * All user-facing bot text in one place (Persian-first).
- * Keys are stable; wording gets polished in Phase 8.
+ * Keys are stable; wording polished across Phase 8 (8A keyboards, 8B persona).
  * NOTE: prices/payment copy arrive Phase 3/4 — never here.
+ *
+ * PHASE 8B PERSONALITY RULES:
+ *  - Greeting style is «درود»، personalized «درود زیبا» when the name is
+ *    unknown. Use it ONLY where a greeting is natural: the welcome (see
+ *    welcomeGreeting) and important standalone customer notifications (see
+ *    notifyApproved). NEVER force it into mid-flow prompts, validation
+ *    errors, short confirmations, or back-to-back consecutive bubbles.
+ *  - Future service notifications (e.g. the 90%-usage and single-expiry
+ *    alerts) are OUT OF SCOPE for 8B but MUST open with «درود زیبا، …» and
+ *    stay idempotent/non-spammy when they are implemented.
+ *  - «زیبا/رفیق/داداش» are sparing catchphrases, not filler.
  */
 export const fa = {
   notConfigured:
     '⚠️ ربات هنوز به‌طور کامل پیکربندی نشده است.',
 
-  welcomeHeader: '👋 درود',
-  welcomeIntro: 'ربات فروش سرویس VPN. از منوی زیر گزینه‌ی مورد نظرتان را انتخاب کنید.',
+  // Greeting rule (Phase 8B): «درود زیبا» when the user's first name is
+  // unknown; the name itself personalizes it when available. Never forced
+  // into mid-flow prompts, validation errors, or consecutive bubbles.
+  welcomeGreeting: (firstName: string | null) =>
+    `👋 درود ${firstName ?? 'زیبا'}، به ربات خوش اومدی ❤️`,
+  welcomeIntro: 'برای شروع، از منوی پایین یه گزینه رو انتخاب کن.',
   menuPrompt: '👇 منوی اصلی',
 
-  cmdUnknown: '❓ دستور ناشناخته.\nاز دکمه‌های منو استفاده کنید یا /help را بزنید.',
+  cmdUnknown: '❓ این دستور برام تازه‌ست!\nاز دکمه‌های منو استفاده کن یا /help رو بزن.',
   helpText: [
     '🤖 راهنما',
     '',
@@ -34,12 +49,12 @@ export const fa = {
     '',
     'برای شروع، یک نام برای کانفیگ خود انتخاب کنید.',
     'نام باید انگلیسی، حداقل سه کلمه (حروف لاتین، جدا با فاصله) و حداکثر ۶۴ نویسه باشد.',
-    'هر وقت خواستید با «بازگشت به منو» یا /cancel خارج شوید.',
+    'هر وقت خواستی با «بازگشت به منو» یا /cancel خارج شو.',
   ].join('\n'),
   buyWaitingConfigName:
     'زیبا لطفا یه نام انگلیسی حداقل سه کلمه‌ای انتخاب کن یا اگر میخوای من برات رندوم انتخاب کنم',
   configNameInvalid:
-    '❌ نام کانفیگ نامعتبر است؛ باید انگلیسی و حداقل سه کلمه باشد (مثل: Silver Falcon Network).\nدوباره تلاش کنید یا «انتخاب خودکار» را بزنید.',
+    '🙈 این نام کانفیگ نامعتبره؛ باید انگلیسی و حداقل سه کلمه باشه (مثل: Silver Falcon Network).\nدوباره تلاش کن یا «انتخاب خودکار» رو بزن.',
   configNameSaved: (name: string) =>
     `✅ نام کانفیگ «${name}» ثبت شد.`,
   buyInProgress: '🛒 فرآیند خرید جاری را ادامه دهید یا برای لغو «بازگشت به منو» را بزنید.',
@@ -58,24 +73,37 @@ export const fa = {
 
   invalidChoice: '❌ گزینه نامعتبر.',
   backToMenu: '🔙 بازگشت به منو',
-  idleInputHint: 'برای شروع یک گزینه از منو را انتخاب کنید.',
+  // Phase 8B: the OFF-TOPIC global fallback — used ONLY for input/no media
+  // that falls outside every defined flow context (never inside a live step,
+  // payment, support or admin handling). Byte-frozen by tests/phase8b.
+  idleInputHint:
+    'مشتی من رباتماا😅 نمیتونم مثل شما حرف بزنم بی زحمت از منوی موجود استفاده کن،دمت گرم',
+  // A mere back-tap while nothing is pending: soft nudge, not the fallback.
+  idleMenuNudge: '😊 چیزی باز نیست؛ از منوی پایین هر چی خواستی انتخاب کن.',
 
   // ————— Phase 3: purchase options, summary, confirmation —————
   catalogUnavailable:
     '🔧 فعلاً امکان انتخاب گزینه‌ها وجود ندارد. کمی بعد دوباره امتحان کنید.',
   volumePrompt: (min: number, max: number) =>
-    `📦 حجم سرویس را انتخاب کنید.\n\nحداقل ${min} و حداکثر ${max} گیگابایت.\nبرای مقدار دلخواه، عدد را تایپ کنید (یا دکمه‌ی «دلخواه»).`,
+    `📦 حجم سرویس رو انتخاب کن.\n\nحداقل ${min} و حداکثر ${max} گیگابایت.\nبرای مقدار دلخواه، عدد رو تایپ کن (یا دکمه‌ی «دلخواه»).`,
   durationPrompt: (min: number, max: number, allowCustom = true) =>
-    `⏳ مدت سرویس را انتخاب کنید.\n\n${durationLabelFa(min)} تا ${durationLabelFa(max)}.` +
-    (allowCustom ? '\nبرای مقدار دلخواه، عدد روز را تایپ کنید.' : ''),
+    `⏳ مدت سرویس رو انتخاب کن.\n\n${durationLabelFa(min)} تا ${durationLabelFa(max)}.` +
+    (allowCustom ? '\nبرای مقدار دلخواه، عدد روز رو تایپ کن.' : ''),
   devicePrompt: (min: number, max: number) =>
-    `📱 تعداد دستگاه‌های مجاز:\n\nبین ${min} تا ${max}.\nبرای مقدار دلخواه، عدد را تایپ کنید.`,
+    `📱 تعداد دستگاه‌های مجاز رو انتخاب کن:\n\nبین ${min} تا ${max}.\nبرای مقدار دلخواه، عدد رو تایپ کن.`,
   customVolumeLabel: '✍️ مقدار دلخواه',
   customHint: '✍️ حالا عدد دلخواه را همین‌جا تایپ کن و بفرست.',
   rejectedRange: (min: number, max: number) =>
     `⚠️ عدد باید بین ${min} تا ${max} باشد. دوباره تلاش کنید یا «بازگشت» را بزنید.`,
+  // Phase 8B: flow-specific rejections — each step answers in its own domain.
+  rejectedVolumeRange: (min: number, max: number) =>
+    `📦 این حجم قابل قبول نیست؛ حداقل ${min} و حداکثر ${max} گیگابایت.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
+  rejectedDurationRange: (min: number, max: number) =>
+    `⏳ مدت سرویس باید بین ${min} تا ${max} روز باشه.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
+  rejectedDeviceRange: (min: number, max: number) =>
+    `📱 تعداد دستگاه باید بین ${min} تا ${max} باشه.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
   rejectedPresetDisabled: '⚠️ این گزینه فعلاً غیرفعال است؛ یکی دیگر را انتخاب کنید.',
-  rejectedNotWhole: '⚠️ لطفاً فقط یک عدد صحیح بفرستید.',
+  rejectedNotWhole: '✍️ این که عدد نبود رفیق! فقط یک عدد صحیح بفرست؛ یا «بازگشت» رو بزن.',
   staleChoice: '🔄 این گزینه مربوط به مرحله‌ی دیگری است. مرحله‌ی فعلی را ادامه دهید.',
   stepBack: '↩️ بازگشت به مرحله قبل',
   confirmYes: '✅ تأیید و ثبت سفارش',
@@ -133,7 +161,7 @@ export const fa = {
     `${n}. 🆔 ${shortId} — ${status}\n   ${price} — ${date}`,
 
   notifyApproved: (id: string, amount: string) =>
-    `🎉 پرداخت شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nسرویس شما به‌زودی ساخته می‌شود و اطلاعات اتصال ارسال خواهد شد.`,
+    `درود زیبا، پرداخت شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nسرویس شما به‌زودی ساخته می‌شود و اطلاعات اتصال ارسال خواهد شد.`,
   notifyRejected: (id: string, reason: string) =>
     `❌ متأسفانه فیش پرداخت سفارش تأیید نشد.\n\n🆔 سفارش: ${id}\n📝 دلیل: ${reason}\n\nمی‌توانید دوباره خرید کنید یا با پشتیبانی گفتگو کنید.`,
 
@@ -363,5 +391,27 @@ export function durationLabelFa(days: number, daysPerMonth = 30): string {
     return `${digitsFa(months)} ماه`;
   }
   return `${digitsFa(days)} روز`;
+}
+
+/* ———— Phase 8B: display-only personality reactions ————
+ * These NEVER validate or gate anything: business acceptance stays entirely
+ * in the catalog `accept*` guards. A reaction only rides along on the NEXT
+ * already-sent bubble (one line, no extra message, never consecutive).
+ */
+
+/** Generosity threshold for the volume wink. Display-only, not a rule. */
+export const GENEROUS_VOLUME_GB = 20;
+
+/** Device/user-count reaction; `null` = plain, unremarkable confirmation. */
+export function deviceReaction(count: number): string | null {
+  if (count <= 1) return null;
+  if (count === 2) return 'دمت گرم، تک‌خور نیستی 😄 دوکاربره انتخاب کردی';
+  if (count === 3) return 'ایول، سه‌کاربره انتخاب کردی 😄';
+  return `${digitsFa(count)} کاربره انتخاب کردی، چه تیم پرجمعیتی 😄`;
+}
+
+/** Volume reaction: only above the generosity threshold, never less. */
+export function volumeReaction(gb: number): string | null {
+  return gb > GENEROUS_VOLUME_GB ? 'عووو چه دست‌ودلباز، خوشمان آمد 😄' : null;
 }
 

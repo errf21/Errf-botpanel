@@ -218,7 +218,9 @@ export async function handleCallback(
         }
       }
       if (!isBusy(session.state)) {
-        await replyToMenu(fa.idleInputHint);
+        // Phase 8B: deliberate back-tap while idle → soft nudge, twin of the
+        // text path (the «مشتی…» fallback stays for off-topic input only).
+        await replyToMenu(fa.idleMenuNudge);
         return;
       }
       await ctx.api.answerCallbackQuery(callbackQueryId);
