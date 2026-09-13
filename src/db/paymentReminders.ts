@@ -18,6 +18,8 @@ export interface ReminderCandidate {
   reminded_stage: number;
   customer_id: number;
   telegram_user_id: string;
+  /** Phase 10: explicit language choice of the recipient (NULL = Persian). */
+  language: string | null;
 }
 
 /**
@@ -48,7 +50,7 @@ export async function listDueCandidates(
 ): Promise<ReminderCandidate[]> {
   const result = await db
     .prepare(
-      `SELECT p.order_id, p.created_at, p.reminded_stage, o.customer_id, c.telegram_user_id
+      `SELECT p.order_id, p.created_at, p.reminded_stage, o.customer_id, c.telegram_user_id, c.language
          FROM payment_reminders p
          JOIN orders o ON o.id = p.order_id
          JOIN customers c ON c.id = o.customer_id

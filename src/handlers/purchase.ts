@@ -28,7 +28,7 @@ import { provisionOrder } from '../provision/provision.ts';
 import { newOrderId } from '../lib/security.ts';
 import { checkoutOrder, planWalletPayment, walletCreditFromSnapshot, type WalletPlan } from '../orders/checkout.ts';
 import { CB, deviceKeyboard, durationKeyboard, volumeKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard, configNameKeyboard, mainMenuKeyboard } from '../telegram/menu.ts';
-import { fa, formatPrice, deviceReaction, volumeReaction } from '../telegram/texts.ts';
+import type { Ui } from '../telegram/i18n.ts';
 import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
 
@@ -36,6 +36,8 @@ import { reduce } from '../state/machine.ts';
  * Purchase flow steps (volume → duration → devices → summary → confirm).
  * Keyboard values are re-validated against the FRESH catalog on every update:
  * keyboards can be stale, buttons can be forged, config can change mid-flow.
+ * Phase 10: every rendered string comes from the acting user's `ctx.ui` —
+ * the catalog, pricing and machine logic are untouched by language.
  */
 
 export const STEP_EXPECTED_STATE: Record<StepKind, ConversationState> = {
@@ -49,50 +51,51 @@ export interface StepView {
   keyboard: TelegramInlineKeyboardMarkup;
 }
 
-export function stepView(state: ConversationState, catalog: Catalog): StepView | null {
+export function stepView(ui: Ui, state: ConversationState, catalog: Catalog): StepView | null {
   switch (state) {
     case 'WAITING_VOLUME':
       return {
-        text: fa.volumePrompt(catalog.volume.minGb, catalog.volume.maxGb),
-        keyboard: volumeKeyboard(enabledVolumeGb(catalog), catalog.volume.allowCustom),
+        text: ui.t.volumePrompt(catalog.volume.minGb, catalog.volume.maxGb),
+        keyboard: volumeKeyboard(ui, enabledVolumeGb(catalog), catalog.volume.allowCustom),
       };
     case 'WAITING_DURATION':
       return {
-        text: fa.durationPrompt(
+        text: ui.t.durationPrompt(
           catalog.duration.minDays,
           catalog.duration.maxDays,
           catalog.duration.allowCustom,
         ),
-        keyboard: durationKeyboard(enabledDurationDays(catalog), catalog.duration.allowCustom),
+        keyboard: durationKeyboard(ui, enabledDurationDays(catalog), catalog.duration.allowCustom),
       };
     case 'WAITING_DEVICE_LIMIT':
       return {
-        text: fa.devicePrompt(catalog.device.minCount, catalog.device.maxCount),
-        keyboard: deviceKeyboard(enabledDeviceCounts(catalog), catalog.device.allowCustom),
+        text: ui.t.devicePrompt(catalog.device.minCount, catalog.device.maxCount),
+        keyboard: deviceKeyboard(ui, enabledDeviceCounts(catalog), catalog.device.allowCustom),
       };
     default:
       return null;
   }
 }
 
-function rejectionMessage(catalog: Catalog, kind: StepKind, reason: string): string {
+function rejectionMessage(ui: Ui, catalog: Catalog, kind: StepKind, reason: string): string {
+  const t = ui.t;
   if (reason === 'range') {
     // Phase 8B: flow-specific wording — every step answers in its own domain.
     if (kind === 'volume') {
-      return fa.rejectedVolumeRange(catalog.volume.minGb, catalog.volume.maxGb);
+      return t.rejectedVolumeRange(catalog.volume.minGb, catalog.volume.maxGb);
     }
     if (kind === 'duration') {
-      return fa.rejectedDurationRange(catalog.duration.minDays, catalog.duration.maxDays);
+      return t.rejectedDurationRange(catalog.duration.minDays, catalog.duration.maxDays);
     }
-    return fa.rejectedDeviceRange(catalog.device.minCount, catalog.device.maxCount);
+    return t.rejectedDeviceRange(catalog.device.minCount, catalog.device.maxCount);
   }
-  return fa.rejectedPresetDisabled;
+  return t.rejectedPresetDisabled;
 }
 
 /** The one-line personality reaction riding on the next bubble, if any. */
-function stepReaction(kind: StepKind, value: number): string | null {
-  if (kind === 'device') return deviceReaction(value);
-  if (kind === 'volume') return volumeReaction(value);
+function stepReaction(ui: Ui, kind: StepKind, value: number): string | null {
+  if (kind === 'device') return ui.t.reactionDevices(value);
+  if (kind === 'volume') return ui.t.reactionVolume(value);
   return null;
 }
 
@@ -107,6 +110,8 @@ export async function applyStepChoice(
   kind: StepKind,
   value: number,
 ): Promise<void> {
+  const ui = ctx.ui;
+  const t = ui.t;
   const result =
     kind === 'volume'
       ? acceptVolume(catalog, value)
@@ -114,7 +119,7 @@ export async function applyStepChoice(
         ? acceptDuration(catalog, value)
         : acceptDevice(catalog, value);
   if (!result.ok) {
-    await ctx.api.sendMessage(ctx.chatId, rejectionMessage(catalog, kind, result.reason));
+    await ctx.api.sendMessage(ctx.chatId, rejectionMessage(ui, catalog, kind, result.reason));
     return;
   }
 
@@ -134,14 +139,14 @@ export async function applyStepChoice(
     // The confirmation step mints the durable draft identity exactly once.
     if (typeof data['order_token'] !== 'string') data['order_token'] = newOrderId();
     await setSession(ctx.db, ctx.customerId, next, data);
-    await sendSummary(ctx, { state: next, data }, catalog, stepReaction(kind, value));
+    await sendSummary(ctx, { state: next, data }, catalog, stepReaction(ui, kind, value));
     return;
   }
 
   await setSession(ctx.db, ctx.customerId, next, data);
-  const view = stepView(next, catalog);
+  const view = stepView(ui, next, catalog);
   if (view) {
-    const reaction = stepReaction(kind, value);
+    const reaction = stepReaction(ui, kind, value);
     await ctx.api.sendMessage(
       ctx.chatId,
       reaction ? `${reaction}\n\n${view.text}` : view.text,
@@ -157,15 +162,18 @@ export async function sendSummary(
   catalog: Catalog,
   prelude: string | null = null,
 ): Promise<void> {
+  const ui = ctx.ui;
+  const t = ui.t;
+  const f = ui.f;
   const price = extractDraft(session);
   if (!price) {
     // Phase 8A: unrecoverable draft → land on the menu and restore the keyboard.
-    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.missingDraftData, mainMenuKeyboard(ui));
     return;
   }
   const computed = calculatePrice(catalog.pricing, price);
   if (!computed.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ui));
     return;
   }
   const b = computed.breakdown;
@@ -175,28 +183,28 @@ export async function sendSummary(
   // (fresh choice); a re-render of the summary never repeats it.
   if (prelude !== null) lines.push(prelude);
   lines.push(
-    fa.summaryHeader,
-    fa.summaryName(String(session.data['config_name'])),
-    fa.summaryVolume(b.volume_gb),
-    fa.summaryDuration(b.duration_days, b.months),
-    fa.summaryDevices(b.device_count),
-    fa.summaryPrice(formatPrice(b.total, b.currency)),
-    fa.summaryId(String(session.data['order_token'])),
+    t.summaryHeader,
+    t.summaryName(String(session.data['config_name'])),
+    t.summaryVolume(b.volume_gb),
+    t.summaryDuration(b.duration_days, b.months),
+    t.summaryDevices(b.device_count),
+    t.summaryPrice(f.price(b.total, b.currency)),
+    t.summaryId(String(session.data['order_token'])),
   );
   if (balance !== null && balance > 0) {
-    lines.push(fa.summaryWalletLine(formatPrice(balance, 'IRT')));
+    lines.push(t.summaryWalletLine(f.price(balance, 'IRT')));
     const full = balance >= b.total;
     const partial = !full && balance >= 1 && b.total >= 2;
-    lines.push(fa.summaryHint);
+    lines.push(t.summaryHint);
     await ctx.api.sendMessage(
       ctx.chatId,
       lines.join('\n\n'),
-      full || partial ? walletPayKeyboard(partial) : confirmKeyboard(),
+      full || partial ? walletPayKeyboard(ui, partial) : confirmKeyboard(ui),
     );
     return;
   }
-  lines.push(fa.summaryHint);
-  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), confirmKeyboard());
+  lines.push(t.summaryHint);
+  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), confirmKeyboard(ui));
 }
 
 /** `ord:confirm` — the ONLY exit that creates a durable order. */
@@ -214,12 +222,12 @@ export async function confirmPurchase(
     typeof token !== 'string' ||
     !draft
   ) {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice);
     return;
   }
   const computed = calculatePrice(catalog.pricing, draft);
   if (!computed.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     await ctx.api.answerCallbackQuery(callbackQueryId);
     return;
   }
@@ -239,7 +247,7 @@ export async function confirmPurchase(
     if (!paid.ok) {
       await ctx.api.answerCallbackQuery(
         callbackQueryId,
-        paid.reason === 'insufficient' ? fa.walletBalanceLow : fa.catalogUnavailable,
+        paid.reason === 'insufficient' ? ctx.ui.t.walletBalanceLow : ctx.ui.t.catalogUnavailable,
         true,
       );
       await resendWalletGuidance(ctx, session, catalog, paid.reason);
@@ -269,7 +277,7 @@ export async function confirmPurchase(
           actor: 'customer',
         }).catch(() => undefined);
       }
-      await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
       await ctx.api.answerCallbackQuery(callbackQueryId);
       return;
     }
@@ -277,11 +285,11 @@ export async function confirmPurchase(
       await setPaidLedgerOrder(ctx.db, token, result.order.id);
     }
     await setSession(ctx.db, ctx.customerId, 'IDLE', {});
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.walletPayConfirmToast);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.walletPayConfirmToast);
     await ctx.api.sendMessage(
       ctx.chatId,
-      fa.walletPaidOrderCreated(result.order.id, formatPrice(wallet.creditIrt, 'IRT')),
-      mainMenuKeyboard(),
+      ctx.ui.t.walletPaidOrderCreated(result.order.id, ctx.ui.f.price(wallet.creditIrt, 'IRT')),
+      mainMenuKeyboard(ctx.ui),
     );
     await afterOrderApproved(result.order, ctx);
     return;
@@ -300,7 +308,7 @@ export async function confirmPurchase(
     if (!paid.ok) {
       await ctx.api.answerCallbackQuery(
         callbackQueryId,
-        paid.reason === 'insufficient' ? fa.walletBalanceLow : fa.catalogUnavailable,
+        paid.reason === 'insufficient' ? ctx.ui.t.walletBalanceLow : ctx.ui.t.catalogUnavailable,
         true,
       );
       await resendWalletGuidance(ctx, session, catalog, paid.reason);
@@ -328,7 +336,7 @@ export async function confirmPurchase(
         actor: 'customer',
       }).catch(() => undefined);
     }
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     await ctx.api.answerCallbackQuery(callbackQueryId);
     return;
   }
@@ -343,25 +351,25 @@ export async function confirmPurchase(
     reduce(session.state, 'order_confirmed'),
     data,
   );
-  await ctx.api.answerCallbackQuery(callbackQueryId, fa.orderConfirmToast, !result.created);
+  await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.orderConfirmToast, !result.created);
   if (!result.created) {
     // Replay of an old confirm button on an order that may have moved on.
-    await ctx.api.sendMessage(ctx.chatId, fa.alreadyConfirmed, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.alreadyConfirmed, backToMenuKeyboard(ctx.ui));
     await resendPaymentGuidance(ctx, result.order);
     return;
   }
   if (wallet && wallet.mode === 'partial') {
     await ctx.api.sendMessage(
       ctx.chatId,
-      fa.walletPartialCreated(
+      ctx.ui.t.walletPartialCreated(
         result.order.id,
-        formatPrice(wallet.creditIrt, 'IRT'),
-        formatPrice(result.order.amount, result.order.currency),
+        ctx.ui.f.price(wallet.creditIrt, 'IRT'),
+        ctx.ui.f.price(result.order.amount, result.order.currency),
       ),
-      mainMenuKeyboard(),
+      mainMenuKeyboard(ctx.ui),
     );
   } else {
-    await ctx.api.sendMessage(ctx.chatId, fa.orderCreated(result.order.id), mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.orderCreated(result.order.id), mainMenuKeyboard(ctx.ui));
   }
   await sendPaymentInstructions(ctx, result.order);
 }
@@ -381,22 +389,22 @@ export async function confirmPurchaseWithWallet(
 ): Promise<void> {
   const balance = await payableWalletBalance(ctx.db, ctx.customerId);
   if (balance === null) {
-    await ctx.api.sendMessage(ctx.chatId, fa.walletUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.walletUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
   const draft = extractDraft(session);
   if (!draft || session.state !== 'WAITING_ORDER_CONFIRMATION') {
-    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.missingDraftData, mainMenuKeyboard(ctx.ui));
     return;
   }
   const computed = calculatePrice(catalog.pricing, draft);
   if (!computed.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
   const plan = planWalletPayment(computed.breakdown.total, balance, mode);
   if (!plan) {
-    await ctx.api.sendMessage(ctx.chatId, fa.walletBalanceLow, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.walletBalanceLow, backToMenuKeyboard(ctx.ui));
     return;
   }
   await confirmPurchase(ctx, session, catalog, callbackQueryId, plan);
@@ -436,7 +444,7 @@ async function resendPaymentGuidance(ctx: UpdateContext, order: import('../db/or
   if (order.state === 'pending_payment' || order.state === 'awaiting_review') {
     await sendPaymentInstructions(ctx, order);
   } else {
-    await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.paymentWaitNotice, backToMenuKeyboard(ctx.ui));
   }
 }
 
@@ -452,11 +460,11 @@ export async function goBack(
 
   // WAITING_PAYMENT_RECEIPT: order is durable and frozen — only re-show notice.
   if (session.state === 'WAITING_PAYMENT_RECEIPT') {
-    await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.paymentWaitNotice, backToMenuKeyboard(ctx.ui));
     return;
   }
   if (next === session.state) {
-    await ctx.api.sendMessage(ctx.chatId, fa.invalidChoice);
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.invalidChoice);
     return;
   }
 
@@ -468,10 +476,10 @@ export async function goBack(
     return;
   }
   if (next === 'WAITING_CONFIG_NAME') {
-    await ctx.api.sendMessage(ctx.chatId, fa.buyWaitingConfigName, configNameKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.buyWaitingConfigName, configNameKeyboard(ctx.ui));
     return;
   }
-  const view = stepView(next, catalog);
+  const view = stepView(ctx.ui, next, catalog);
   if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
 }
 
@@ -491,11 +499,11 @@ export async function continueWithConfigName(
 
   const loaded = await loadCatalog(ctx.db);
   if (!loaded.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
-  await ctx.api.sendMessage(ctx.chatId, fa.configNameSaved(name), backToMenuKeyboard());
-  const view = stepView(next, loaded.catalog);
+  await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.configNameSaved(name), backToMenuKeyboard(ctx.ui));
+  const view = stepView(ctx.ui, next, loaded.catalog);
   if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
 }
 

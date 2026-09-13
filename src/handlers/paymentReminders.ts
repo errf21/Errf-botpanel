@@ -22,6 +22,7 @@ import {
 } from '../db/paymentReminders.ts';
 import { adminQueueKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
+import { uiFor } from '../telegram/i18n.ts';
 
 export interface SweepResult {
   claimed: number;
@@ -37,14 +38,15 @@ export function dueStageFor(anchorMs: number, nowMs: number): number {
   return Math.min(REMINDER_MAX_STAGE, minutes);
 }
 
-function reminderCustomerText(stage: number, orderId: string): string {
+function reminderCustomerText(lang: string | null, stage: number, orderId: string): string {
+  const t = uiFor(lang).t;
   switch (stage) {
     case 1:
-      return fa.reminderCustomer1(orderId);
+      return t.reminderCustomer1(orderId);
     case 2:
-      return fa.reminderCustomer2(orderId);
+      return t.reminderCustomer2(orderId);
     default:
-      return fa.reminderCustomer3(orderId);
+      return t.reminderCustomer3(orderId);
   }
 }
 
@@ -75,7 +77,8 @@ export async function runPaymentReminderSweep(
     const chatId = Number(row.telegram_user_id);
     if (!Number.isSafeInteger(chatId) || chatId <= 0) continue;
     try {
-      await api.sendMessage(chatId, reminderCustomerText(target, row.order_id));
+      // Phase 10: the nudge follows the recipient's persisted language.
+      await api.sendMessage(chatId, reminderCustomerText(row.language, target, row.order_id));
       result.customerMessages += 1;
     } catch {
       console.error(`payment_reminder_send_failed orderId=${row.order_id.slice(0, 32)}`);

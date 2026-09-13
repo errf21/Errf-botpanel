@@ -6,17 +6,17 @@ import {
   type ReceiptMedia,
 } from '../lib/validate.ts';
 import {
+  CB,
   adminRejectPromptKeyboard,
   backToMenuKeyboard,
   composingKeyboard,
   mainMenuKeyboard,
   configNameKeyboard,
+  matchStepText,
   menuCallbackForText,
-  STEP_AUTO_TEXT,
-  STEP_BACK_TEXT,
-  STEP_SKIP_REJECT_TEXT,
 } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
+import { FA_UI } from '../telegram/i18n.ts';
 import { randomConfigName, validateConfigName } from '../lib/configName.ts';
 import { getSession } from '../db/states.ts';
 import {
@@ -34,6 +34,7 @@ import { completeArmedWalletAction } from './wallet.ts';
 import { findLiveTicket } from '../db/support.ts';
 import { cancelToMenu } from './commands.ts';
 import { runMainMenuAction } from './menuActions.ts';
+import { showLanguageChoice } from './language.ts';
 import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
@@ -47,6 +48,9 @@ import {
  * interceptions below cover ONLY labels the keyboard can currently display
  * (main-menu entries while IDLE, back/auto on composing prompts, skip on a
  * live reject arming); every other input flows exactly as before.
+ * Phase 10: those exact matches resolve against ALL locale bundles
+ * (`matchStepText` / `menuCallbackForText`), so a stale keyboard from before
+ * a language switch keeps routing — labels never gate logic.
  * Accepted where `acceptsTextInput(state)`:
  *  - WAITING_CONFIG_NAME   → sanitized free-text name
  *  - WAITING_VOLUME / …    → a custom numeric ("دلخواه") value for that step
@@ -59,9 +63,12 @@ import {
  * Everything else is politely ignored (state preserved).
  */
 export async function handleText(ctx: UpdateContext, text: string): Promise<void> {
+  const t = ctx.ui.t;
+  const stepPress = matchStepText(text);
+
   // ———— Phase 8A: keyboard back button — mirrors `act:back_menu` exactly.
   // Clears a live admin arming first, then any busy flow; restores the menu.
-  if (text === STEP_BACK_TEXT) {
+  if (stepPress === 'back') {
     await handleBackToMenuText(ctx);
     return;
   }
@@ -70,15 +77,20 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
 
   // Keyboard auto-pick: meaningful ONLY while the name is being asked for
   // (identical state gate as the `cfg:auto` callback tap).
-  if (text === STEP_AUTO_TEXT && session.state === 'WAITING_CONFIG_NAME') {
+  if (stepPress === 'auto' && session.state === 'WAITING_CONFIG_NAME') {
     await continueWithConfigName(ctx, session, randomConfigName());
     return;
   }
 
-  // Main-menu shortcuts: exact labels, ONLY from IDLE — any busy state keeps
-  // its existing safe text handling (validators/steps), never menu actions.
+  // Main-menu shortcuts: exact labels (any locale), ONLY from IDLE — any busy
+  // state keeps its existing safe text handling (validators/steps), never
+  // menu actions.
   const shortcut = menuCallbackForText(text);
   if (shortcut !== null && session.state === 'IDLE') {
+    if (shortcut === CB.MENU_LANGUAGE) {
+      await showLanguageChoice(ctx);
+      return;
+    }
     await runMainMenuAction(ctx, session, shortcut);
     return;
   }
@@ -86,11 +98,7 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
   if (ctx.isAdmin) {
     const pending = await getPendingAdminAction(ctx.db, ctx.actor.id);
     if (pending) {
-      if (
-        pending.action === 'reject' &&
-        pending.order_id !== null &&
-        text === STEP_SKIP_REJECT_TEXT
-      ) {
+      if (pending.action === 'reject' && pending.order_id !== null && stepPress === 'skip') {
         // Keyboard skip = the legacy `adm:skip:` tap (same guard, same effect).
         await clearPendingAdminAction(ctx.db, ctx.actor.id);
         const result = await performAdminReview({
@@ -111,7 +119,7 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       if (pending.action === 'support_reply' && pending.target_id) {
         const body = sanitizeSupportBody(text);
         if (body === null) {
-          await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt, composingKeyboard());
+          await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt, composingKeyboard(FA_UI));
           return;
         }
         // A consumed reply clears the arming; a stale one also clears — the
@@ -133,7 +141,7 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       // action === 'reject': unchanged Phase 4 behavior.
       if (!pending.order_id) {
         await clearPendingAdminAction(ctx.db, ctx.actor.id);
-        await ctx.api.sendMessage(ctx.chatId, fa.invalidChoice);
+        await ctx.api.sendMessage(ctx.chatId, t.invalidChoice);
         return;
       }
       const reason = sanitizeRejectionReason(text);
@@ -182,11 +190,11 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       // mid-summary typing: re-show summary without changing anything
       const loaded = await loadCatalog(ctx.db);
       if (loaded.ok) await sendSummary(ctx, session, loaded.catalog);
-      else await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+      else await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
       return;
     }
     if (session.state === 'WAITING_PAYMENT_RECEIPT') {
-      await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, t.paymentWaitNotice, backToMenuKeyboard(ctx.ui));
       return;
     }
     // Phase 6: renewal ladder steps never accept free text (months only).
@@ -196,11 +204,11 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
     ) {
       const loaded = await loadCatalog(ctx.db);
       if (loaded.ok) await resumeRenewal(ctx, session, loaded.catalog);
-      else await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+      else await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
       return;
     }
     if (session.state === 'WAITING_ANNOUNCE_CONFIRM') {
-      await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, backToMenuKeyboard(FA_UI));
       return;
     }
     // While IDLE with a live ticket, ordinary text becomes a follow-up —
@@ -216,7 +224,7 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
         }
       }
     }
-    await ctx.api.sendMessage(ctx.chatId, fa.idleInputHint, mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.idleInputHint, mainMenuKeyboard(ctx.ui));
     return;
   }
 
@@ -225,12 +233,12 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
   if (numericKind) {
     const loaded = await loadCatalog(ctx.db);
     if (!loaded.ok) {
-      await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
       return;
     }
     const value = parsePositiveInt(text);
     if (value === null) {
-      await ctx.api.sendMessage(ctx.chatId, fa.rejectedNotWhole, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, t.rejectedNotWhole, backToMenuKeyboard(ctx.ui));
       return;
     }
     await applyStepChoice(ctx, session, loaded.catalog, numericKind, value);
@@ -238,10 +246,11 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
   }
 
   // WAITING_CONFIG_NAME — strict English (>=3 words) display name; the
-  // auto-pick button stays available on refusals.
+  // auto-pick button stays available on refusals. The name rule is locale-
+  // independent BY DESIGN (panel-safe English names in both languages).
   const name = validateConfigName(text);
   if (!name) {
-    await ctx.api.sendMessage(ctx.chatId, fa.configNameInvalid, configNameKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.configNameInvalid, configNameKeyboard(ctx.ui));
     return;
   }
   await continueWithConfigName(ctx, session, name);
@@ -264,7 +273,7 @@ function numericStepFor(state: string): StepKind | null {
 }
 
 /**
- * Keyboard press of «🔙 بازگشت به منو» — the text-path twin of the
+ * Keyboard press of the back control — the text-path twin of the
  * `act:back_menu` callback in `handleCallback`: admin arming clears first,
  * a busy flow is cancelled, IDLE just re-presents the main menu. Every
  * branch restores the main Reply Keyboard (the composing keyboards replaced
@@ -278,7 +287,7 @@ async function handleBackToMenuText(ctx: UpdateContext): Promise<void> {
       await ctx.api.sendMessage(
         ctx.chatId,
         fa.adminRejectCancelled,
-        mainMenuKeyboard(),
+        mainMenuKeyboard(ctx.ui),
       );
       return;
     }
@@ -286,8 +295,8 @@ async function handleBackToMenuText(ctx: UpdateContext): Promise<void> {
   const session = await getSession(ctx.db, ctx.customerId);
   if (!isBusy(session.state)) {
     // Phase 8B: a deliberate back-tap is NOT off-topic input — soft nudge,
-    // the «مشتی…» fallback stays reserved for genuinely out-of-flow text.
-    await ctx.api.sendMessage(ctx.chatId, fa.idleMenuNudge, mainMenuKeyboard());
+    // the joke fallback stays reserved for genuinely out-of-flow text.
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.idleMenuNudge, mainMenuKeyboard(ctx.ui));
     return;
   }
   await cancelToMenu(ctx); // clears session, sends menu
@@ -302,14 +311,15 @@ export async function handleMedia(
   ctx: UpdateContext,
   receipt: ReceiptMedia,
 ): Promise<void> {
+  const t = ctx.ui.t;
   const session = await getSession(ctx.db, ctx.customerId);
   if (session.state === 'WAITING_PAYMENT_RECEIPT') {
     await submitReceipt(ctx, session, receipt);
     return;
   }
   if (session.state === 'IDLE') {
-    await ctx.api.sendMessage(ctx.chatId, fa.idleInputHint, mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.idleInputHint, mainMenuKeyboard(ctx.ui));
     return;
   }
-  await ctx.api.sendMessage(ctx.chatId, fa.receiptExpectedMedia, backToMenuKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, t.receiptExpectedMedia, backToMenuKeyboard(ctx.ui));
 }

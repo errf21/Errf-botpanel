@@ -1,7 +1,6 @@
 import type { UpdateContext } from '../types.ts';
 import { clearSession } from '../db/states.ts';
 import { mainMenuKeyboard } from '../telegram/menu.ts';
-import { fa } from '../telegram/texts.ts';
 import { showPendingQueue } from './payment.ts';
 import { showFailedQueue } from './provisioning.ts';
 import { captureReferralOnStart, notifyReferralJoined } from './referrals.ts';
@@ -14,11 +13,14 @@ import { getSession } from '../db/states.ts';
 /**
  * Slash-command handlers. Customer registration already happened in the
  * dispatcher; these stay thin: DB state cleanup + one Telegram call.
+ * Phase 10: customer-facing replies render in `ctx.ui`; admin queue commands
+ * stay Persian regardless of the admin's personal (customer-side) choice.
  */
 export async function handleCommand(
   ctx: UpdateContext,
   text: string,
 ): Promise<void> {
+  const t = ctx.ui.t;
   // Phase 7 first: /credit /debit (wallet-gated) and their arg form.
   const walletResult = await handleWalletAdminCommand(ctx, text);
   if (walletResult === 'handled') return;
@@ -37,35 +39,35 @@ export async function handleCommand(
       return;
     }
     case 'help':
-      await ctx.api.sendMessage(ctx.chatId, fa.helpText, mainMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, t.helpText, mainMenuKeyboard(ctx.ui));
       return;
     case 'cancel':
       await cancelToMenu(ctx);
       return;
     case 'pending':
       if (!ctx.isAdmin) {
-        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
       } else {
         await showPendingQueue(ctx);
       }
       return;
     case 'failed':
       if (!ctx.isAdmin) {
-        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
       } else {
         await showFailedQueue(ctx);
       }
       return;
     case 'tickets':
       if (!ctx.isAdmin) {
-        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
       } else {
         await showTicketQueue(ctx);
       }
       return;
     case 'announce': {
       if (!ctx.isAdmin) {
-        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
         return;
       }
       const session = await getSession(ctx.db, ctx.customerId);
@@ -84,30 +86,32 @@ export async function handleCommand(
     }
     case 'announcements':
       if (!ctx.isAdmin) {
-        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
       } else {
         await showAnnouncements(ctx);
       }
       return;
     default:
-      await ctx.api.sendMessage(ctx.chatId, fa.cmdUnknown, mainMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, t.cmdUnknown, mainMenuKeyboard(ctx.ui));
   }
 }
 
 export async function showMenu(ctx: UpdateContext): Promise<void> {
   await clearSession(ctx.db, ctx.customerId);
+  const t = ctx.ui.t;
   // Phase 8B: «درود زیبا» when no first name is known (configname.test and
-  // phase8b.test pin the greeting wording and its forbidden variant).
-  const greeting = fa.welcomeGreeting(ctx.actor.first_name || null);
+  // phase8b.test pin the greeting wording and its forbidden variant). In
+  // English the same slot carries the bundle's own native greeting.
+  const greeting = t.welcomeGreeting(ctx.actor.first_name || null);
   await ctx.api.sendMessage(
     ctx.chatId,
-    `${greeting}\n${fa.welcomeIntro}\n\n${fa.menuPrompt}`,
-    mainMenuKeyboard(),
+    `${greeting}\n${t.welcomeIntro}\n\n${t.menuPrompt}`,
+    mainMenuKeyboard(ctx.ui),
   );
 }
 
 /** Shared by /cancel and the back button: always lands on IDLE + menu. */
 export async function cancelToMenu(ctx: UpdateContext): Promise<void> {
   await clearSession(ctx.db, ctx.customerId);
-  await ctx.api.sendMessage(ctx.chatId, fa.cancelled, mainMenuKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.cancelled, mainMenuKeyboard(ctx.ui));
 }

@@ -5,7 +5,9 @@ import type {
   TelegramReplyKeyboardButton,
   TelegramReplyKeyboardMarkup,
 } from '../types.ts';
-import { durationLabelFa, fa } from './texts.ts';
+import type { Texts } from './texts.ts';
+import type { Ui } from './i18n.ts';
+import { EN_UI, FA_UI } from './i18n.ts';
 
 /**
  * Callback data vocabulary. Anything not in this exact set is rejected —
@@ -22,6 +24,11 @@ export const CB = {
   MENU_INVITE: 'menu:invite',
   MENU_TICKETS: 'menu:tickets',
   MENU_ANNOUNCE_LIST: 'menu:anncs',
+  /** Phase 10: opens the language picker (main menu 8th button). */
+  MENU_LANGUAGE: 'menu:lang',
+  /** Phase 10: the two explicit choices; persisted server-side, never guessed. */
+  LANG_FA: 'lang:fa',
+  LANG_EN: 'lang:en',
   ACT_CANCEL: 'act:cancel',
   ACT_BACK_MENU: 'act:back_menu',
   STEP_BACK: 'step:back',
@@ -37,6 +44,10 @@ export const CB = {
  * Admin action callbacks carry a ULID order id, so they live in their own
  * namespace with dedicated builders — values are produced ONLY by
  * `adminCallback()` below and parsed ONLY by `parseAdminCallback()`.
+ *
+ * Phase 10 note: admin-review keyboards are Persian-ONLY operational surface
+ * (operator decision) — their labels are deliberately literal `fa` strings,
+ * no `ui` parameter, so a mis-routed or forged tap can never localize them.
  */
 export function adminCallback(
   action: 'ok' | 'no' | 'skip' | 'rt',
@@ -55,7 +66,7 @@ export function adminReceiptKeyboard(orderId: string): TelegramInlineKeyboardMar
 
 /** Phase 8A: the reject-reason prompt is text input → composing-mode buttons. */
 export function adminRejectPromptKeyboard(): TelegramReplyKeyboardMarkup {
-  return composingKeyboard([STEP_SKIP_REJECT_TEXT]);
+  return composingKeyboard(FA_UI, [STEP_SKIP_REJECT_TEXT]);
 }
 
 export function adminQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardMarkup {
@@ -97,12 +108,13 @@ export function serviceCallback(action: ServiceAction, orderId: string): string 
 
 /** Services list: one detail button per service, then a menu row. */
 export function servicesListKeyboard(
+  ui: Ui,
   entries: Array<{ orderId: string; label: string }>,
 ): TelegramInlineKeyboardMarkup {
   const rows: TelegramInlineKeyboardButton[][] = entries.map((entry) => [
     button(entry.label, serviceCallback('det', entry.orderId)),
   ]);
-  rows.push([button(fa.backToMenu, CB.ACT_BACK_MENU)]);
+  rows.push([button(ui.t.backToMenu, CB.ACT_BACK_MENU)]);
   return { inline_keyboard: rows };
 }
 
@@ -113,17 +125,19 @@ export function servicesListKeyboard(
  * the bot builds no page of its own, it only points at the panel's.
  */
 export function serviceDetailKeyboard(
+  ui: Ui,
   orderId: string,
   opts: { canRenew: boolean; serviceUrl: string | null },
 ): TelegramInlineKeyboardMarkup {
+  const t = ui.t;
   const top: TelegramInlineKeyboardButton[] = [];
-  if (opts.canRenew) top.push(button('🔁 تمدید سرویس', serviceCallback('rnw', orderId)));
+  if (opts.canRenew) top.push(button(t.btnRenewService, serviceCallback('rnw', orderId)));
   const rows: TelegramInlineKeyboardButton[][] = [
     ...(top.length > 0 ? [top] : []),
-    ...(opts.serviceUrl !== null ? [[urlButton(fa.svcOpenPage, opts.serviceUrl)]] : []),
-    [button('🔄 بروزرسانی وضعیت', serviceCallback('ref', orderId))],
-    [button('📦 سرویس‌های من', CB.MENU_SERVICES)],
-    [button(fa.backToMenu, CB.ACT_BACK_MENU)],
+    ...(opts.serviceUrl !== null ? [[urlButton(t.svcOpenPage, opts.serviceUrl)]] : []),
+    [button(t.btnRefreshStatus, serviceCallback('ref', orderId))],
+    [button(t.menuServices, CB.MENU_SERVICES)],
+    [button(t.backToMenu, CB.ACT_BACK_MENU)],
   ];
   return { inline_keyboard: rows };
 }
@@ -133,39 +147,40 @@ export function serviceDetailKeyboard(
  * server-side ownership re-check) + the services list. No URLs here: the
  * detail view behind the first button carries the service-page CTA.
  */
-export function serviceNoticeKeyboard(orderId: string): TelegramInlineKeyboardMarkup {
+export function serviceNoticeKeyboard(ui: Ui, orderId: string): TelegramInlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [button(fa.serviceNoticeView, serviceCallback('det', orderId))],
-      [button(fa.serviceNoticeList, CB.MENU_SERVICES)],
+      [button(ui.t.serviceNoticeView, serviceCallback('det', orderId))],
+      [button(ui.t.serviceNoticeList, CB.MENU_SERVICES)],
     ],
   };
 }
 
 /** Phase 9: provisioning-success keyboard — open the panel's service page
  *  (when the link exists) and the services list. Pure discovery. */
-export function serviceReadyKeyboard(serviceUrl: string | null): TelegramInlineKeyboardMarkup {
+export function serviceReadyKeyboard(ui: Ui, serviceUrl: string | null): TelegramInlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      ...(serviceUrl !== null ? [[urlButton(fa.svcOpenPage, serviceUrl)]] : []),
-      [button(fa.serviceNoticeList, CB.MENU_SERVICES)],
+      ...(serviceUrl !== null ? [[urlButton(ui.t.svcOpenPage, serviceUrl)]] : []),
+      [button(ui.t.serviceNoticeList, CB.MENU_SERVICES)],
     ],
   };
 }
 
 /** Renewal duration: preset buttons only (labels month-aware upstream). */
 export function renewalDurationKeyboard(
+  ui: Ui,
   presets: number[],
 ): TelegramInlineKeyboardMarkup {
   const rows: TelegramInlineKeyboardButton[][] = [];
   for (let i = 0; i < presets.length; i += 2) {
     const row: TelegramInlineKeyboardButton[] = [];
     for (const value of presets.slice(i, i + 2)) {
-      row.push(button(durationLabelFa(value), `dur:${value}`));
+      row.push(button(ui.f.duration(value), `dur:${value}`));
     }
     rows.push(row);
   }
-  rows.push([button('❌ لغو', CB.ACT_CANCEL)]);
+  rows.push([button(ui.t.btnCancelInline, CB.ACT_CANCEL)]);
   return { inline_keyboard: rows };
 }
 
@@ -223,31 +238,64 @@ function urlButton(text: string, url: string): TelegramInlineKeyboardButton {
 }
 
 /* ———— Phase 8A: main menu = a REAL Reply Keyboard (one source of truth) ————
- * Reply-keyboard taps arrive as ordinary text messages, so `MAIN_MENU_ENTRIES`
- * doubles as the exact-match routing table (`menuCallbackForText`) feeding the
- * SAME callback vocabulary the inline buttons historically used. Labels must
+ * Reply-keyboard taps arrive as ordinary text messages, so the menu doubles
+ * as the exact-match routing table (`menuCallbackForText`) feeding the SAME
+ * callback vocabulary the inline buttons historically used. Labels must
  * stay byte-identical to the button text: Telegram echoes them verbatim.
  * Exactly three entries carry a style (primary/primary/success); the rest are
  * rendered by Telegram in the default/basic appearance.
+ *
+ * Phase 10: LABELS ARE LOCALIZED but ROUTING IS NOT. Every keyboard label the
+ * bot can ever display is indexed across ALL bundles, so a tap on a stale
+ * Persian keyboard from an English user (or the reverse) still routes to the
+ * exact same callback. The language button's own label is deliberately
+ * bilingual and locale-FIXED, so it survives any switch mid-air.
  */
-export const MAIN_MENU_ENTRIES: ReadonlyArray<{
+
+/** The locale-independent selector label (byte-identical in both bundles). */
+const LANG_LABEL = '🌐 زبان / Language';
+
+interface MenuCore {
+  label: (t: Texts) => string;
+  callback: KnownCallback;
+  style?: TelegramKeyboardButtonStyle;
+}
+
+const MAIN_MENU_CORE: readonly MenuCore[] = [
+  { label: (t) => t.menuBuy, callback: CB.MENU_BUY, style: 'primary' },
+  { label: (t) => t.menuServices, callback: CB.MENU_SERVICES, style: 'primary' },
+  { label: (t) => t.menuOrders, callback: CB.MENU_ORDERS },
+  { label: (t) => t.menuAccount, callback: CB.MENU_ACCOUNT },
+  { label: (t) => t.menuWallet, callback: CB.MENU_WALLET, style: 'success' },
+  { label: (t) => t.menuInvite, callback: CB.MENU_INVITE },
+  { label: (t) => t.menuSupport, callback: CB.MENU_SUPPORT },
+  { label: () => LANG_LABEL, callback: CB.MENU_LANGUAGE },
+];
+
+export interface MainMenuEntry {
   label: string;
   callback: KnownCallback;
   style?: TelegramKeyboardButtonStyle;
-}> = [
-  { label: '🛒 خرید سرویس', callback: CB.MENU_BUY, style: 'primary' },
-  { label: '📦 سرویس‌های من', callback: CB.MENU_SERVICES, style: 'primary' },
-  { label: '💳 سفارش‌های من', callback: CB.MENU_ORDERS },
-  { label: '👤 حساب کاربری', callback: CB.MENU_ACCOUNT },
-  { label: '💰 کیف پول', callback: CB.MENU_WALLET, style: 'success' },
-  { label: '🤝 دعوت از دوستان', callback: CB.MENU_INVITE },
-  { label: '🆘 پشتیبانی', callback: CB.MENU_SUPPORT },
-];
+}
 
-/** Composing-mode control texts (reply buttons whose press sends text). */
-export const STEP_BACK_TEXT = fa.backToMenu;
-export const STEP_AUTO_TEXT = '🎲 انتخاب خودکار';
-export const STEP_SKIP_REJECT_TEXT = '❌ ثبت رد بدون دلیل';
+export function mainMenuEntries(t: Texts): MainMenuEntry[] {
+  return MAIN_MENU_CORE.map((core) => ({
+    label: core.label(t),
+    callback: core.callback,
+    ...(core.style !== undefined ? { style: core.style } : {}),
+  }));
+}
+
+/** The Persian (default) menu view — kept for tooling and Phase 8A pins. */
+export const MAIN_MENU_ENTRIES: readonly MainMenuEntry[] = mainMenuEntries(FA_UI.t);
+
+/** All locale bundles whose menu labels can ever land on the wire (fa + en). */
+const MENU_TEXTS: readonly Texts[] = [FA_UI.t, EN_UI.t];
+
+/** Composing-mode control texts (fa view; routing tables cover ALL locales). */
+export const STEP_BACK_TEXT = FA_UI.t.backToMenu;
+export const STEP_AUTO_TEXT = FA_UI.t.btnAutoPick;
+export const STEP_SKIP_REJECT_TEXT = FA_UI.t.btnSkipReject;
 
 function replyButton(text: string, style?: TelegramKeyboardButtonStyle): TelegramReplyKeyboardButton {
   return style === undefined ? { text } : { text, style };
@@ -259,9 +307,9 @@ function replyKeyboard(
   return { keyboard: rows, resize_keyboard: true, is_persistent: true };
 }
 
-/** The persistent bottom main menu (4 rows: 2/2/2/1, RTL-paired like before). */
-export function mainMenuKeyboard(): TelegramReplyKeyboardMarkup {
-  const buttons = MAIN_MENU_ENTRIES.map((entry) =>
+/** The persistent bottom main menu (four rows of two, styled trio preserved). */
+export function mainMenuKeyboard(ui: Ui): TelegramReplyKeyboardMarkup {
+  const buttons = mainMenuEntries(ui.t).map((entry) =>
     replyButton(entry.label, entry.style),
   );
   const rows: TelegramReplyKeyboardButton[][] = [];
@@ -271,10 +319,28 @@ export function mainMenuKeyboard(): TelegramReplyKeyboardMarkup {
   return replyKeyboard(rows);
 }
 
-/** Exact-match routing of a reply-button press to the callback vocabulary. */
+/** Exact-match routing of a reply-button press to the callback vocabulary —
+ *  resolves against EVERY locale's labels so stale localized keyboards from
+ *  before a language switch keep working as before. */
 export function menuCallbackForText(text: string): KnownCallback | null {
-  const entry = MAIN_MENU_ENTRIES.find((candidate) => candidate.label === text);
-  return entry?.callback ?? null;
+  for (const t of MENU_TEXTS) {
+    const entry = mainMenuEntries(t).find((candidate) => candidate.label === text);
+    if (entry) return entry.callback;
+  }
+  return null;
+}
+
+export type StepTextKind = 'back' | 'auto' | 'skip';
+
+/** Which composing-mode control (if any) this incoming text is — across
+ *  every locale, for the same stale-keyboard safety as the menu table. */
+export function matchStepText(text: string): StepTextKind | null {
+  for (const t of MENU_TEXTS) {
+    if (text === t.backToMenu) return 'back';
+    if (text === t.btnAutoPick) return 'auto';
+    if (text === t.btnSkipReject) return 'skip';
+  }
+  return null;
 }
 
 /**
@@ -282,17 +348,28 @@ export function menuCallbackForText(text: string): KnownCallback | null {
  * Rows `[⬆ extras…]` (optional) then the always-present back row; pressing any
  * of these lands in the exact-match interceptions of `handleText`.
  */
-export function composingKeyboard(extras: string[] = []): TelegramReplyKeyboardMarkup {
+export function composingKeyboard(ui: Ui, extras: string[] = []): TelegramReplyKeyboardMarkup {
   const rows: TelegramReplyKeyboardButton[][] = [
     ...extras.map((text) => [replyButton(text)]),
-    [replyButton(STEP_BACK_TEXT)],
+    [replyButton(ui.t.backToMenu)],
   ];
   return replyKeyboard(rows);
 }
 
 /** Inline single back button — kept for mid-flow messages (not the main menu). */
-export function backToMenuKeyboard(): TelegramInlineKeyboardMarkup {
-  return { inline_keyboard: [[button(fa.backToMenu, CB.ACT_BACK_MENU)]] };
+export function backToMenuKeyboard(ui: Ui): TelegramInlineKeyboardMarkup {
+  return { inline_keyboard: [[button(ui.t.backToMenu, CB.ACT_BACK_MENU)]] };
+}
+
+/** Phase 10: the language picker — labels in their OWN script, always. */
+export function languagePickerKeyboard(ui: Ui): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button(ui.t.langOptionFa, CB.LANG_FA)],
+      [button(ui.t.langOptionEn, CB.LANG_EN)],
+      [button(ui.t.backToMenu, CB.ACT_BACK_MENU)],
+    ],
+  };
 }
 
 /**
@@ -302,6 +379,7 @@ export function backToMenuKeyboard(): TelegramInlineKeyboardMarkup {
  * freshly loaded catalog, never against what the button promised.
  */
 function optionKeyboard(
+  ui: Ui,
   namespace: OptionNamespace,
   presets: number[],
   allowCustom: boolean,
@@ -316,38 +394,41 @@ function optionKeyboard(
     rows.push(row);
   }
   if (allowCustom) {
-    rows.push([button(fa.customVolumeLabel, `${namespace}:custom`)]);
+    rows.push([button(ui.t.customVolumeLabel, `${namespace}:custom`)]);
   }
-  rows.push([button(fa.stepBack, CB.STEP_BACK), button('❌ لغو', CB.ACT_CANCEL)]);
+  rows.push([button(ui.t.stepBack, CB.STEP_BACK), button(ui.t.btnCancelInline, CB.ACT_CANCEL)]);
   return { inline_keyboard: rows };
 }
 
 export function volumeKeyboard(
+  ui: Ui,
   presets: number[],
   allowCustom: boolean,
 ): TelegramInlineKeyboardMarkup {
-  return optionKeyboard('vol', presets, allowCustom, (v) => `${v} گیگ`);
+  return optionKeyboard(ui, 'vol', presets, allowCustom, (v) => ui.f.volumeOption(v));
 }
 
 export function durationKeyboard(
+  ui: Ui,
   presets: number[],
   allowCustom: boolean,
 ): TelegramInlineKeyboardMarkup {
-  return optionKeyboard('dur', presets, allowCustom, (v) => durationLabelFa(v));
+  return optionKeyboard(ui, 'dur', presets, allowCustom, (v) => ui.f.duration(v));
 }
 
 export function deviceKeyboard(
+  ui: Ui,
   presets: number[],
   allowCustom: boolean,
 ): TelegramInlineKeyboardMarkup {
-  return optionKeyboard('dev', presets, allowCustom, (v) => `${v} دستگاه`);
+  return optionKeyboard(ui, 'dev', presets, allowCustom, (v) => ui.f.deviceOption(v));
 }
 
-export function confirmKeyboard(): TelegramInlineKeyboardMarkup {
+export function confirmKeyboard(ui: Ui): TelegramInlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [button(fa.confirmYes, CB.ORDER_CONFIRM)],
-      [button(fa.stepBack, CB.STEP_BACK), button('❌ لغو', CB.ACT_CANCEL)],
+      [button(ui.t.confirmYes, CB.ORDER_CONFIRM)],
+      [button(ui.t.stepBack, CB.STEP_BACK), button(ui.t.btnCancelInline, CB.ACT_CANCEL)],
     ],
   };
 }
@@ -356,6 +437,7 @@ export function confirmKeyboard(): TelegramInlineKeyboardMarkup {
  * `tsk:` and `ann:` carry full ULIDs, so — exactly like `adm:` and `svc:` —
  * they live in a STRICT pattern in validate.ts and are produced ONLY by the
  * builders below and parsed ONLY by parseTicketCallback/parseAnnounceCallback.
+ * The ticket/admin ones are Persian-only operational surface.
  */
 export function ticketCallback(action: 'rp' | 'cl' | 'vw', ticketId: string): string {
   return `tsk:${action}:${ticketId}`;
@@ -382,11 +464,11 @@ export function adminTicketPushKeyboard(ticketId: string): TelegramInlineKeyboar
 }
 
 /** Customer-facing ticket notice: back to menu. */
-export function ticketAcknowledgedKeyboard(): TelegramInlineKeyboardMarkup {
-  return { inline_keyboard: [[button(fa.backToMenu, CB.ACT_BACK_MENU)]] };
+export function ticketAcknowledgedKeyboard(ui: Ui): TelegramInlineKeyboardMarkup {
+  return { inline_keyboard: [[button(ui.t.backToMenu, CB.ACT_BACK_MENU)]] };
 }
 
-/** Announcement confirm/receive keyboard. */
+/** Announcement confirm/receive keyboard (admin-only surface). */
 export function announceConfirmKeyboard(announcementId: string): TelegramInlineKeyboardMarkup {
   return {
     inline_keyboard: [
@@ -407,21 +489,22 @@ export function announceProgressKeyboard(announcementId: string): TelegramInline
 }
 
 /** Summary buttons when the wallet is usable: pay-all-from-wallet / deduct. */
-export function walletPayKeyboard(partialAvailable: boolean): TelegramInlineKeyboardMarkup {
+export function walletPayKeyboard(ui: Ui, partialAvailable: boolean): TelegramInlineKeyboardMarkup {
+  const t = ui.t;
   const rows: TelegramInlineKeyboardButton[][] = [
-    [button(fa.payWalletFull, CB.PAY_WALLET_FULL)],
+    [button(t.payWalletFull, CB.PAY_WALLET_FULL)],
   ];
   if (partialAvailable) {
-    rows.push([button(fa.payWalletPart, CB.PAY_WALLET_PART)]);
+    rows.push([button(t.payWalletPart, CB.PAY_WALLET_PART)]);
   }
   rows.push(
-    [button(fa.confirmYes, CB.ORDER_CONFIRM)],
-    [button(fa.stepBack, CB.STEP_BACK), button('❌ لغو', CB.ACT_CANCEL)],
+    [button(t.confirmYes, CB.ORDER_CONFIRM)],
+    [button(t.stepBack, CB.STEP_BACK), button(t.btnCancelInline, CB.ACT_CANCEL)],
   );
   return { inline_keyboard: rows };
 }
 
 /** Phase 8A: the config-name step is free text → composing mode with auto-pick. */
-export function configNameKeyboard(): TelegramReplyKeyboardMarkup {
-  return composingKeyboard([STEP_AUTO_TEXT]);
+export function configNameKeyboard(ui: Ui): TelegramReplyKeyboardMarkup {
+  return composingKeyboard(ui, [ui.t.btnAutoPick]);
 }

@@ -418,7 +418,108 @@ export const fa = {
   svcPageNote:
     '🌐 همین لینک، صفحه‌ی اختصاصی سرویسه — اطلاعات اتصال و وضعیت سرویس همین‌جا هست.',
   svcOpenPage: '🌐 باز کردن صفحه سرویس',
+
+  // ————— Phase 10: i18n — keyboard labels, the Account row, the selector —————
+  // Main-menu labels moved here VERBATIM from menu.ts so the (en) bundle can
+  // mirror them; the strings themselves are byte-frozen Phase 8A labels.
+  menuBuy: '🛒 خرید سرویس',
+  menuServices: '📦 سرویس‌های من',
+  menuOrders: '💳 سفارش‌های من',
+  menuAccount: '👤 حساب کاربری',
+  menuWallet: '💰 کیف پول',
+  menuInvite: '🤝 دعوت از دوستان',
+  menuSupport: '🆘 پشتیبانی',
+  // The selector button is deliberately BILINGUAL and locale-fixed: its label
+  // is identical in both bundles and survives a switch at any moment.
+  menuLanguage: '🌐 زبان / Language',
+  langOptionFa: '🇮🇷 فارسی',
+  langOptionEn: '🇬🇧 English',
+  // Mid-flow keyboard controls (the composing-mode extras + inline cancel).
+  btnAutoPick: '🎲 انتخاب خودکار',
+  btnSkipReject: '❌ ثبت رد بدون دلیل',
+  btnCancelInline: '❌ لغو',
+  btnRenewService: '🔁 تمدید سرویس',
+  btnRefreshStatus: '🔄 بروزرسانی وضعیت',
+  // Language picker + confirmation (each bundle names ITS OWN language —
+  // the confirmation is sent in the newly selected language).
+  languageIntro:
+    '🌐 زبان ربات را انتخاب کنید.\n\nهر زمان خواستید می‌توانید این انتخاب را تغییر دهید.',
+  languageSet:
+    '✅ زبان ربات به فارسی تنظیم شد.\n\nمنوی جدید در همین پیام جایگزین شده است.',
+  accountBotLanguage: (v: string) => `زبان ربات: ${v}`,
+  accountLanguageFa: 'فارسی',
+  accountLanguageEn: 'انگلیسی',
+  // Proactive-notice fallback when a service row carries no config name.
+  noticeServiceFallback: 'سرویس شما',
+
+  // ————— Phase 10: label mappers that used to live as switches in handlers —————
+  // Moved byte-for-byte (payments.ts `statusFa`, services.ts `panelStatusFa`,
+  // wallet.ts `entryLabel`) so both bundles own their own strings.
+  orderStatus(state: string): string {
+    switch (state) {
+      case 'pending_payment':
+        return fa.statusPendingPayment;
+      case 'awaiting_review':
+        return fa.statusAwaitingReview;
+      case 'approved':
+        return fa.statusApproved;
+      case 'provisioning':
+        return fa.statusProvisioning;
+      case 'completed':
+        return fa.statusCompleted;
+      case 'rejected':
+        return fa.statusRejected;
+      case 'failed':
+        return fa.statusFailed;
+      case 'cancelled':
+        return fa.statusCancelled;
+      default:
+        return state;
+    }
+  },
+  panelStatus(status: string): string {
+    switch (status) {
+      case 'active':
+        return fa.svcPanelActive;
+      case 'limited':
+        return fa.svcPanelLimited;
+      case 'expired':
+        return fa.svcPanelExpired;
+      case 'disabled':
+        return fa.svcPanelDisabled;
+      case 'on_hold':
+        return fa.svcPanelOnHold;
+      default:
+        return status.slice(0, 24);
+    }
+  },
+  walletKind(kind: string): string {
+    switch (kind) {
+      case 'referral_reward':
+        return fa.walletKindReferralReward;
+      case 'admin_grant':
+        return fa.walletKindAdminGrant;
+      case 'admin_debit':
+        return fa.walletKindAdminDebit;
+      case 'order_payment':
+        return fa.walletKindOrderPayment;
+      case 'order_refund':
+        return fa.walletKindOrderRefund;
+      default:
+        return kind.slice(0, 24);
+    }
+  },
+  // Phase 8B display-only reactions, absorbed into the bundle unchanged.
+  reactionDevices: deviceReaction,
+  reactionVolume: volumeReaction,
 } as const;
+
+/** The structural contract every language bundle must satisfy (Phase 10):
+ *  same key set, string leaves widened from fa's `as const`, function shapes
+ *  preserved exactly — a missing or mismatched English key is a compile error. */
+export type Texts = {
+  [K in keyof typeof fa]: [typeof fa[K]] extends [string] ? string : typeof fa[K];
+};
 
 /** Format integer money with Persian thousands + currency word. */
 export function formatPrice(amount: number, currency: string): string {

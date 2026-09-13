@@ -3,7 +3,7 @@
  * logic is duplicated:
  *  - inline buttons on legacy bubbles still deliver `menu:*` callback data;
  *  - Reply Keyboard taps arrive as the button TEXT and are mapped through
- *    `menuCallbackForText` in `handleText`.
+ *    `menuCallbackForText` in `handleText` (across ALL locales, Phase 10).
  * Every action re-reads the session server-side; nothing trusts the tap.
  */
 import type { UpdateContext } from '../types.ts';
@@ -15,8 +15,8 @@ import {
   mainMenuKeyboard,
   type KnownCallback,
 } from '../telegram/menu.ts';
-import { fa } from '../telegram/texts.ts';
 import { getCustomer } from '../db/customers.ts';
+import { localeName } from '../telegram/i18n.ts';
 import { setSession } from '../db/states.ts';
 import { isBusy, reduce } from '../state/machine.ts';
 import { loadCatalog } from '../catalog/catalog.ts';
@@ -28,7 +28,7 @@ import { openSupportEntry } from './support.ts';
 import { resumeRenewal } from './renewal.ts';
 import { sendSummary, stepView } from './purchase.ts';
 
-/** The seven main-menu shortcuts rendered on the Reply Keyboard. */
+/** The eight main-menu shortcuts rendered on the Reply Keyboard (Phase 10). */
 const MENU_SHORTCUTS: readonly string[] = [
   CB.MENU_BUY,
   CB.MENU_SERVICES,
@@ -45,28 +45,29 @@ export function isMenuShortcut(callback: string): callback is KnownCallback {
 
 /** `menu:buy` — re-enter the active step or start fresh (moved verbatim). */
 async function startPurchase(ctx: UpdateContext, session: Session): Promise<void> {
+  const t = ctx.ui.t;
   if (session.state === 'WAITING_CONFIG_NAME') {
-    await ctx.api.sendMessage(ctx.chatId, fa.buyWaitingConfigName, configNameKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.buyWaitingConfigName, configNameKeyboard(ctx.ui));
     return;
   }
   if (isBusy(session.state)) {
     // Re-entering an active flow: redraw the CURRENT step (state preserved).
     const loaded = await loadCatalog(ctx.db);
     if (!loaded.ok) {
-      await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
       return;
     }
     if (session.state === 'WAITING_ORDER_CONFIRMATION') {
       await sendSummary(ctx, session, loaded.catalog);
     } else if (session.state === 'WAITING_PAYMENT_RECEIPT') {
-      await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, t.paymentWaitNotice, backToMenuKeyboard(ctx.ui));
     } else if (
       session.state === 'WAITING_RENEWAL_DURATION' ||
       session.state === 'WAITING_RENEWAL_CONFIRMATION'
     ) {
       await resumeRenewal(ctx, session, loaded.catalog);
     } else {
-      const view = stepView(session.state, loaded.catalog);
+      const view = stepView(ctx.ui, session.state, loaded.catalog);
       if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
     }
     return;
@@ -74,7 +75,7 @@ async function startPurchase(ctx: UpdateContext, session: Session): Promise<void
   const afterBuy = reduce(session.state, 'buy'); // IDLE → BUYING
   if (afterBuy !== 'BUYING') return;
   await setSession(ctx.db, ctx.customerId, 'BUYING', session.data);
-  await ctx.api.sendMessage(ctx.chatId, fa.buyIntro, configNameKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, t.buyIntro, configNameKeyboard(ctx.ui));
   // The config-name step is where text capture begins.
   await setSession(ctx.db, ctx.customerId, reduce('BUYING', 'name_prompt_shown'), session.data);
 }
@@ -83,13 +84,14 @@ async function startPurchase(ctx: UpdateContext, session: Session): Promise<void
  * Runs one main-menu shortcut against the CURRENT session (the code the
  * callback switch used to hold inline). Returns false for anything other
  * than the seven shortcuts — the caller keeps owning the rest of the
- * callback vocabulary.
+ * callback vocabulary (`menu:lang` included).
  */
 export async function runMainMenuAction(
   ctx: UpdateContext,
   session: Session,
   callback: KnownCallback,
 ): Promise<boolean> {
+  const t = ctx.ui.t;
   switch (callback) {
     case CB.MENU_BUY:
       await startPurchase(ctx, session);
@@ -111,14 +113,18 @@ export async function runMainMenuAction(
       return true;
     case CB.MENU_ACCOUNT: {
       const record = await getCustomer(ctx.db, ctx.actor.id);
+      const none = t.accountNone;
       const lines = [
-        fa.accountHeader,
-        fa.accountUsername(record?.telegram_username ?? fa.accountNone),
-        fa.accountLanguage(record?.language_code ?? fa.accountNone),
-        record ? fa.accountSince(record.created_at.slice(0, 10)) : '',
-        isBusy(session.state) ? fa.accountStatusBusy : fa.accountStatusIdle,
+        t.accountHeader,
+        t.accountUsername(record?.telegram_username ?? none),
+        // Phase 10: the EFFECTIVE bot language first, the Telegram client
+        // hint beneath it (hint is display-only and never selects a language).
+        t.accountBotLanguage(localeName(ctx.ui)),
+        t.accountLanguage(record?.language_code ?? none),
+        record ? t.accountSince(record.created_at.slice(0, 10)) : '',
+        isBusy(session.state) ? t.accountStatusBusy : t.accountStatusIdle,
       ].filter(Boolean);
-      await ctx.api.sendMessage(ctx.chatId, lines.join('\n'), mainMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, lines.join('\n'), mainMenuKeyboard(ctx.ui));
       return true;
     }
     default:

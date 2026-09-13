@@ -1,8 +1,9 @@
 /**
  * Phase 8A e2e: the main menu is a REAL Telegram Reply Keyboard.
- * Fully offline (D1 shim over migrations 0001-0007 + fetch stub).
+ * Fully offline (D1 shim over migrations 0001-0010 + fetch stub).
  * Covers: keyboard shape (rows, labels, styles — exactly three styled, the
- * rest basic), text→action routing for all seven shortcuts at IDLE, callback
+ * rest basic; Phase 10 adds the locale-fixed language selector button →
+ * 8 labels in 4 rows of two), text→action routing for all seven shortcuts at IDLE, callback
  * parity, the composing keyboards that replace the menu while free text is
  * awaited (config name, support draft, admin ticket reply, admin reject
  * skip), exact-match interception gates (back / auto-pick / menu labels ONLY
@@ -77,6 +78,8 @@ const MAIN_LABELS = [
   '💰 کیف پول',
   '🤝 دعوت از دوستان',
   '🆘 پشتیبانی',
+  // Phase 10: the language selector — one locale-FIXED bilingual button.
+  '🌐 زبان / Language',
 ];
 
 function sessionFor(tgUserId: number): string {
@@ -113,7 +116,7 @@ function hasMainLabel(kb: ReplyKeyboard | undefined, label: string): boolean {
 
 // ————————————————————— keyboard shape —————————————————————
 
-test('/start presents a Reply Keyboard: 7 labels in 4 rows (2/2/2/1), RTL pairing', async () => {
+test('/start presents a Reply Keyboard: 8 labels in 4 rows (2/2/2/2), RTL pairing', async () => {
   const hero = { ...USER, id: 810000001, username: 'p8a_shape' };
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
@@ -123,7 +126,7 @@ test('/start presents a Reply Keyboard: 7 labels in 4 rows (2/2/2/1), RTL pairin
   assert.equal(kb!.is_persistent, true);
   assert.deepEqual(
     kb!.keyboard.map((r) => r.length),
-    [2, 2, 2, 1],
+    [2, 2, 2, 2],
   );
   assert.deepEqual(
     kb!.keyboard.flat().map((b) => b.text),

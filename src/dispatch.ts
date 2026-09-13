@@ -1,5 +1,6 @@
 import type { Env, TelegramUpdate, UpdateContext } from './types.ts';
 import { TelegramApi } from './telegram/api.ts';
+import { uiFor } from './telegram/i18n.ts';
 import { customerExists, upsertCustomer } from './db/customers.ts';
 import { REFERRAL_CODE_PREFIX } from './handlers/referrals.ts';
 import { claimUpdate, releaseUpdate } from './db/dedupe.ts';
@@ -49,7 +50,9 @@ export async function processTelegramUpdate(
       if (neverSeen) pendingReferralCode = arg;
     }
 
-    const customerId = await upsertCustomer(env.DB, actor);
+    // Phase 10: the upsert's own row read carries the explicit language
+    // choice — resolution costs ZERO extra queries (NULL/Persian default).
+    const { id: customerId, language } = await upsertCustomer(env.DB, actor);
     const ctx: UpdateContext = {
       env,
       db: env.DB,
@@ -58,6 +61,7 @@ export async function processTelegramUpdate(
       chatId,
       customerId,
       isAdmin: await resolveIsAdmin(env, env.DB, actor.id),
+      ui: uiFor(language),
       waitUntil: options?.waitUntil,
       ...(pendingReferralCode ? { pendingReferralCode } : {}),
     };

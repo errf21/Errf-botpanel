@@ -18,19 +18,23 @@ migrations/0006_phase6.sql  orders.kind/service_expires_at + renewal states & do
 migrations/0007_phase7.sql  wallet ledger + referrals + support tickets + announcements
 migrations/0008_phase8c.sql  payment_reminders claim table (+safe backfill)
 migrations/0009_phase9.sql   service_notifications claim table (+suppress backfill)
+migrations/0010_phase10.sql  customers.language: Phase 10 explicit-choice column
 src/index.ts                Fetch router: /health, /telegram/webhook + 5-min cron (scheduled)
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
-src/dispatch.ts             Update pipeline: dedupe → register (first-start referral probe) → route
+src/dispatch.ts             Update pipeline: dedupe → register (upsert carries the locale → ctx.ui) → route
 src/admin.ts                Admin authorization, receipt forwarding, review + wallet refund + referral payout
 src/routes/health.ts        Liveness + D1 connectivity + binding status
 src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
 src/telegram/api.ts         Telegram Bot API client (token only in env; opt-in HTML parse_mode)
 src/telegram/format.ts      Phase 8C: minimal Telegram HTML escape/inline-code helper (copy-friendly values)
-src/telegram/menu.ts        Callback vocabulary + keyboards (incl. admin `adm:`, service `svc:`, ticket `tsk:`, announce `ann:`)
-src/telegram/texts.ts       All user-facing text (Persian-first), one place
+src/telegram/menu.ts        Callback vocabulary + localized keyboards (admin-only keyboards stay Persian literals); all-locale tap routing
+src/telegram/texts.ts       Persian bundle — the `Texts` contract, frozen persona copy, fa formatters
+src/telegram/texts.en.ts     Phase 10 English bundle — authored natively, type-checked against `Texts`
+src/telegram/i18n.ts          Phase 10 boundary: Locale, Fmt, uiFor() — the ONLY language branch
 src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit
-src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + admin-review buttons
-src/handlers/messages.ts    Text → state machine; admin intercepts (reject reason, ticket reply, wallet ops)
+src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + admin-review buttons + Phase 10 `lang:` taps
+src/handlers/messages.ts    Text → state machine; all-locale keyboard routing; admin intercepts (reject reason, ticket reply, wallet ops)
+src/handlers/language.ts     Phase 10 language selector: picker → explicit D1 persistence → keyboard re-render
 src/handlers/payment.ts     Receipt submission, payment instructions, orders/queue views
 src/handlers/provisioning.ts Phase 5 admin queue: /failed + `adm:rt` retry taps
 src/handlers/services.ts    Phase 6 My Services (Phase 9 audit: remaining vol, expiry time, page CTA)
@@ -344,6 +348,55 @@ configured and rejects requests with a wrong token (401).
   PasarGuard subscription URL (now a tap button + a discovery line); the bot
   builds no dashboard — presentation only.
 
+## Language model (Phase 10)
+
+English is a SECOND, NATIVE voice — written from each step's purpose, not
+translated word-for-word from the Persian copy. Both locales share one
+business meaning; each owns its own wording, keyboard labels, money style
+(`12,500,000 Toman` in English vs the Persian-digit line in fa), dates
+(English: `2026-09-14`, `2026-09-14 08:30 UTC`; Persian keeps the
+established ISO-slice with Persian digits) and personality rules.
+
+- **Boundary.** `src/telegram/i18n.ts` is the ONE language branch: `uiFor()`
+  returns the singletons `{ locale, t: Texts, f: Fmt }`. `Texts` is derived
+  from `fa` (`typeof`), so a missing or wrongly-shaped English key is a
+  **compile error** (`texts.en.ts` must mirror every key). Handlers only
+  ever call `ctx.ui.t.*` / `ctx.ui.f.*` — no `if (language === ...)` anywhere.
+- **Resolution.** `customers.language` (explicit choice, written ONLY by the
+  selector `lang:fa|lang:en`) wins. NULL always means **Persian**.
+  Telegram's `language_code` is stored for display on the Account screen
+  and NEVER selects a language (operator decision, Phase 10) — English
+  begins only at an explicit tap and survives profile churn; the upsert
+  never touches `language`. Migration 0010 adds the nullable CHECK'd column
+  with **no backfill** (every existing user keeps today's behavior).
+- **Selector.** Main menu's 8th button (🌐 — locale-FIXED bilingual label,
+  so it is always findable and never needs re-routing) → picker with
+  «🇮🇷 فارسی» / «🇬🇧 English» → per-actor write → confirmation IN THE NEW
+  LANGUAGE, and the keyboard fitting the current state (menu / composing /
+  inline back) re-rendered in it. Language never enters the state machine.
+- **Stale keyboards are safe.** Reply-keyboard labels ARE the routing
+  (`menuCallbackForText`), so the exact-match tables span **both** locales:
+  a Persian tap inside an English session routes to the English screen
+  (never as free text), and vice versa. A unit test pins cross-locale label
+  uniqueness; `lang:` values are validated against the static allowlist.
+- **Proactive paths follow the RECIPIENT.** Review results, provisioning
+  success/failure, renewal-applied, refunds, referral payout/join, ticket
+  replies/closure, payment reminders (8C) and usage/expiry notices (9)
+  resolve the customer's stored `language` via the existing customer JOIN/
+  contact read (zero extra queries) — the claim/idempotency mechanics are
+  untouched; only the composed text localizes.
+- **The admin surface stays Persian** (operator decision): queues
+  (`/pending`, `/failed`, `/tickets`), review buttons/toasts, ticket relays,
+  announcement job control and the 8C admin digest are `fa` constants on
+  purpose — no English variant leaks into them.
+- **Admin-authored content is NOT bot copy.** Announcement bodies and the
+  `payment_info.instructions`/`holder` doc are settings content rendered
+  verbatim: an English-facing operation should provide its own bilingual or
+  English values in D1 (no redeploy, no code change).
+- **Invariant.** Every pre-Phase-10 test still passes byte-for-byte on the
+  Persian strings; only two layout pins moved with the new keyboard row
+  (8 labels in 4 rows of 2, styled trio unchanged).
+
 ## Roadmap
 
 - **Phase 1**: skeleton, config layer, webhook auth, schema ✅
@@ -356,5 +409,6 @@ configured and rejects requests with a wrong token (401).
 - **Phase 8**: bot personality / friendly UX ✅
   - 8A reply keyboard ✅ · 8B persona copy ✅ · 8C payment UX + review reminders ✅
 - **Phase 9**: service notifications (90% usage + single expiry) + My Services audit ✅
-- Phase 10: final Cloudflare deployment + webhook registration
+- **Phase 10**: full English support — native second voice, i18n boundary, selector, D1 persistence ✅
+- Phase 11 (next): final Cloudflare deployment + webhook registration
 

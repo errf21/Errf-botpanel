@@ -42,6 +42,8 @@ import { getCustomerContact, resolveAdminChatIds } from '../db/customers.ts';
 import { isValidOrderId } from '../lib/validate.ts';
 import { adminProvisionFailedKeyboard, serviceReadyKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
+import { FA_UI, uiFor } from '../telegram/i18n.ts';
+import type { Ui } from '../telegram/i18n.ts';
 
 /** 1 GB = 10^9 bytes on the panel wire (SI). Confirm on first live read. */
 export const GB_BYTES = 1_000_000_000;
@@ -135,17 +137,25 @@ async function notice(
   }
 }
 
+/**
+ * Phase 10: the recipient's persisted language decides the bundle the notice
+ * is composed FROM (`select` runs with the resolved Ui) — one contact read,
+ * zero behavior change beyond the text itself.
+ */
 async function notifyCustomer(
   deps: ProvisionDeps,
   order: OrderRow,
-  text: string,
-  parseMode?: Parameters<TelegramApiLike['sendMessage']>[3],
-  buttons?: Parameters<TelegramApiLike['sendMessage']>[2],
+  select: (ui: Ui) => {
+    text: string;
+    parseMode?: Parameters<TelegramApiLike['sendMessage']>[3];
+    buttons?: Parameters<TelegramApiLike['sendMessage']>[2];
+  },
 ): Promise<void> {
   const contact = await getCustomerContact(deps.db, order.customer_id);
   const chatId = contact ? Number(contact.telegram_user_id) : NaN;
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
-  await notice(chatId, text, deps.api, buttons, parseMode);
+  const composed = select(uiFor(contact?.language));
+  await notice(chatId, composed.text, deps.api, composed.buttons, composed.parseMode);
 }
 
 /**
@@ -173,15 +183,13 @@ async function finalizeFailure(
     console.error(`provision_finalize_failed_race orderId=${orderId.slice(0, 32)}`);
     return { ok: false, error: 'provision_failed' };
   }
-  await notifyCustomer(
-    deps,
-    result.order,
-    renewal
-      ? fa.renewFailedNotice(result.order.id)
+  await notifyCustomer(deps, result.order, (ui) => ({
+    text: renewal
+      ? ui.t.renewFailedNotice(result.order.id)
       : looksLikeNameRejection(reason)
-      ? fa.provisionNameRejectedNotice(result.order.id)
-      : fa.provisionFailedNotice(result.order.id),
-  );
+        ? ui.t.provisionNameRejectedNotice(result.order.id)
+        : ui.t.provisionFailedNotice(result.order.id),
+  }));
   await notifyAdminsOfFailure(deps, result.order, reason, renewal);
   return { ok: false, error: 'provision_failed' };
 }
@@ -225,19 +233,16 @@ async function finalizeSuccess(
     console.error(`provision_finalize_complete_race orderId=${orderId.slice(0, 32)}`);
     return { ok: false, error: 'provision_failed' };
   }
-  const text =
-    result.order.subscription_url !== null
-      ? fa.serviceReady(result.order.id, result.order.subscription_url)
-      : fa.serviceReadyWithoutLink(result.order.id);
   // Phase 8C: serviceReady carries an inline-code URL → send it as HTML.
   // Phase 9: attach the service-page discovery keyboard (panel's own page).
-  await notifyCustomer(
-    deps,
-    result.order,
-    text,
-    result.order.subscription_url !== null ? 'HTML' : undefined,
-    serviceReadyKeyboard(result.order.subscription_url),
-  );
+  await notifyCustomer(deps, result.order, (ui) => ({
+    text:
+      result.order.subscription_url !== null
+        ? ui.t.serviceReady(result.order.id, result.order.subscription_url)
+        : ui.t.serviceReadyWithoutLink(result.order.id),
+    parseMode: result.order.subscription_url !== null ? 'HTML' : undefined,
+    buttons: serviceReadyKeyboard(ui, result.order.subscription_url),
+  }));
   return { ok: true, order: result.order, attempted: true };
 }
 
@@ -390,7 +395,11 @@ async function finalizeRenewalSuccess(
     // The renewal IS applied (panel says so) — only local bookkeeping raced.
     console.error(`renewal_booking_skipped service=${serviceOrderId.slice(0, 32)}`);
   }
-  await notifyCustomer(deps, result.order, fa.renewApplied(result.order.id, expiresIso.slice(0, 10)));
+  await notifyCustomer(deps, result.order, (ui) => ({
+    // The date stays the raw ISO slice exactly as today (ASCII in fa too —
+    // byte-frozen Phase 6 behavior; ISO is equally correct English output).
+    text: ui.t.renewApplied(result.order.id, expiresIso.slice(0, 10)),
+  }));
   return { ok: true, order: result.order, attempted: true };
 }
 

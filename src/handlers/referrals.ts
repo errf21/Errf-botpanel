@@ -8,31 +8,32 @@ import { attributeReferral, ensureReferralCode, referralStats } from '../db/refe
 import { loadReferralConfig } from '../catalog/referral.ts';
 import { getCustomerContact } from '../db/customers.ts';
 import { backToMenuKeyboard } from '../telegram/menu.ts';
-import { digitsFa, fa, formatPrice } from '../telegram/texts.ts';
+import { uiFor } from '../telegram/i18n.ts';
 
 export const REFERRAL_CODE_PREFIX = 'ref_';
 
 /** `menu:invite` — own link + lifetime stats. */
 export async function showInvite(ctx: UpdateContext): Promise<void> {
+  const { t, f } = ctx.ui;
   const loaded = await loadReferralConfig(ctx.db);
   const code = await ensureReferralCode(ctx.db, ctx.customerId);
   if (!code) {
-    await ctx.api.sendMessage(ctx.chatId, fa.referralUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.referralUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
   const username = await botUsername(ctx.api);
   const stats = await referralStats(ctx.db, ctx.customerId);
-  const lines: string[] = [fa.inviteHeader];
+  const lines: string[] = [t.inviteHeader];
   if (username !== null) {
-    lines.push(`${fa.inviteLinkNone}\nhttps://t.me/${username}?start=${REFERRAL_CODE_PREFIX}${code}`);
+    lines.push(`${t.inviteLinkNone}\nhttps://t.me/${username}?start=${REFERRAL_CODE_PREFIX}${code}`);
   }
-  lines.push(fa.inviteHowTo);
-  lines.push(fa.inviteCount(stats.referees));
+  lines.push(t.inviteHowTo);
+  lines.push(t.inviteCount(stats.referees));
   if (loaded.ok) {
-    lines.push(fa.inviteEarned(formatPrice(stats.earnedIrt, 'IRT')));
-    lines.push(fa.inviteRewardPercent(digitsFa(loaded.config.rewardPercent)));
+    lines.push(t.inviteEarned(f.price(stats.earnedIrt, 'IRT')));
+    lines.push(t.inviteRewardPercent(f.digits(loaded.config.rewardPercent)));
   }
-  await ctx.api.sendMessage(ctx.chatId, lines.filter(Boolean).join('\n\n'), backToMenuKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, lines.filter(Boolean).join('\n\n'), backToMenuKeyboard(ctx.ui));
 }
 
 /** First-touch attribution for the code the dispatcher already extracted.
@@ -58,7 +59,8 @@ export async function notifyReferralJoined(
   const referrerChat = Number(customer?.telegram_user_id);
   if (!Number.isSafeInteger(referrerChat) || referrerChat <= 0) return;
   try {
-    await ctx.api.sendMessage(referrerChat, fa.refNoticeJoined(String(ctx.actor.id)));
+    // Phase 10: the notice reads the REFERRER's persisted language.
+    await ctx.api.sendMessage(referrerChat, uiFor(customer?.language).t.refNoticeJoined(String(ctx.actor.id)));
   } catch {
     /* never blocks registration */
   }
@@ -74,14 +76,18 @@ export async function notifyReferralPaid(
     amountIrt: number;
   },
 ): Promise<void> {
-  const amount = formatPrice(opts.amountIrt, 'IRT');
   const [referrer, referee] = await Promise.all([
     getCustomerContact(db, opts.referrerCustomerId),
     getCustomerContact(db, opts.refereeCustomerId),
   ]);
   const refChat = Number(referrer?.telegram_user_id);
   if (Number.isSafeInteger(refChat) && refChat > 0) {
-    await api.sendMessage(refChat, fa.refPaidToReferrer(amount, String(referee?.telegram_user_id ?? fa.accountNone)));
+    // Phase 10: payout notices follow the RECIPIENT's language.
+    const ui = uiFor(referrer?.language);
+    await api.sendMessage(
+      refChat,
+      ui.t.refPaidToReferrer(ui.f.price(opts.amountIrt, 'IRT'), String(referee?.telegram_user_id ?? ui.t.accountNone)),
+    );
   }
 }
 

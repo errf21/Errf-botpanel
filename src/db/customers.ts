@@ -1,4 +1,5 @@
 import type { Env, TelegramUser } from '../types.ts';
+import type { Locale } from '../telegram/i18n.ts';
 
 /**
  * Customer repository. Telegram user id (as string) is the external identity;
@@ -11,9 +12,17 @@ export interface CustomerRecord {
   first_name: string | null;
   last_name: string | null;
   language_code: string | null;
+  /** Phase 10: explicit in-bot choice ('fa' | 'en'); NULL = never chosen. */
+  language: string | null;
   is_admin: number;
   created_at: string;
   updated_at: string;
+}
+
+/** Identity + locale after upsert — Phase 10 feeds the dispatcher's Ui. */
+export interface CustomerIdentity {
+  id: number;
+  language: string | null;
 }
 
 /**
@@ -21,11 +30,14 @@ export interface CustomerRecord {
  * Safe under repeated /start and concurrent webhook retries —
  * always ends with exactly one row; returns its integer id. First-ever
  * detection is `customerExists()` at the rare referral call site.
+ * Phase 10: `language` is written ONLY by `setCustomerLanguage` — the upsert
+ * never touches it, so a Telegram profile update can't wipe an explicit
+ * choice, and the stored Telegram `language_code` hint is display-only.
  */
 export async function upsertCustomer(
   db: D1Database,
   user: TelegramUser,
-): Promise<number> {
+): Promise<CustomerIdentity> {
   const telegramUserId = String(user.id);
   await db
     .prepare(
@@ -48,11 +60,31 @@ export async function upsertCustomer(
     .run();
 
   const row = await db
-    .prepare('SELECT id FROM customers WHERE telegram_user_id = ?1')
+    .prepare('SELECT id, language FROM customers WHERE telegram_user_id = ?1')
     .bind(telegramUserId)
-    .first<{ id: number }>();
+    .first<{ id: number; language: string | null }>();
   if (!row) throw new Error('customer_load_failed');
-  return row.id;
+  return { id: row.id, language: row.language };
+}
+
+/**
+ * Phase 10: the ONLY write path for the explicit language preference, keyed
+ * on the verified actor's Telegram id (never on user-authored content).
+ */
+export async function setCustomerLanguage(
+  db: D1Database,
+  telegramUserId: number,
+  locale: Locale,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE customers
+          SET language = ?2,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE telegram_user_id = ?1`,
+    )
+    .bind(String(telegramUserId), locale)
+    .run();
 }
 
 /** True when this telegram id already has a row (first-ever-seen probe).
@@ -75,7 +107,7 @@ export async function getCustomer(
   return db
     .prepare(
       `SELECT id, telegram_user_id, telegram_username, first_name, last_name,
-              language_code, is_admin, created_at, updated_at
+              language_code, language, is_admin, created_at, updated_at
          FROM customers
         WHERE telegram_user_id = ?1`,
     )
@@ -98,6 +130,8 @@ export async function isAdminUserId(
 export interface CustomerContact {
   telegram_user_id: string;
   first_name: string | null;
+  /** Phase 10: explicit language choice for proactive-notice routing. */
+  language: string | null;
 }
 
 /** Internal id → contact, for proactive notices (e.g. after admin review). */
@@ -106,7 +140,7 @@ export async function getCustomerContact(
   customerId: number,
 ): Promise<CustomerContact | null> {
   return db
-    .prepare('SELECT telegram_user_id, first_name FROM customers WHERE id = ?1')
+    .prepare('SELECT telegram_user_id, first_name, language FROM customers WHERE id = ?1')
     .bind(customerId)
     .first<CustomerContact>();
 }

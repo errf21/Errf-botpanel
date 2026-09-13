@@ -45,7 +45,7 @@ import { renewalDurationKeyboard, confirmKeyboard, backToMenuKeyboard, walletPay
 import { payableWalletBalance } from './wallet.ts';
 import { payOrderWithWallet, refundOrderWalletPayment, setPaidLedgerOrder } from '../db/wallet.ts';
 import { planWalletPayment, type WalletPlan } from '../orders/checkout.ts';
-import { fa, formatPrice } from '../telegram/texts.ts';
+
 import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
 
@@ -58,15 +58,15 @@ async function renewableService(
 ): Promise<{ ok: true; service: OrderRow } | { ok: false; toast: string; clearSession?: boolean }> {
   const renewal = await loadRenewalViewConfig(ctx.db);
   if (!renewal.enabled) {
-    return { ok: false, toast: fa.renewDisabledNotice };
+    return { ok: false, toast: ctx.ui.t.renewDisabledNotice };
   }
   const service = await getOwnedService(ctx.db, ctx.customerId, serviceOrderId);
   if (!service) {
-    return { ok: false, toast: fa.serviceNotFound, clearSession: true };
+    return { ok: false, toast: ctx.ui.t.serviceNotFound, clearSession: true };
   }
   const active = await findActiveRenewalForService(ctx.db, service.id);
   if (active !== null) {
-    return { ok: false, toast: fa.renewInProgressNotice(active.id.slice(0, 10)) };
+    return { ok: false, toast: ctx.ui.t.renewInProgressNotice(active.id.slice(0, 10)) };
   }
   return { ok: true, service };
 }
@@ -77,12 +77,12 @@ export async function sendRenewalDurationPrompt(
   catalog: Catalog,
 ): Promise<void> {
   const presets = enabledDurationDays(catalog);
-  const name = serviceSnapshotData(service).name ?? fa.accountNone;
-  const intro = fa.renewIntro(name, expiryDisplay(effectiveExpiryIso(service)));
+  const name = serviceSnapshotData(service).name ?? ctx.ui.t.accountNone;
+  const intro = ctx.ui.t.renewIntro(name, expiryDisplay(ctx.ui, effectiveExpiryIso(service)));
   await ctx.api.sendMessage(
     ctx.chatId,
-    `${intro}\n\n${fa.renewDurationPrompt}`,
-    renewalDurationKeyboard(presets),
+    `${intro}\n\n${ctx.ui.t.renewDurationPrompt}`,
+    renewalDurationKeyboard(ctx.ui, presets),
   );
 }
 
@@ -94,7 +94,7 @@ export async function startRenewal(
   callbackQueryId: string,
 ): Promise<void> {
   if (session.state !== 'IDLE') {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.serviceBusyFirst, true);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.serviceBusyFirst, true);
     return;
   }
   const guard = await renewableService(ctx, serviceOrderId);
@@ -104,12 +104,12 @@ export async function startRenewal(
   }
   const loaded = await loadCatalog(ctx.db);
   if (!loaded.ok) {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.catalogUnavailable, true);
     return;
   }
   const next = reduce(session.state, 'renew_start');
   if (next !== 'WAITING_RENEWAL_DURATION') {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.invalidChoice);
     return;
   }
   await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -131,11 +131,11 @@ export async function applyRenewalDuration(
     typeof serviceOrderId !== 'string' ||
     !isValidOrderId(serviceOrderId)
   ) {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice, true);
     return;
   }
   if (!enabledDurationDays(catalog).includes(days)) {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.rejectedPresetDisabled, true);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.rejectedPresetDisabled, true);
     return;
   }
   const guard = await renewableService(ctx, serviceOrderId);
@@ -163,12 +163,12 @@ export async function sendRenewalSummary(
   const days = session.data['duration_days'];
   const token = session.data['order_token'];
   if (typeof days !== 'number' || typeof token !== 'string') {
-    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.missingDraftData, backToMenuKeyboard(ctx.ui));
     return;
   }
   const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days });
   if (!computed.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
   const b = computed.breakdown;
@@ -178,31 +178,31 @@ export async function sendRenewalSummary(
     localExpiry === null ? 0 : Date.parse(localExpiry),
   );
   const newExpiryIso = new Date(baseMs + b.duration_days * DAY_MS).toISOString();
-  const name = serviceSnapshotData(service).name ?? fa.accountNone;
+  const name = serviceSnapshotData(service).name ?? ctx.ui.t.accountNone;
   const balance = await payableWalletBalance(ctx.db, ctx.customerId);
   const lines = [
-    fa.renewSummaryHeader,
-    fa.renewSummaryService(name),
-    fa.renewSummaryAdd(b.months),
-    fa.summaryPrice(formatPrice(b.total, b.currency)),
-    fa.renewSummaryFrom(expiryDisplay(localExpiry)),
-    fa.renewSummaryUntil(expiryDisplay(newExpiryIso)),
-    fa.summaryId(token),
+    ctx.ui.t.renewSummaryHeader,
+    ctx.ui.t.renewSummaryService(name),
+    ctx.ui.t.renewSummaryAdd(b.months),
+    ctx.ui.t.summaryPrice(ctx.ui.f.price(b.total, b.currency)),
+    ctx.ui.t.renewSummaryFrom(expiryDisplay(ctx.ui, localExpiry)),
+    ctx.ui.t.renewSummaryUntil(expiryDisplay(ctx.ui, newExpiryIso)),
+    ctx.ui.t.summaryId(token),
   ];
   if (balance !== null && balance > 0) {
-    lines.push(fa.summaryWalletLine(formatPrice(balance, 'IRT')));
+    lines.push(ctx.ui.t.summaryWalletLine(ctx.ui.f.price(balance, 'IRT')));
     const full = balance >= b.total;
     const partial = !full && balance >= 1 && b.total >= 2;
-    lines.push(fa.summaryHint);
+    lines.push(ctx.ui.t.summaryHint);
     await ctx.api.sendMessage(
       ctx.chatId,
       lines.join('\n\n'),
-      full || partial ? walletPayKeyboard(partial) : confirmKeyboard(),
+      full || partial ? walletPayKeyboard(ctx.ui, partial) : confirmKeyboard(ctx.ui),
     );
     return;
   }
-  lines.push(fa.summaryHint);
-  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), confirmKeyboard());
+  lines.push(ctx.ui.t.summaryHint);
+  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), confirmKeyboard(ctx.ui));
 }
 
 /** `ord:confirm` while WAITING_RENEWAL_CONFIRMATION — the renewal's only exit. */
@@ -223,7 +223,7 @@ export async function confirmRenewal(
     typeof serviceOrderId !== 'string' ||
     !isValidOrderId(serviceOrderId)
   ) {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice);
     return;
   }
   const guard = await renewableService(ctx, serviceOrderId);
@@ -234,11 +234,11 @@ export async function confirmRenewal(
   }
   const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days });
   if (!computed.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     await ctx.api.answerCallbackQuery(callbackQueryId);
     return;
   }
-  const snapshotName = serviceSnapshotData(guard.service).name ?? fa.accountNone;
+  const snapshotName = serviceSnapshotData(guard.service).name ?? ctx.ui.t.accountNone;
   if (wallet) {
     const paid = await payOrderWithWallet(ctx.db, {
       customerId: ctx.customerId,
@@ -249,7 +249,7 @@ export async function confirmRenewal(
     if (!paid.ok) {
       await ctx.api.answerCallbackQuery(
         callbackQueryId,
-        paid.reason === 'insufficient' ? fa.walletBalanceLow : fa.catalogUnavailable,
+        paid.reason === 'insufficient' ? ctx.ui.t.walletBalanceLow : ctx.ui.t.catalogUnavailable,
         true,
       );
       return;
@@ -284,7 +284,7 @@ export async function confirmRenewal(
         }).catch(() => undefined);
       }
     }
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     await ctx.api.answerCallbackQuery(callbackQueryId);
     return;
   }
@@ -292,11 +292,11 @@ export async function confirmRenewal(
     if (!result.created) {
       // Replay token: the order exists — never pay or re-provision again.
       const fresh = await getOrderByIdForReplay(ctx.db, result.order.id);
-      await ctx.api.answerCallbackQuery(callbackQueryId, fa.alreadyConfirmed, true);
+      await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.alreadyConfirmed, true);
       await ctx.api.sendMessage(
         ctx.chatId,
-        fresh ? fa.paymentWaitNotice : fa.alreadyConfirmed,
-        backToMenuKeyboard(),
+        fresh ? ctx.ui.t.paymentWaitNotice : ctx.ui.t.alreadyConfirmed,
+        backToMenuKeyboard(ctx.ui),
       );
       if (fresh) await sendPaymentInstructions(ctx, fresh);
       return;
@@ -305,11 +305,11 @@ export async function confirmRenewal(
     // payment path); re-point the ledger onto the created approved row.
     await setPaidLedgerOrder(ctx.db, token, result.order.id);
     await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.walletPayConfirmToast);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.walletPayConfirmToast);
     await ctx.api.sendMessage(
       ctx.chatId,
-      fa.walletPaidRenewal(result.order.id, formatPrice(wallet.creditIrt, 'IRT')),
-      backToMenuKeyboard(),
+      ctx.ui.t.walletPaidRenewal(result.order.id, ctx.ui.f.price(wallet.creditIrt, 'IRT')),
+      backToMenuKeyboard(ctx.ui),
     );
     const provisioning = provisionOrder(
       { env: ctx.env, db: ctx.db, api: ctx.api },
@@ -321,11 +321,11 @@ export async function confirmRenewal(
   }
   if (wallet && wallet.mode === 'partial' && !result.created) {
     const fresh = await getOrderByIdForReplay(ctx.db, result.order.id);
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.alreadyConfirmed, true);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.alreadyConfirmed, true);
     await ctx.api.sendMessage(
       ctx.chatId,
-      fresh ? fa.paymentWaitNotice : fa.alreadyConfirmed,
-      backToMenuKeyboard(),
+      fresh ? ctx.ui.t.paymentWaitNotice : ctx.ui.t.alreadyConfirmed,
+      backToMenuKeyboard(ctx.ui),
     );
     if (fresh) await sendPaymentInstructions(ctx, fresh);
     return;
@@ -337,7 +337,7 @@ export async function confirmRenewal(
   });
   await ctx.api.answerCallbackQuery(
     callbackQueryId,
-    result.created ? fa.orderConfirmToast : fa.alreadyConfirmed,
+    result.created ? ctx.ui.t.orderConfirmToast : ctx.ui.t.alreadyConfirmed,
     !result.created,
   );
   if (result.created && wallet && wallet.mode === 'partial') {
@@ -345,19 +345,19 @@ export async function confirmRenewal(
     {
       await ctx.api.sendMessage(
         ctx.chatId,
-        fa.walletPartialRenewal(
+        ctx.ui.t.walletPartialRenewal(
           result.order.id,
-          formatPrice(wallet.creditIrt, 'IRT'),
-          formatPrice(result.order.amount, result.order.currency),
+          ctx.ui.f.price(wallet.creditIrt, 'IRT'),
+          ctx.ui.f.price(result.order.amount, result.order.currency),
         ),
-        backToMenuKeyboard(),
+        backToMenuKeyboard(ctx.ui),
       );
     }
   }
   await ctx.api.sendMessage(
     ctx.chatId,
-    fa.renewConfirmed(result.order.id),
-    backToMenuKeyboard(),
+    ctx.ui.t.renewConfirmed(result.order.id),
+    backToMenuKeyboard(ctx.ui),
   );
   await sendPaymentInstructions(ctx, result.order);
 }
@@ -372,22 +372,22 @@ export async function confirmRenewalWithWallet(
 ): Promise<void> {
   const balance = await payableWalletBalance(ctx.db, ctx.customerId);
   if (balance === null) {
-    await ctx.api.sendMessage(ctx.chatId, fa.walletUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.walletUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
   const days = session.data['duration_days'];
   if (session.state !== 'WAITING_RENEWAL_CONFIRMATION' || typeof days !== 'number') {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice, true);
     return;
   }
   const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days });
   if (!computed.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
   const plan = planWalletPayment(computed.breakdown.total, balance, mode);
   if (!plan) {
-    await ctx.api.sendMessage(ctx.chatId, fa.walletBalanceLow, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.walletBalanceLow, backToMenuKeyboard(ctx.ui));
     return;
   }
   await confirmRenewal(ctx, session, catalog, callbackQueryId, plan);
@@ -412,13 +412,13 @@ export async function renewalGoBack(
   await ctx.api.answerCallbackQuery(callbackQueryId);
   if (typeof serviceOrderId !== 'string' || !isValidOrderId(serviceOrderId)) {
     await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.missingDraftData, backToMenuKeyboard(ctx.ui));
     return 'handled';
   }
   const service = await getOwnedService(ctx.db, ctx.customerId, serviceOrderId);
   if (!service) {
     await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.serviceNotFound, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.serviceNotFound, backToMenuKeyboard(ctx.ui));
     return 'handled';
   }
   const next = reduce(session.state, 'step_back');
@@ -439,13 +439,13 @@ export async function resumeRenewal(
   const serviceOrderId = session.data['renews_order_id'];
   if (typeof serviceOrderId !== 'string' || !isValidOrderId(serviceOrderId)) {
     await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.missingDraftData, backToMenuKeyboard(ctx.ui));
     return;
   }
   const service = await getOwnedService(ctx.db, ctx.customerId, serviceOrderId);
   if (!service) {
     await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.serviceNotFound, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.serviceNotFound, backToMenuKeyboard(ctx.ui));
     return;
   }
   if (session.state === 'WAITING_RENEWAL_DURATION') {

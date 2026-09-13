@@ -3,6 +3,8 @@
  * itself (performAdminReview lives in src/admin.ts). Everything read from a
  * session/callback is re-validated against the DB order; keyboard content
  * never determines what gets stored.
+ * Phase 10: customer views render through `ctx.ui`; the `/pending` admin
+ * queue is the Persian-only operational surface (operator decision).
  */
 import type { UpdateContext } from '../types.ts';
 import type { Session } from '../db/states.ts';
@@ -18,58 +20,39 @@ import { loadPaymentInfo, paymentCardFromEnv } from '../catalog/payment.ts';
 import { isValidOrderId, type ReceiptMedia } from '../lib/validate.ts';
 import { forwardReceiptToAdmins } from '../admin.ts';
 import { adminQueueKeyboard, backToMenuKeyboard } from '../telegram/menu.ts';
-import { fa, formatPrice } from '../telegram/texts.ts';
+import { fa } from '../telegram/texts.ts';
+import { FA_UI } from '../telegram/i18n.ts';
 import { tgEscapeHtml } from '../telegram/format.ts';
 
 const MY_ORDERS_LIMIT = 8;
 const PENDING_QUEUE_LIMIT = 10;
 
-export function statusFa(state: string): string {
-  switch (state) {
-    case 'pending_payment':
-      return fa.statusPendingPayment;
-    case 'awaiting_review':
-      return fa.statusAwaitingReview;
-    case 'approved':
-      return fa.statusApproved;
-    case 'provisioning':
-      return fa.statusProvisioning;
-    case 'completed':
-      return fa.statusCompleted;
-    case 'rejected':
-      return fa.statusRejected;
-    case 'failed':
-      return fa.statusFailed;
-    case 'cancelled':
-      return fa.statusCancelled;
-    default:
-      return state;
-  }
-}
-
 /**
- * Payment card + "send your receipt" instructions right after confirmation.
- * Phase 8C: the card number comes ONLY from the PAYMENT_CARD_NUMBER secret
- * and the bubble is the bot's lone HTML send — values render as tap-to-copy
- * inline code, every dynamic string goes through the escape helper.
+ * Phase 8C: the seller card is a Worker secret; the bubble is the bot's lone
+ * HTML send — values render as tap-to-copy inline code, every dynamic string
+ * goes through the escape helper. Phase 10: the STATUS LABEL lives in the
+ * bundle now (`t.orderStatus`); both locales reproduce this function's old
+ * per-state mapping byte-for-byte in Persian.
  */
 export async function sendPaymentInstructions(
   ctx: UpdateContext,
   order: OrderRow,
 ): Promise<void> {
+  const t = ctx.ui.t;
+  const f = ctx.ui.f;
   const [loaded, card] = await Promise.all([
     loadPaymentInfo(ctx.db),
     Promise.resolve(paymentCardFromEnv(ctx.env)),
   ]);
   if (!loaded.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.paymentInfoUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.paymentInfoUnavailable, backToMenuKeyboard(ctx.ui));
     console.error(`payment_info_unavailable code=${loaded.error.slice(0, 60)}`);
     return;
   }
   if (card === null) {
     // Fail CLOSED: never render a half-instructed payment bubble and never
     // fall back to the settings doc. The secret value is never logged.
-    await ctx.api.sendMessage(ctx.chatId, fa.paymentInfoUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.paymentInfoUnavailable, backToMenuKeyboard(ctx.ui));
     console.error('payment_card_secret_unconfigured');
     return;
   }
@@ -77,17 +60,19 @@ export async function sendPaymentInstructions(
   // Phase 7: an order may carry a wallet credit; the payable line below the
   // header is the ORDER AMOUNT column (the checkout already stored the
   // remainder there), so instructions can never quote the pre-credit price.
+  // NOTE: `info.instructions` is admin-authored settings content — sent as
+  // escaped raw text in every locale (see README: bilingual instructions).
   const lines = [
-    fa.paymentInstructionsHeader,
-    fa.paymentHolder(info.holder),
-    fa.paymentCard(card),
-    ...(info.iban !== null ? [fa.paymentIban(info.iban)] : []),
-    fa.paymentAmountLine(formatPrice(order.amount, order.currency)),
+    t.paymentInstructionsHeader,
+    t.paymentHolder(info.holder),
+    t.paymentCard(card),
+    ...(info.iban !== null ? [t.paymentIban(info.iban)] : []),
+    t.paymentAmountLine(f.price(order.amount, order.currency)),
     tgEscapeHtml(info.instructions),
-    fa.paymentReceiptPrompt,
-    fa.copyHint,
+    t.paymentReceiptPrompt,
+    t.copyHint,
   ];
-  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard(), 'HTML');
+  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard(ctx.ui), 'HTML');
 }
 
 function uploaderLabel(ctx: UpdateContext): string {
@@ -106,10 +91,11 @@ export async function submitReceipt(
   session: Session,
   receipt: ReceiptMedia,
 ): Promise<void> {
+  const t = ctx.ui.t;
   const orderId = session.data['order_id'];
   if (typeof orderId !== 'string' || !isValidOrderId(orderId)) {
     await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.receiptOrderMissing, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.receiptOrderMissing, backToMenuKeyboard(ctx.ui));
     return;
   }
 
@@ -126,7 +112,7 @@ export async function submitReceipt(
       case 'owner_mismatch':
       case 'invalid_state': {
         await clearSession(ctx.db, ctx.customerId);
-        await ctx.api.sendMessage(ctx.chatId, fa.receiptOrderNotPayable, backToMenuKeyboard());
+        await ctx.api.sendMessage(ctx.chatId, t.receiptOrderNotPayable, backToMenuKeyboard(ctx.ui));
         return;
       }
       case 'state_changed': {
@@ -135,9 +121,9 @@ export async function submitReceipt(
         await clearSession(ctx.db, ctx.customerId);
         const text =
           fresh && (fresh.state === 'approved' || fresh.state === 'rejected')
-            ? fa.receiptOrderNotPayable
-            : fa.receiptAccepted;
-        await ctx.api.sendMessage(ctx.chatId, text, backToMenuKeyboard());
+            ? t.receiptOrderNotPayable
+            : t.receiptAccepted;
+        await ctx.api.sendMessage(ctx.chatId, text, backToMenuKeyboard(ctx.ui));
         return;
       }
     }
@@ -154,34 +140,37 @@ export async function submitReceipt(
   );
   await ctx.api.sendMessage(
     ctx.chatId,
-    result.replaced ? fa.receiptReplaced : fa.receiptAccepted,
-    backToMenuKeyboard(),
+    result.replaced ? t.receiptReplaced : t.receiptAccepted,
+    backToMenuKeyboard(ctx.ui),
   );
 }
 
 /** `menu:orders` — the customer's own recent orders, rendered from the DB. */
 export async function showMyOrders(ctx: UpdateContext): Promise<void> {
+  const t = ctx.ui.t;
+  const f = ctx.ui.f;
   const orders = await listRecentOrdersForCustomer(ctx.db, ctx.customerId, MY_ORDERS_LIMIT);
   if (orders.length === 0) {
-    await ctx.api.sendMessage(ctx.chatId, fa.ordersEmpty, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.ordersEmpty, backToMenuKeyboard(ctx.ui));
     return;
   }
-  const lines: string[] = [fa.ordersHeader];
+  const lines: string[] = [t.ordersHeader];
   orders.forEach((order, index) => {
     lines.push(
-      fa.ordersEntry(
+      t.ordersEntry(
         index + 1,
         order.id.slice(0, 10),
-        statusFa(order.state) + (order.kind === 'renewal' ? ` ${fa.ordersKindRenewal}` : ''),
-        formatPrice(order.amount, order.currency),
+        t.orderStatus(order.state) + (order.kind === 'renewal' ? ` ${t.ordersKindRenewal}` : ''),
+        f.price(order.amount, order.currency),
         order.created_at.slice(0, 10),
       ),
     );
   });
-  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard(ctx.ui));
 }
 
-/** `/pending` — recovery view onto the awaiting_review queue, with buttons. */
+/** `/pending` — recovery view onto the awaiting_review queue, with buttons.
+ *  Admin-only surface: always Persian (Phase 10 policy). */
 export async function showPendingQueue(ctx: UpdateContext): Promise<void> {
   const rows = await listOrdersAwaitingReview(ctx.db, PENDING_QUEUE_LIMIT);
   if (rows.length === 0) {
@@ -197,8 +186,8 @@ export async function showPendingQueue(ctx: UpdateContext): Promise<void> {
       fa.adminReceiptLine(
         index + 1,
         row.id,
-        statusFa(row.state),
-        formatPrice(row.amount, row.currency),
+        FA_UI.t.orderStatus(row.state),
+        FA_UI.f.price(row.amount, row.currency),
         uploader,
       ),
     );

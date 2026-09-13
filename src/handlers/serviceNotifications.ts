@@ -22,7 +22,8 @@
 import type { Env, TelegramApiLike } from '../types.ts';
 import { TelegramApi } from '../telegram/api.ts';
 import { loadPanelConfig, PasarGuardClient } from '../pasarguard/client.ts';
-import { digitsFa, fa } from '../telegram/texts.ts';
+import { fa } from '../telegram/texts.ts';
+import { FA_UI, uiFor } from '../telegram/i18n.ts';
 import { serviceNoticeKeyboard } from '../telegram/menu.ts';
 import { GB_BYTES } from '../provision/provision.ts';
 import {
@@ -82,37 +83,33 @@ export function usageNoticeDecision(
   };
 }
 
-/** «۲ روز و ۱۱ ساعت» / «کمتر از یک ساعت» — bounded by the 3-day window. */
+/** «۲ روز و ۱۱ ساعت» / «کمتر از یک ساعت» — bounded by the 3-day window.
+ *  Thin fa alias of the bundle formatter (Phase 10); English users get the
+ *  sibling formatter via `uiFor(row.language).f.remainingUntil`. */
 export function remainingUntilFa(expiresIso: string, nowMs: number): string {
-  const diff = Date.parse(expiresIso) - nowMs;
-  const totalHours = Math.max(0, Math.floor(diff / 3_600_000));
-  const days = Math.floor(totalHours / 24);
-  const hours = totalHours % 24;
-  if (days > 0 && hours > 0) return `${digitsFa(days)} روز و ${digitsFa(hours)} ساعت`;
-  if (days > 0) return `${digitsFa(days)} روز`;
-  if (hours > 0) return `${digitsFa(hours)} ساعت`;
-  return 'کمتر از یک ساعت';
+  return FA_UI.f.remainingUntil(expiresIso, nowMs);
 }
 
 /** ISO date + UTC time, Persian digits (repo's established display basis). */
 export function expiryDateTimeFa(expiresIso: string): string {
-  return digitsFa(`${expiresIso.slice(0, 10)} ${expiresIso.slice(11, 16)}`);
+  return FA_UI.f.dateTime(expiresIso);
 }
 
 /** Config name from the immutable selections snapshot: display-safe text. */
-export function noticeServiceName(selections: string): string {
-  let name: string | null = null;
+export function noticeServiceName(selections: string, fallback?: string): string {
+  const name = fallback ?? fa.noticeServiceFallback;
+  let raw: string | null = null;
   try {
-    const raw: unknown = JSON.parse(selections);
-    if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
-      const value = (raw as Record<string, unknown>)['config_name'];
-      if (typeof value === 'string') name = value;
+    const parsed: unknown = JSON.parse(selections);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const value = (parsed as Record<string, unknown>)['config_name'];
+      if (typeof value === 'string') raw = value;
     }
   } catch {
-    name = null;
+    raw = null;
   }
-  if (name === null) return 'سرویس شما';
-  return name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 64) || 'سرویس شما';
+  if (raw === null) return name;
+  return raw.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 64) || name;
 }
 
 function chatIdOf(row: NoticeCandidate): number {
@@ -133,7 +130,8 @@ async function sendAndBook(
   const chatId = chatIdOf(row);
   let delivered = false;
   if (Number.isSafeInteger(chatId) && chatId > 0) {
-    const buttons = serviceNoticeKeyboard(row.order_id);
+    // Phase 10: the notice follows the RECIPIENT's persisted language.
+    const buttons = serviceNoticeKeyboard(uiFor(row.language), row.order_id);
     try {
       delivered = (await api.sendMessage(chatId, text, buttons)) !== null;
     } catch {
@@ -178,10 +176,11 @@ export async function runServiceNotificationSweep(
       if (!(await claimNotice(db, { orderId: row.order_id, kind: 'expiring', nowIso }))) {
         continue; // overlapping run won, or eligibility changed
       }
-      const text = fa.expiryNotice(
-        noticeServiceName(row.selections),
-        remainingUntilFa(row.service_expires_at, nowMs),
-        expiryDateTimeFa(row.service_expires_at),
+      const ui = uiFor(row.language);
+      const text = ui.t.expiryNotice(
+        noticeServiceName(row.selections, ui.t.noticeServiceFallback),
+        ui.f.remainingUntil(row.service_expires_at, nowMs),
+        ui.f.dateTime(row.service_expires_at),
       );
       const outcome = await sendAndBook(db, api, row, 'expiring', nowIso, text);
       if (outcome === 'sent') {
@@ -246,10 +245,11 @@ export async function runServiceNotificationSweep(
       if (!(await claimNotice(db, { orderId: row.order_id, kind: 'usage90', nowIso }))) {
         continue;
       }
-      const text = fa.usageNotice(
-        noticeServiceName(row.selections),
-        digitsFa(decision.percent),
-        digitsFa(decision.remainingGb),
+      const ui = uiFor(row.language);
+      const text = ui.t.usageNotice(
+        noticeServiceName(row.selections, ui.t.noticeServiceFallback),
+        ui.f.digits(decision.percent),
+        ui.f.digits(decision.remainingGb),
       );
       const outcome = await sendAndBook(db, api, row, 'usage90', nowIso, text);
       if (outcome === 'sent') {

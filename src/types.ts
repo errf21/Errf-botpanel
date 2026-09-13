@@ -1,6 +1,7 @@
-/**
- * Shared types for the telbotv2 worker.
+/** Shared types for the telbotv2 worker.
  */
+import type { Ui } from './telegram/i18n.ts';
+
 
 /** Worker bindings: secrets come from `.dev.vars` / `wrangler secret put`. */
 export interface Env {
@@ -223,6 +224,12 @@ export interface UpdateContext {
   customerId: number;
   /** ADMIN_CHAT_ID env OR customers.is_admin — computed once per update. */
   isAdmin: boolean;
+  /**
+   * Phase 10: the actor's resolved language bundle (explicit D1 choice, else
+   * Persian). Computed once per update alongside isAdmin — handlers use
+   * `ctx.t` / `ctx.f` and never branch on language themselves.
+   */
+  ui: Ui;
   /**
    * Phase 5: defers provisioning past the webhook ACK (Cloudflare
    * ExecutionContext.waitUntil). Absent in tests/harnesses → inline await.

@@ -162,6 +162,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0007_phase7.sql',
     'migrations/0008_phase8c.sql',
     'migrations/0009_phase9.sql',
+    'migrations/0010_phase10.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }
@@ -180,6 +181,15 @@ export const USER = {
   first_name: 'Ali',
   username: 'ali_dev',
   language_code: 'fa',
+};
+
+/** Phase 10: an English-CLIENT fixture — remember, the hint alone must
+ *  NEVER select English; only the persisted explicit choice does. */
+export const USER_EN_CLIENT = {
+  id: 987654322,
+  first_name: 'Sam',
+  username: 'sam_en',
+  language_code: 'en',
 };
 
 export const ADMIN = {

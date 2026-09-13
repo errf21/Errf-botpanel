@@ -10,7 +10,8 @@ import { getBalance, listWalletEntries, type WalletEntryRow } from '../db/wallet
 import { loadWalletConfig, type WalletConfig } from '../catalog/wallet.ts';
 import { getCustomer } from '../db/customers.ts';
 import { backToMenuKeyboard, composingKeyboard } from '../telegram/menu.ts';
-import { digitsFa, fa, formatPrice } from '../telegram/texts.ts';
+import { fa, formatPrice } from '../telegram/texts.ts';
+import { FA_UI } from '../telegram/i18n.ts';
 import { parseCommand, parseWalletAmount } from '../lib/validate.ts';
 import { applyWalletMutation } from '../db/wallet.ts';
 import {
@@ -25,28 +26,12 @@ export async function loadWalletViewConfig(db: D1Database): Promise<WalletConfig
   return loaded.ok ? loaded.config : null;
 }
 
-function entryLabel(entry: WalletEntryRow): string {
-  switch (entry.kind) {
-    case 'referral_reward':
-      return fa.walletKindReferralReward;
-    case 'admin_grant':
-      return fa.walletKindAdminGrant;
-    case 'admin_debit':
-      return fa.walletKindAdminDebit;
-    case 'order_payment':
-      return fa.walletKindOrderPayment;
-    case 'order_refund':
-      return fa.walletKindOrderRefund;
-    default:
-      return entry.kind.slice(0, 24);
-  }
-}
-
 /** `menu:wallet` — balance + last entries, degrade-safe. */
 export async function showMyWallet(ctx: UpdateContext): Promise<void> {
+  const { t, f } = ctx.ui;
   const config = await loadWalletViewConfig(ctx.db);
   if (!config || !config.enabled) {
-    await ctx.api.sendMessage(ctx.chatId, fa.walletUnavailable, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.walletUnavailable, backToMenuKeyboard(ctx.ui));
     return;
   }
   const [balance, entries] = await Promise.all([
@@ -54,25 +39,25 @@ export async function showMyWallet(ctx: UpdateContext): Promise<void> {
     listWalletEntries(ctx.db, ctx.customerId, LEDGER_LIMIT),
   ]);
   const lines: string[] = [
-    fa.walletHeader,
-    fa.walletBalance(formatPrice(balance ?? 0, 'IRT')),
+    t.walletHeader,
+    t.walletBalance(f.price(balance ?? 0, 'IRT')),
   ];
   if (entries.length === 0) {
-    lines.push(fa.walletEmpty);
+    lines.push(t.walletEmpty);
   } else {
     entries.forEach((entry, index) => {
       lines.push(
-        fa.walletEntry(
+        t.walletEntry(
           index + 1,
           entry.delta_irt > 0 ? '➕' : '➖',
-          entryLabel(entry),
-          formatPrice(Math.abs(entry.delta_irt), 'IRT'),
-          digitsFa(entry.created_at.slice(0, 10)),
+          t.walletKind(entry.kind),
+          f.price(Math.abs(entry.delta_irt), 'IRT'),
+          f.date(entry.created_at),
         ),
       );
     });
   }
-  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard(ctx.ui));
 }
 
 /* ———— Admin money commands: /credit, /debit ————
@@ -89,7 +74,7 @@ export async function handleWalletAdminCommand(
     return 'not-wallet-cmd';
   }
   if (!ctx.isAdmin) {
-    await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.cmdAdminOnly);
     return 'handled';
   }
   const config = await loadWalletViewConfig(ctx.db);
@@ -122,7 +107,7 @@ export async function handleWalletAdminCommand(
     await ctx.api.sendMessage(
       ctx.chatId,
       `${fa.walletPromptAmount(grant ? 'افزودن' : 'کسر')}\n${fa.walletTargetUser(`@${record.telegram_username ?? record.telegram_user_id}`)}`,
-      composingKeyboard(),
+      composingKeyboard(FA_UI),
     );
     return 'handled';
   }

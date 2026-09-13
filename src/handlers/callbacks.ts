@@ -14,8 +14,8 @@ import {
   mainMenuKeyboard,
   routeCallback,
 } from '../telegram/menu.ts';
-import { randomConfigName } from '../lib/configName.ts';
 import { fa } from '../telegram/texts.ts';
+import { randomConfigName } from '../lib/configName.ts';
 import { getSession } from '../db/states.ts';
 import {
   clearPendingAdminAction,
@@ -43,6 +43,7 @@ import {
   goBack,
 } from './purchase.ts';
 import { isMenuShortcut, runMainMenuAction } from './menuActions.ts';
+import { applyLanguageChoice, showLanguageChoice } from './language.ts';
 import {
   armTicketReply,
   closeTicket,
@@ -61,15 +62,18 @@ import { cancelToMenu } from './commands.ts';
  * namespace whose VALUE is then re-validated against the fresh DB catalog)
  * before any action. Malformed/unknown data gets a neutral toast and zero
  * state changes.
+ * Phase 10: the vocabulary is invariant; only the ANSWER text localizes —
+ * customer-facing replies use `ctx.ui`, admin-only branches stay Persian.
  */
 export async function handleCallback(
   ctx: UpdateContext,
   cb: TelegramCallbackQuery,
 ): Promise<void> {
+  const t = ctx.ui.t;
   const target = extractCallbackTarget(cb);
   const data = cb.data ?? '';
   if (!target || !isValidCallbackData(data)) {
-    if (target) await ctx.api.answerCallbackQuery(target.callbackQueryId, fa.invalidChoice);
+    if (target) await ctx.api.answerCallbackQuery(target.callbackQueryId, t.invalidChoice);
     return;
   }
 
@@ -85,7 +89,7 @@ export async function handleCallback(
   if (data.startsWith('svc:')) {
     const parsed = parseServiceCallback(data);
     if (!parsed) {
-      await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
       return;
     }
     if (parsed.action === 'det') {
@@ -105,7 +109,7 @@ export async function handleCallback(
   if (data.startsWith('tsk:')) {
     const parsed = parseTicketCallback(data);
     if (!parsed || !ctx.isAdmin) {
-      await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
       return;
     }
     if (parsed.action === 'vw') {
@@ -124,7 +128,7 @@ export async function handleCallback(
   if (data.startsWith('ann:')) {
     const parsed = parseAnnounceCallback(data);
     if (!parsed || !ctx.isAdmin) {
-      await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
       return;
     }
     await runAnnouncementPass(
@@ -137,6 +141,18 @@ export async function handleCallback(
     return;
   }
 
+  // ———— Phase 10: the language selector (explicit choice → persisted) ————
+  if (data === CB.LANG_FA) {
+    await ctx.api.answerCallbackQuery(callbackQueryId);
+    await applyLanguageChoice(ctx, 'fa');
+    return;
+  }
+  if (data === CB.LANG_EN) {
+    await ctx.api.answerCallbackQuery(callbackQueryId);
+    await applyLanguageChoice(ctx, 'en');
+    return;
+  }
+
   const session = await getSession(ctx.db, ctx.customerId);
 
   const replyToMenu = async (text: string): Promise<void> => {
@@ -146,7 +162,7 @@ export async function handleCallback(
       // an inline tap must only clear its own legacy buttons (empty keyboard).
       await ctx.api.editMessageText(messageChatId, messageId, text, { inline_keyboard: [] });
     } else {
-      await ctx.api.sendMessage(ctx.chatId, text, mainMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, text, mainMenuKeyboard(ctx.ui));
     }
   };
 
@@ -158,15 +174,15 @@ export async function handleCallback(
       route.namespace === 'vol' ? 'volume' : route.namespace === 'dur' ? 'duration' : 'device';
 
     // Phase 6: the same `dur:` vocabulary powers the renewal ladder; the
-    // session state alone decides which flow a tap belongs to.
+    // session state alone decides which tap belongs to what.
     if (kind === 'duration' && session.state === 'WAITING_RENEWAL_DURATION') {
       if (route.value === 'custom') {
-        await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
         return;
       }
       const loaded = await loadCatalog(ctx.db);
       if (!loaded.ok) {
-        await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
         return;
       }
       await applyRenewalDuration(ctx, session, loaded.catalog, route.value, callbackQueryId);
@@ -174,16 +190,16 @@ export async function handleCallback(
     }
 
     if (session.state !== STEP_EXPECTED_STATE[kind]) {
-      await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.staleChoice, true);
       return;
     }
     const loaded = await loadCatalog(ctx.db);
     if (!loaded.ok) {
-      await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
       return;
     }
     if (route.value === 'custom') {
-      await ctx.api.answerCallbackQuery(callbackQueryId, fa.customHint, true);
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.customHint, true);
       return;
     }
     await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -192,7 +208,7 @@ export async function handleCallback(
   }
 
   if (route.kind !== 'known' || !isKnownCallback(data)) {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+    await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
     return;
   }
 
@@ -202,6 +218,12 @@ export async function handleCallback(
   if (isMenuShortcut(route.callback)) {
     await ctx.api.answerCallbackQuery(callbackQueryId);
     await runMainMenuAction(ctx, session, route.callback);
+    return;
+  }
+
+  if (route.callback === CB.MENU_LANGUAGE) {
+    await ctx.api.answerCallbackQuery(callbackQueryId);
+    await showLanguageChoice(ctx);
     return;
   }
 
@@ -219,8 +241,8 @@ export async function handleCallback(
       }
       if (!isBusy(session.state)) {
         // Phase 8B: deliberate back-tap while idle → soft nudge, twin of the
-        // text path (the «مشتی…» fallback stays for off-topic input only).
-        await replyToMenu(fa.idleMenuNudge);
+        // text path (the joke fallback stays for off-topic input only).
+        await replyToMenu(t.idleMenuNudge);
         return;
       }
       await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -231,7 +253,7 @@ export async function handleCallback(
     case CB.STEP_BACK: {
       const loaded = await loadCatalog(ctx.db);
       if (!loaded.ok) {
-        await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
         return;
       }
       // Phase 6: renewal confirmation steps back into the duration ladder.
@@ -243,7 +265,7 @@ export async function handleCallback(
     case CB.ORDER_CONFIRM: {
       const loaded = await loadCatalog(ctx.db);
       if (!loaded.ok) {
-        await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
         return;
       }
       if (session.state === 'WAITING_RENEWAL_CONFIRMATION') {
@@ -258,7 +280,7 @@ export async function handleCallback(
       // ONLY meaningful while the name is being asked for. Anywhere else
       // (stale/foreign/forged buttons) it is inert — no writes, no state.
       if (session.state !== 'WAITING_CONFIG_NAME') {
-        await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.staleChoice, true);
         return;
       }
       await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -269,7 +291,7 @@ export async function handleCallback(
     case CB.MENU_TICKETS: {
       await ctx.api.answerCallbackQuery(callbackQueryId);
       if (!ctx.isAdmin) {
-        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
         return;
       }
       await showTicketQueue(ctx);
@@ -278,25 +300,30 @@ export async function handleCallback(
     case CB.MENU_ANNOUNCE_LIST: {
       await ctx.api.answerCallbackQuery(callbackQueryId);
       if (!ctx.isAdmin) {
-        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
         return;
       }
       await showAnnouncements(ctx);
       return;
     }
 
+    case CB.LANG_FA:
+    case CB.LANG_EN:
+    case CB.MENU_LANGUAGE:
+      return; // handled above, before the session read
+
     case CB.PAY_WALLET_FULL:
     case CB.PAY_WALLET_PART: {
       const walletMode = route.callback === CB.PAY_WALLET_FULL ? 'full' : 'partial';
       const loaded = await loadCatalog(ctx.db);
       if (!loaded.ok) {
-        await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
         return;
       }
       // Phase 6 ladder powers renewals too: state decides which flow owns it.
       if (session.state === 'WAITING_RENEWAL_CONFIRMATION') {
         if (typeof session.data['order_token'] !== 'string') {
-          await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+          await ctx.api.answerCallbackQuery(callbackQueryId, t.staleChoice, true);
           return;
         }
         await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -307,7 +334,7 @@ export async function handleCallback(
         session.state !== 'WAITING_ORDER_CONFIRMATION' ||
         typeof session.data['order_token'] !== 'string'
       ) {
-        await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.staleChoice, true);
         return;
       }
       await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -326,7 +353,8 @@ export async function handleCallback(
 /**
  * Handles `adm:ok:` / `adm:no:` / `adm:skip:`. Called ONLY after the callback
  * passed format validation AND the actor is a verified admin, so every branch
- * can assume `data` matches the strict admin pattern.
+ * can assume `data` matches the strict admin pattern. The admin surface is
+ * Persian-only (Phase 10 decision) — `fa` strings are intentional here.
  */
 async function handleAdminCallback(
   ctx: UpdateContext,
@@ -337,7 +365,7 @@ async function handleAdminCallback(
 ): Promise<void> {
   const parsed = parseAdminCallback(data);
   if (!ctx.isAdmin || !parsed) {
-    await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.invalidChoice);
     return;
   }
   const { action, orderId } = parsed;
@@ -401,6 +429,7 @@ async function finishAdminReview(
   messageChatId: number | null,
   messageId: number | null,
 ): Promise<void> {
+  void ctx;
   if (!result.ok) {
     await ctx.api.answerCallbackQuery(
       callbackQueryId,

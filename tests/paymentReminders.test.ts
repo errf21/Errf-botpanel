@@ -472,6 +472,10 @@ test('0008 backfill seeds stage from REAL elapsed time (and is re-runnable)', as
     'migrations/0005_phase5.sql',
     'migrations/0006_phase6.sql',
     'migrations/0007_phase7.sql',
+    // Phase 10: the CURRENT sweep reads customers.language — include the
+    // (purely additive) locale column in this point-in-time fixture;
+    // migration 0008 itself is applied separately below.
+    'migrations/0010_phase10.sql',
   ]) {
     raw.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }

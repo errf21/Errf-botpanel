@@ -27,6 +27,7 @@ import {
   composingKeyboard,
 } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
+import { FA_UI } from '../telegram/i18n.ts';
 import { sanitizeSupportBody } from '../lib/validate.ts';
 import { reduce } from '../state/machine.ts';
 
@@ -41,12 +42,12 @@ function statusCode(id: string): string {
 export async function startAnnounceDraft(ctx: UpdateContext, session: Session): Promise<void> {
   const next = reduce(session.state, 'announce_start');
   if (next !== 'WAITING_ANNOUNCE_TEXT') {
-    await ctx.api.sendMessage(ctx.chatId, fa.supportBusyFirst, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.supportBusyFirst, backToMenuKeyboard(FA_UI));
     return;
   }
   await setSession(ctx.db, ctx.customerId, next, session.data);
   // Phase 8A: admin composes the draft as free text — hide the main keyboard.
-  await ctx.api.sendMessage(ctx.chatId, fa.announceIntro, composingKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, fa.announceIntro, composingKeyboard(FA_UI));
 }
 
 /** The draft text lands here (text router while WAITING_ANNOUNCE_TEXT). */
@@ -58,7 +59,7 @@ export async function saveAnnounceDraft(
   if (session.state !== 'WAITING_ANNOUNCE_TEXT') return;
   const body = sanitizeSupportBody(text, ANNOUNCE_TEXT_MAX);
   if (!body) {
-    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, composingKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, composingKeyboard(FA_UI));
     return;
   }
   const total = await countPotentialRecipients(ctx.db);
@@ -73,7 +74,7 @@ export async function saveAnnounceDraft(
     record = null;
   }
   if (!record) {
-    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, composingKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, composingKeyboard(FA_UI));
     return;
   }
   const next = reduce(session.state, 'announce_draft_saved');
@@ -141,7 +142,7 @@ export async function runAnnouncementPass(
     const text = result.done
       ? fa.announceDone(result.code, result.sent, result.failed)
       : fa.announceProgress(result.code, result.sent, result.total);
-    const keyboard = result.done ? backToMenuKeyboard() : announceProgressKeyboard(announcementId);
+    const keyboard = result.done ? backToMenuKeyboard(FA_UI) : announceProgressKeyboard(announcementId);
     if (messageChatId !== null && messageId !== null && messageChatId === ctx.chatId) {
       await ctx.api.editMessageText(messageChatId, messageId, text, keyboard);
     } else {
@@ -184,7 +185,7 @@ export async function showAnnouncements(ctx: UpdateContext): Promise<void> {
     );
   }
   const unfinished = rows.find((row) => row.state === 'sending');
-  const keyboard = unfinished ? announceProgressKeyboard(unfinished.id) : backToMenuKeyboard();
+  const keyboard = unfinished ? announceProgressKeyboard(unfinished.id) : backToMenuKeyboard(FA_UI);
   await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), keyboard);
 }
 

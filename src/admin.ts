@@ -21,7 +21,8 @@ import { provisionOrder } from './provision/provision.ts';
 import { payReferrerIfDue } from './lib/referralPayout.ts';
 import { isValidOrderId, type ReceiptMedia } from './lib/validate.ts';
 import { adminReceiptKeyboard } from './telegram/menu.ts';
-import { fa, formatPrice } from './telegram/texts.ts';
+import { fa } from './telegram/texts.ts';
+import { FA_UI, uiFor } from './telegram/i18n.ts';
 
 /** ADMIN_CHAT_ID env OR customers.is_admin — never anything else. */
 export async function resolveIsAdmin(
@@ -60,7 +61,7 @@ export function walletCreditFromOrder(order: OrderRow): number {
 /** Server-side rendering of an order for admin review (snapshot is trusted). */
 export function orderSummaryLines(order: OrderRow): string[] {
   const snapshot = parseSnapshot(order);
-  const price = formatPrice(order.amount, order.currency);
+  const price = FA_UI.f.price(order.amount, order.currency);
   const lines = [
     `🆔 ${order.id}`,
     fa.summaryPrice(price),
@@ -142,12 +143,18 @@ async function notifyCustomerOfReview(
   if (!contact) return false;
   const chatId = Number(contact.telegram_user_id);
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return false;
+  // Phase 10: review results are CUSTOMER notices — language follows the
+  // recipient. The rejection reason itself is admin-authored content and is
+  // delivered verbatim.
+  const { t, f } = uiFor(contact.language);
   const text =
     decision === 'approve'
       ? order.kind === 'renewal'
-        ? fa.notifyApprovedRenewal(order.id, formatPrice(order.amount, order.currency))
-        : fa.notifyApproved(order.id, formatPrice(order.amount, order.currency))
-      : fa.notifyRejected(order.id, reason ?? fa.adminRejectDefaultReason);
+        ? t.notifyApprovedRenewal(order.id, f.price(order.amount, order.currency))
+        : t.notifyApproved(order.id, f.price(order.amount, order.currency))
+      // The admin's typed reason is authored content — verbatim; only the
+      // built-in default reason localizes with the recipient.
+      : t.notifyRejected(order.id, reason ?? t.adminRejectDefaultReason);
   await api.sendMessage(chatId, text);
   return true;
 }
@@ -240,7 +247,8 @@ async function notifyWalletRefunded(
   const contact = await getCustomerContact(db, order.customer_id);
   const chatId = Number(contact?.telegram_user_id);
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
-  await api.sendMessage(chatId, fa.notifyWalletRefunded(order.id, formatPrice(creditIrt, 'IRT')));
+  const ui = uiFor(contact?.language);
+  await api.sendMessage(chatId, ui.t.notifyWalletRefunded(order.id, ui.f.price(creditIrt, 'IRT')));
 }
 
 /**

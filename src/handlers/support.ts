@@ -31,6 +31,7 @@ import {
   ticketAcknowledgedKeyboard,
 } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
+import { FA_UI, uiFor } from '../telegram/i18n.ts';
 import { reduce } from '../state/machine.ts';
 
 const TICKET_QUEUE_LIMIT = 10;
@@ -55,9 +56,10 @@ async function notifyAdmins(
 
 /** `menu:support` — intro (or reminder of the live ticket). */
 export async function openSupportEntry(ctx: UpdateContext, session: Session): Promise<void> {
+  const t = ctx.ui.t;
   if (session.state === 'WAITING_SUPPORT_MESSAGE') {
     // Still composing: keep the main keyboard hidden behind the back button.
-    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, composingKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.supportQueueChoice, composingKeyboard(ctx.ui));
     return;
   }
   const live = await findLiveTicket(ctx.db, ctx.customerId);
@@ -65,19 +67,19 @@ export async function openSupportEntry(ctx: UpdateContext, session: Session): Pr
     // IDLE with a live ticket: follow-ups are ordinary text, menu stays up.
     await ctx.api.sendMessage(
       ctx.chatId,
-      `${fa.supportTicketExists(live.id)}\n\n${fa.supportQueueChoice}`,
-      mainMenuKeyboard(),
+      `${t.supportTicketExists(live.id)}\n\n${t.supportQueueChoice}`,
+      mainMenuKeyboard(ctx.ui),
     );
     return;
   }
   const next = reduce(session.state, 'support_start');
   if (next !== 'WAITING_SUPPORT_MESSAGE') {
-    await ctx.api.sendMessage(ctx.chatId, fa.supportBusyFirst, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.supportBusyFirst, backToMenuKeyboard(ctx.ui));
     return;
   }
   await setSession(ctx.db, ctx.customerId, next, session.data);
   // Phase 8A: free-text composing — swap the bottom keyboard for [back].
-  await ctx.api.sendMessage(ctx.chatId, fa.supportIntro, composingKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, t.supportIntro, composingKeyboard(ctx.ui));
 }
 
 /** First text of a new ticket (or plain follow-up when a ticket is open). */
@@ -87,9 +89,10 @@ export async function submitSupportText(
   body: string,
 ): Promise<void> {
   const trimmed = body.trim();
+  const t = ctx.ui.t;
   if (trimmed.length === 0) {
     if (session) await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.supportQueueChoice, mainMenuKeyboard(ctx.ui));
     return;
   }
   const clipped = trimmed.slice(0, SUPPORT_BODY_MAX);
@@ -108,7 +111,7 @@ export async function submitSupportText(
     );
     if (session) await clearSession(ctx.db, ctx.customerId);
     // Conversation is IDLE again: restore the main menu keyboard.
-    await ctx.api.sendMessage(ctx.chatId, fa.supportTicketCreated(live.id), mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.supportTicketCreated(live.id), mainMenuKeyboard(ctx.ui));
     return;
   }
   if (session && session.state !== 'WAITING_SUPPORT_MESSAGE') return; // never from elsewhere
@@ -133,13 +136,13 @@ export async function submitSupportText(
       if (session) await clearSession(ctx.db, ctx.customerId);
       await ctx.api.sendMessage(
         ctx.chatId,
-        fa.supportTicketCreated(existing.id),
-        mainMenuKeyboard(),
+        t.supportTicketCreated(existing.id),
+        mainMenuKeyboard(ctx.ui),
       );
       return;
     }
     if (session) await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, mainMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, t.supportQueueChoice, mainMenuKeyboard(ctx.ui));
     return;
   }
   if (session) await clearSession(ctx.db, ctx.customerId);
@@ -154,8 +157,8 @@ export async function submitSupportText(
   // Ticket created, conversation IDLE: restore the main menu keyboard.
   await ctx.api.sendMessage(
     ctx.chatId,
-    fa.supportTicketCreated(outcome.ticket.id),
-    mainMenuKeyboard(),
+    t.supportTicketCreated(outcome.ticket.id),
+    mainMenuKeyboard(ctx.ui),
   );
 }
 
@@ -221,7 +224,8 @@ async function notifyCustomerTicketClosed(ctx: UpdateContext, ticketId: string):
   const contact = await getCustomerContact(ctx.db, ticket.customer_id);
   const chatId = Number(contact?.telegram_user_id);
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return false;
-  return Boolean(await ctx.api.sendMessage(chatId, fa.supportClosedNotice));
+  // Phase 10: the customer's closure notice follows THEIR language.
+  return Boolean(await ctx.api.sendMessage(chatId, uiFor(contact?.language).t.supportClosedNotice));
 }
 
 /**
@@ -243,10 +247,13 @@ export async function deliverTicketReply(
   const contact = await getCustomerContact(ctx.db, ticket.customer_id);
   const chatId = Number(contact?.telegram_user_id);
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return 'undelivered';
+  // Phase 10: the reply wrapper + keyboard follow the RECIPIENT's language
+  // (the body itself is admin-authored content, delivered verbatim).
+  const recipientUi = uiFor(contact?.language);
   const delivered = await ctx.api.sendMessage(
     chatId,
-    `${fa.supportAnswered}${body}`,
-    ticketAcknowledgedKeyboard(),
+    `${recipientUi.t.supportAnswered}${body}`,
+    ticketAcknowledgedKeyboard(recipientUi),
   );
   if (!delivered) {
     await appendTicketMessage(ctx.db, { ticketId, sender, body, delivered: false });
@@ -271,7 +278,7 @@ export async function armTicketReply(
   await setPendingAdminTicketReply(ctx.db, ctx.actor.id, ticketId);
   await ctx.api.answerCallbackQuery(callbackQueryId);
   // Phase 8A: admin now composes free text — hide the main keyboard.
-  await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt, composingKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt, composingKeyboard(FA_UI));
   void messageChatId;
   void messageId;
 }

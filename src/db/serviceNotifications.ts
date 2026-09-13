@@ -32,6 +32,8 @@ export interface NoticeCandidate {
   order_id: string;
   customer_id: number;
   telegram_user_id: string;
+  /** Phase 10: explicit language choice of the recipient (NULL = Persian). */
+  language: string | null;
   /** Local expiry of record (0006) — never null for expiry candidates. */
   service_expires_at: string | null;
   pasarguard_username: string | null;
@@ -81,7 +83,7 @@ export async function listExpiryCandidates(
 ): Promise<NoticeCandidate[]> {
   const result = await db
     .prepare(
-      `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id,
+      `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
               o.service_expires_at, o.pasarguard_username, o.selections
          FROM orders o
          JOIN customers c ON c.id = o.customer_id
@@ -119,7 +121,7 @@ export async function listUsageCandidates(
 ): Promise<NoticeCandidate[]> {
   const result = await db
     .prepare(
-      `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id,
+      `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
               o.service_expires_at, o.pasarguard_username, o.selections
          FROM orders o
          JOIN customers c ON c.id = o.customer_id
