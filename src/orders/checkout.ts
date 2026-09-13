@@ -21,21 +21,42 @@ export interface CheckoutDraft {
   breakdown: PriceBreakdown;
 }
 
-export interface RenewalCheckoutDraft {
-  customerId: number;
-  orderToken: string;
-  catalog: Catalog;
-  breakdown: RenewalBreakdown;
-  /** The completed purchase order (service) being extended. */
-  serviceOrderId: string;
+/**
+ * Phase 7: pure wallet planning — decide the applied credit and the exit
+ * state BEFORE any write, from server-side numbers only (fresh balance,
+ * snapshotted total). `full` ⇒ the order is born 'approved' (no receipt, no
+ * admin queue); `partial` ⇒ remainder via the existing payment pipeline.
+ */
+export interface WalletPlan {
+  mode: 'full' | 'partial';
+  creditIrt: number;
+  remainderIrt: number;
+}
+
+export function planWalletPayment(
+  totalIrt: number,
+  balanceIrt: number,
+  mode: 'full' | 'partial',
+): WalletPlan | null {
+  if (!Number.isSafeInteger(totalIrt) || totalIrt < 1) return null;
+  if (!Number.isSafeInteger(balanceIrt) || balanceIrt < 0) return null;
+  if (mode === 'full') {
+    if (balanceIrt < totalIrt) return null;
+    return { mode: 'full', creditIrt: totalIrt, remainderIrt: 0 };
+  }
+  const credit = Math.min(balanceIrt, totalIrt - 1); // remainder always ≥ 1
+  if (credit < 1) return null;
+  return { mode: 'partial', creditIrt: credit, remainderIrt: totalIrt - credit };
 }
 
 export type CheckoutResult =
   | { ok: true; order: OrderRow; created: boolean }
   | { ok: false; error: string };
 
+/** Snapshot stored in orders.selections (additive wallet fields, schema 1). */
 export function buildSelectionSnapshot(
   draft: CheckoutDraft,
+  wallet?: WalletPlan,
 ): string {
   return JSON.stringify({
     schema: 1,
@@ -45,12 +66,14 @@ export function buildSelectionSnapshot(
     device_count: draft.breakdown.device_count,
     price: draft.breakdown,
     limits: catalogLimits(draft.catalog),
+    ...(wallet ? { wallet: { mode: wallet.mode, credit_irt: wallet.creditIrt } } : {}),
   });
 }
 
 export async function checkoutOrder(
   db: D1Database,
   draft: CheckoutDraft,
+  wallet?: WalletPlan,
 ): Promise<CheckoutResult> {
   const preExisting = await findOrderByIdempotencyKey(db, draft.orderToken);
   if (preExisting) return { ok: true, order: preExisting, created: false };
@@ -58,10 +81,13 @@ export async function checkoutOrder(
   const order: NewOrderFields = {
     id: newOrderId(),
     customerId: draft.customerId,
-    selections: buildSelectionSnapshot(draft),
-    amount: draft.breakdown.total,
+    selections: buildSelectionSnapshot(draft, wallet),
+    amount: wallet ? wallet.remainderIrt : draft.breakdown.total,
     currency: draft.breakdown.currency,
     idempotencyKey: draft.orderToken,
+    ...(wallet?.mode === 'full'
+      ? { initialState: 'approved' as const, verifiedBy: 'wallet' }
+      : {}),
   };
 
   try {
@@ -79,10 +105,31 @@ export async function checkoutOrder(
   return { ok: true, order: created, created: true };
 }
 
+/** Snapshot for a wallet-funded order that raced: applied credit if any. */
+export function walletCreditFromSnapshot(order: OrderRow): number | null {
+  try {
+    const raw: unknown = JSON.parse(order.selections);
+    const wallet =
+      typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)['wallet']
+        : undefined;
+    if (typeof wallet === 'object' && wallet !== null && !Array.isArray(wallet)) {
+      const credit = (wallet as Record<string, unknown>)['credit_irt'];
+      if (typeof credit === 'number' && Number.isSafeInteger(credit) && credit >= 0) {
+        return credit;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
 /** Snapshot written to a renewal order's `selections` column. */
 export function buildRenewalSnapshot(
   draft: RenewalCheckoutDraft,
   serviceConfigName: string,
+  wallet?: WalletPlan,
 ): string {
   return JSON.stringify({
     schema: 1,
@@ -92,6 +139,7 @@ export function buildRenewalSnapshot(
     duration_days: draft.breakdown.duration_days,
     price: draft.breakdown,
     limits: catalogLimits(draft.catalog),
+    ...(wallet ? { wallet: { mode: wallet.mode, credit_irt: wallet.creditIrt } } : {}),
   });
 }
 
@@ -105,6 +153,7 @@ export async function checkoutRenewalOrder(
   db: D1Database,
   draft: RenewalCheckoutDraft,
   serviceConfigName: string,
+  wallet?: WalletPlan,
 ): Promise<CheckoutResult> {
   const preExisting = await findOrderByIdempotencyKey(db, draft.orderToken);
   if (preExisting) return { ok: true, order: preExisting, created: false };
@@ -112,12 +161,15 @@ export async function checkoutRenewalOrder(
   const order: NewOrderFields = {
     id: newOrderId(),
     customerId: draft.customerId,
-    selections: buildRenewalSnapshot(draft, serviceConfigName),
-    amount: draft.breakdown.total,
+    selections: buildRenewalSnapshot(draft, serviceConfigName, wallet),
+    amount: wallet ? wallet.remainderIrt : draft.breakdown.total,
     currency: draft.breakdown.currency,
     idempotencyKey: draft.orderToken,
     kind: 'renewal',
     renewsOrderId: draft.serviceOrderId,
+    ...(wallet?.mode === 'full'
+      ? { initialState: 'approved' as const, verifiedBy: 'wallet' }
+      : {}),
   };
 
   try {
@@ -132,4 +184,13 @@ export async function checkoutRenewalOrder(
   const created = await findOrderByIdempotencyKey(db, draft.orderToken);
   if (!created) return { ok: false, error: 'insert_unconfirmed' };
   return { ok: true, order: created, created: true };
+}
+
+export interface RenewalCheckoutDraft {
+  customerId: number;
+  orderToken: string;
+  catalog: Catalog;
+  breakdown: RenewalBreakdown;
+  /** The completed purchase order (service) being extended. */
+  serviceOrderId: string;
 }

@@ -7,7 +7,7 @@ export const fa = {
   notConfigured:
     '⚠️ ربات هنوز به‌طور کامل پیکربندی نشده است.',
 
-  welcomeHeader: '👋 سلام',
+  welcomeHeader: '👋 درود',
   welcomeIntro: 'ربات فروش سرویس VPN. از منوی زیر گزینه‌ی مورد نظرتان را انتخاب کنید.',
   menuPrompt: '👇 منوی اصلی',
 
@@ -20,6 +20,9 @@ export const fa = {
     '/help — همین پیام',
     '/pending — (مدیران) فیش‌های در انتظار بررسی',
     '/failed — (مدیران) سفارش‌های ناموفقِ راه‌اندازی/تمدید',
+    '/tickets — (مدیران) تیکت‌های باز پشتیبانی',
+    '/announce — (مدیران) ارسال اطلاعیه برای همه کاربران',
+    '/announcements — (مدیران) وضعیت اطلاعیه‌های اخیر',
     '',
     '📦 در «سرویس‌های من» می‌توانید وضعیت و انقضای سرویس‌ها را ببینید و آن‌ها را تمدید کنید.',
     'برای شروع، دکمه‌های زیر را بزنید.',
@@ -30,18 +33,18 @@ export const fa = {
     '🛒 خرید سرویس',
     '',
     'برای شروع، یک نام برای کانفیگ خود انتخاب کنید.',
-    'نام باید ۱ تا ۶۴ نویسه باشد (بدون کاراکترهای کنترلی).',
+    'نام باید انگلیسی، حداقل سه کلمه (حروف لاتین، جدا با فاصله) و حداکثر ۶۴ نویسه باشد.',
     'هر وقت خواستید با «بازگشت به منو» یا /cancel خارج شوید.',
   ].join('\n'),
-  buyWaitingConfigName: '⌨️ لطفاً نام کانفیگ را در همین چت ارسال کنید.',
+  buyWaitingConfigName:
+    'زیبا لطفا یه نام انگلیسی حداقل سه کلمه‌ای انتخاب کن یا اگر میخوای من برات رندوم انتخاب کنم',
   configNameInvalid:
-    '❌ نام کانفیگ نامعتبر است (۱ تا ۶۴ نویسه، بدون کاراکترهای کنترلی).\nدوباره تلاش کنید یا «بازگشت به منو» را بزنید.',
+    '❌ نام کانفیگ نامعتبر است؛ باید انگلیسی و حداقل سه کلمه باشد (مثل: Silver Falcon Network).\nدوباره تلاش کنید یا «انتخاب خودکار» را بزنید.',
   configNameSaved: (name: string) =>
     `✅ نام کانفیگ «${name}» ثبت شد.`,
   buyInProgress: '🛒 فرآیند خرید جاری را ادامه دهید یا برای لغو «بازگشت به منو» را بزنید.',
 
   // Sections not yet implemented
-  comingSoonSupport: '🆘 بخش «پشتیبانی» در فاز ۷ اضافه می‌شود.',
   accountHeader: '👤 اطلاعات حساب شما',
   accountUsername: (v: string) => `نام کاربری: ${v}`,
   accountNone: '—',
@@ -163,6 +166,8 @@ export const fa = {
     `🎉 سرویس شما ساخته شد.\n\n🆔 سفارش: ${id}\n\nلینک اتصال فعلاً قابل دریافت نیست؛ به‌زودی از بخش «سرویس‌های من» در دسترس خواهد بود. در صورت عجله با پشتیبانی در ارتباط باشید.`,
   provisionFailedNotice: (id: string) =>
     `⚠️ ساخت سرویسِ سفارش پیش از حد مجاز به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nمسئولان در جریان قرار گرفتند و موضوع پیگیری می‌شود؛ نیازی به پرداخت مجدد نیست.`,
+  provisionNameRejectedNotice: (id: string) =>
+    `⚠️ متأسفانه پنل، نامِ سرویسِ این سفارش را نپذیرفت.\n\n🆔 سفارش: ${id}\n\n پرداخت شما کاملاً محفوظ است و هیچ مبلغی دوباره کسر نمی‌شود. تیم ما به‌زودی با نامی تازه تلاش می‌کند؛ اگر عجله دارید می‌توانید سفارشی نو با «انتخاب خودکار» یا یک نام انگلیسی سه‌کلمه‌ای دیگر شروع کنید.`,
   adminProvisionFailed: (id: string, reason: string) =>
     `⚠️ ساخت سرویس ناموفق بود\n🆔 ${id}\n📝 ${reason.slice(0, 200)}\n\nبا دکمه‌ی زیر می‌توانید دوباره تلاش کنید (تا سقف مجاز).`,
   failedQueueHeader: '🧯 سفارش‌های ناموفقِ راه‌اندازی',
@@ -233,6 +238,109 @@ export const fa = {
   notifyApprovedRenewal: (id: string, amount: string) =>
     `🎉 پرداخت تمدید شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nتمدید به‌زودی روی سرویس اعمال می‌شود.`,
   ordersKindRenewal: '(تمدید)',
+
+  // ————— Phase 7: wallet + referrals + support + announcements (IRT/Toman) —————
+  walletUnavailable: '🔧 کیف پول فعلاً در دسترس نیست. کمی بعد دوباره امتحان کنید.',
+  walletHeader: '💰 کیف پول شما',
+  walletBalance: (v: string) => `موجودی: ${v}`,
+  walletEmpty: 'هنوز تراکنشی در کیف پول شما ثبت نشده است.',
+  walletEntry: (n: number, sign: string, kind: string, amount: string, date: string) =>
+    `${n}. ${sign} ${amount} — ${kind}\n   ${date}`,
+  walletKindReferralReward: '🎁 جایزه معرفی',
+  walletKindAdminGrant: '➕ اعتبار هدیه',
+  walletKindAdminDebit: '➖ کسر اعتبار',
+  walletKindOrderPayment: '🛒 پرداخت سفارش',
+  walletKindOrderRefund: '↩️ بازگشت اعتبار',
+  walletDebited: (v: string) => `✅ مبلغ ${v} از موجودی کیف پول کسر شد.`,
+  walletGranted: (v: string) => `✅ مبلغ ${v} به کیف پول شما اضافه شد.`,
+  walletAmountInvalid:
+    '⚠️ مبلغ را صحیح و بدون نشانه‌ی اضافی بفرستید؛ یا «بازگشت» را بزنید.',
+  walletAmountTooBig: (max: string) => `⚠️ حداکثر مقدار مجاز در هر عملیات: ${max}`,
+  walletPromptAmount: (verb: string) =>
+    `⌨️ مبلغ دلخواه (${verb}، به تومان) را با عدد صحیح بفرستید؛ برای انصراف «بازگشت به منو».`,
+  walletBalanceLow: '⚠️ موجودی کیف پول کافی نیست.',
+  walletTargetUser: (v: string) => `👤 کاربر هدف: ${v}`,
+
+  payWalletFull: '💰 پرداخت کامل با کیف پول',
+  payWalletPart: '🔅 کسر موجودی و پرداخت مابقی',
+  summaryWalletLine: (v: string) => `👛 موجودی کیف پول شما: ${v}`,
+  walletPayConfirmToast: '✅ پرداخت از کیف پول انجام شد.',
+  walletPaidOrderCreated: (id: string, used: string) =>
+    `🎉 سفارش شما با موفقیت و به‌صورت آنی پرداخت شد!\n\n🆔 کد: ${id}\n👛 از کیف پول: ${used}\n\nسرویس شما به‌زودی ساخته می‌شود و اطلاعات اتصال ارسال خواهد شد.`,
+  walletPartialCreated: (id: string, used: string, rest: string) =>
+    `✅ ثبت شد — ${used} از کیف پول کسر گردید.\n\n🆔 کد: ${id}\n💳 مانده قابل واریز: ${rest}\n\n👇 اطلاعات واریز در پیام بعدی ارسال می‌شود.`,
+  walletPaidRenewal: (id: string, used: string) =>
+    `🎉 تمدید شما با موفقیت و به‌صورت آنی پرداخت شد!\n\n🆔 سفارش: ${id}\n👛 از کیف پول: ${used}\n\nتمدید به‌زودی روی سرویس اعمال می‌شود.`,
+  walletPartialRenewal: (id: string, used: string, rest: string) =>
+    `✅ ثبت شد — ${used} از کیف پول کسر گردید.\n\n🆔 کد: ${id}\n💳 مانده قابل واریز: ${rest}\n\n👇 اطلاعات واریز در پیام بعدی ارسال می‌شود.`,
+  notifyWalletRefunded: (id: string, amount: string) =>
+    `ℹ️ مبلغ ${amount} از سفارشِ رد‌شده به کیف پول شما بازگشت.\n\n🆔 سفارش: ${id}`,
+  adminRefundedLine: (amount: string) => `↩️ بازگشت به کیف پول مشتری: ${amount}`,
+
+  inviteHeader: '🤝 دعوت از دوستان',
+  inviteLinkNone: (link: string) => `🔗 لینک دعوت شما:\n${link}`,
+  inviteCount: (n: number) => `دعوت‌های موفق: ${digitsFa(n)}`,
+  inviteEarned: (v: string) => `مجموع جوایز: ${v}`,
+  inviteHowTo: [
+    'این لینک را برای دوستتان بفرستید؛',
+    'با اولین خرید تأییدشده‌ی او، جایزه‌ی معرفی به کیف پول شما اضافه می‌شود.',
+  ].join('\n'),
+  inviteRewardPercent: (v: string) => `🎁 پاداش هر معرفی موفق: ${v}٪ از مبلغ اولین خرید`,
+  refNoticeJoined: (v: string) => `🌱 حساب شما با لینک دعوت ${v} ثبت شد.`,
+  refPaidToReferrer: (amount: string, referee: string) =>
+    `🎁 جایزه‌ی معرفی به کیف پول شما اضافه شد: ${amount}\nدعوتشده: ${referee}`,
+  refPaidFromSide: (referee: string, amount: string) =>
+    `🎉 دوستی که دعوت کرده‌اید خرید اولش انجام شد — جایزه ${amount} به او داده شد.`,
+  referralUnavailable: '🔗 فعلاً امکان ساخت لینک دعوت وجود ندارد.',
+
+  supportIntro: [
+    '🆘 پشتیبانی',
+    '',
+    'مشکل یا پرسش خود را در یک پیام بنویسید و بفرستید.',
+    'پاسخ کارشناس معمولاً در همین گفتگو برایتان ارسال می‌شود.',
+    'برای بازگشت، «بازگشت به منو» یا /cancel.',
+  ].join('\n'),
+  supportTicketCreated: (id: string) =>
+    `📨 درخواست شما ثبت شد.\n\n🎫 کد تیکت: ${id}\n\nبه‌محض پاسخ، در همین گفتگو متوجه خواهید شد.`,
+  supportTicketExists: (id: string) =>
+    `🎫 تیکت بازِ شما (${id.slice(0, 10)}…) هنوز فعال است.`,
+  supportQueueChoice: '✍️ متن پیام جدید را بفرستید تا برای کارشناس ارسال شود.',
+  supportAnswered: '💬 پاسخ پشتیبانی:\n\n',
+  supportClosedNotice: '✅ تیکت بسته شد. در صورت نیاز، دوباره «پشتیبانی» را بزنید.',
+  supportTicketClosedAlready: 'ℹ️ این تیکت بسته شده است.',
+  adminTicketNew: (customer: string, subject: string) =>
+    `🆕 تیکت پشتیبانی\n👤 ${customer}\n📝 ${subject}`,
+  adminTicketFollowup: (customer: string, subject: string) =>
+    `✍️ پیام جدید مشتری\n👤 ${customer}\n📝 ${subject}`,
+  adminTicketQueueHeader: '🗂 تیکت‌های باز پشتیبانی',
+  adminTicketQueueEmpty: '🎉 تیکت بازی وجود ندارد.',
+  adminTicketQueueEntry: (n: number, code: string, customer: string, subject: string, messages: number) =>
+    `${n}. 🎫 ${code} — ${customer}\n   ${subject}\n   پیام‌ها: ${digitsFa(messages)}`,
+  adminTicketPrompt: '⌨️ پاسخ خود را بنویسید و بفرستید (حداکثر ۲۰۰۰ نویسه).',
+  adminTicketSent: '✅ پاسخ برای مشتری ارسال شد.',
+  adminTicketStale: 'این تیکت دیگر باز نیست یا پیدا نشد.',
+  supportBusyFirst: '🛑 ابتدا فرآیند فعلی را کامل کنید یا /cancel بفرستید.',
+  ticketNotFound: '🚫 تیکتی با این شناسه پیدا نشد.',
+
+  announceIntro: '📢 متن اطلاعیه را بفرستید (حداکثر ۲۰۰۰ نویسه).',
+  announceTooLong: '⚠️ متن اطلاعیه بیش از حد مجاز است؛ کوتاه‌تری بفرستید.',
+  announceConfirmPrompt: (n: number) =>
+    `📩 این اطلاعیه به حدود ${digitsFa(n)} کاربر ارسال شود؟`,
+  announceCreated: (id: string) =>
+    `📤 اطلاعیه ثبت شد و ارسال آغاز شد.\n🆔 ${id.slice(0, 10)}…`,
+  announceProgress: (code: string, sent: number, total: number) =>
+    `📊 اطلاعیه ${code} — ارسال‌شده: ${digitsFa(sent)} از ${digitsFa(total)}`,
+  announceDone: (code: string, sent: number, failed: number) =>
+    `✅ اطلاعیه ${code} کامل شد\nارسال‌شده: ${digitsFa(sent)}${failed > 0 ? ` — ناموفق: ${digitsFa(failed)}` : ''}`,
+  announceQueueHeader: '🗂 آخرین اطلاعیه‌ها',
+  announceQueueEmpty: 'هنوز اطلاعیه‌ای ارسال نشده است.',
+  announceQueueEntry: (id: string, state: string, sent: number, total: number) =>
+    `🆔 ${id.slice(0, 10)}… — ${state} — ${digitsFa(sent)}/${digitsFa((total))}`,
+  announceStateSending: '⏳ در حال ارسال',
+  announceStateDone: '✅ کامل',
+  announceStale: '🔄 این اطلاعیه تغییر کرده یا قبلاً کامل ارسال شده است.',
+  announceReceived: '📢 اطلاعیه',
+  userBlocked: (id: string) => `🎫 تیکت ${id} دیگر فعال نیست؛ ارسال متوقف شد.`,
 } as const;
 
 /** Format integer money with Persian thousands + currency word. */

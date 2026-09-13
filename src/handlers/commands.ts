@@ -4,7 +4,12 @@ import { mainMenuKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 import { showPendingQueue } from './payment.ts';
 import { showFailedQueue } from './provisioning.ts';
+import { captureReferralOnStart, notifyReferralJoined } from './referrals.ts';
+import { handleWalletAdminCommand } from './wallet.ts';
+import { showTicketQueue } from './support.ts';
+import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { parseCommand } from '../lib/validate.ts';
+import { getSession } from '../db/states.ts';
 
 /**
  * Slash-command handlers. Customer registration already happened in the
@@ -14,13 +19,23 @@ export async function handleCommand(
   ctx: UpdateContext,
   text: string,
 ): Promise<void> {
+  // Phase 7 first: /credit /debit (wallet-gated) and their arg form.
+  const walletResult = await handleWalletAdminCommand(ctx, text);
+  if (walletResult === 'handled') return;
+
   const parsed = parseCommand(text);
   if (!parsed) return;
 
   switch (parsed.name) {
-    case 'start':
+    case 'start': {
+      // Referral deep-link capture (dispatcher probed first-ever status).
+      if (ctx.pendingReferralCode) {
+        const referrer = await captureReferralOnStart(ctx, ctx.pendingReferralCode);
+        if (referrer !== null) void notifyReferralJoined(ctx, referrer);
+      }
       await showMenu(ctx);
       return;
+    }
     case 'help':
       await ctx.api.sendMessage(ctx.chatId, fa.helpText, mainMenuKeyboard());
       return;
@@ -39,6 +54,39 @@ export async function handleCommand(
         await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
       } else {
         await showFailedQueue(ctx);
+      }
+      return;
+    case 'tickets':
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+      } else {
+        await showTicketQueue(ctx);
+      }
+      return;
+    case 'announce': {
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        return;
+      }
+      const session = await getSession(ctx.db, ctx.customerId);
+      const inline = /^\/announce(@\w+)?\s+([\s\S]+)$/.exec(text);
+      if (inline && inline[2]) {
+        // inline text: /announce <text…> goes straight to the draft handler
+        await saveAnnounceDraft(
+          ctx,
+          { state: 'WAITING_ANNOUNCE_TEXT', data: {} },
+          inline[2],
+        );
+        return;
+      }
+      await startAnnounceDraft(ctx, session);
+      return;
+    }
+    case 'announcements':
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+      } else {
+        await showAnnouncements(ctx);
       }
       return;
     default:

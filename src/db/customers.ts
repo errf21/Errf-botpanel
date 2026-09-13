@@ -19,7 +19,8 @@ export interface CustomerRecord {
 /**
  * Idempotent upsert keyed on UNIQUE(telegram_user_id).
  * Safe under repeated /start and concurrent webhook retries —
- * always ends with exactly one row; returns its integer id.
+ * always ends with exactly one row; returns its integer id. First-ever
+ * detection is `customerExists()` at the rare referral call site.
  */
 export async function upsertCustomer(
   db: D1Database,
@@ -52,6 +53,19 @@ export async function upsertCustomer(
     .first<{ id: number }>();
   if (!row) throw new Error('customer_load_failed');
   return row.id;
+}
+
+/** True when this telegram id already has a row (first-ever-seen probe).
+ *  Only consulted for `/start ref_...` payloads — not the hot path. */
+export async function customerExists(
+  db: D1Database,
+  telegramUserId: number,
+): Promise<boolean> {
+  const row = await db
+    .prepare('SELECT 1 AS hit FROM customers WHERE telegram_user_id = ?1')
+    .bind(String(telegramUserId))
+    .first<{ hit: number }>();
+  return row !== null;
 }
 
 export async function getCustomer(

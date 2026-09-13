@@ -39,6 +39,9 @@ export const CONVERSATION_STATES = [
   'WAITING_PAYMENT_RECEIPT',
   'WAITING_RENEWAL_DURATION',
   'WAITING_RENEWAL_CONFIRMATION',
+  'WAITING_SUPPORT_MESSAGE',
+  'WAITING_ANNOUNCE_TEXT',
+  'WAITING_ANNOUNCE_CONFIRM',
 ] as const;
 
 export type ConversationState = (typeof CONVERSATION_STATES)[number];
@@ -55,6 +58,10 @@ export interface StateData {
   order_id?: string;
   /** Phase 6: purchase order (service) a renewal draft extends. */
   renews_order_id?: string;
+  /** Phase 7: 'full' pays the whole order from the wallet, 'partial' credits it. */
+  wallet_use?: 'full' | 'partial';
+  /** Phase 7: announcement id awaiting the admin's final confirm tap. */
+  announcement_id?: string;
   [key: string]: unknown;
 }
 
@@ -142,6 +149,8 @@ export interface TelegramApiLike {
     buttons?: TelegramInlineKeyboardMarkup,
   ): Promise<boolean>;
   answerCallbackQuery(id: string, text?: string, showAlert?: boolean): Promise<void>;
+  /** Phase 7: bot identity for invite deep links; optional in harnesses. */
+  getMe?(): Promise<Record<string, unknown> | null>;
 }
 
 /** Per-update context assembled by the webhook dispatcher. */
@@ -161,6 +170,11 @@ export interface UpdateContext {
    * ExecutionContext.waitUntil). Absent in tests/harnesses → inline await.
    */
   waitUntil?: (promise: Promise<unknown>) => void;
+  /**
+   * Phase 7: referral code carried by THIS update's first-ever `/start`,
+   * when the sender has no customer row yet (set by the dispatcher).
+   */
+  pendingReferralCode?: string;
 }
 
 export interface TelegramUser {

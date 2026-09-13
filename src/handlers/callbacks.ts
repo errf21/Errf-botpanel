@@ -4,15 +4,19 @@ import {
   isValidCallbackData,
   parseAdminCallback,
   parseServiceCallback,
+  parseTicketCallback,
+  parseAnnounceCallback,
 } from '../lib/validate.ts';
 import {
   CB,
   adminRejectPromptKeyboard,
+  configNameKeyboard,
   isKnownCallback,
   mainMenuKeyboard,
   backToMenuKeyboard,
   routeCallback,
 } from '../telegram/menu.ts';
+import { randomConfigName } from '../lib/configName.ts';
 import { fa } from '../telegram/texts.ts';
 import { getCustomer } from '../db/customers.ts';
 import { getSession, setSession } from '../db/states.ts';
@@ -30,6 +34,7 @@ import { refreshOwnedService, showMyServices, viewOwnedService } from './service
 import {
   applyRenewalDuration,
   confirmRenewal,
+  confirmRenewalWithWallet,
   renewalGoBack,
   resumeRenewal,
   startRenewal,
@@ -38,11 +43,25 @@ import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
   confirmPurchase,
+  confirmPurchaseWithWallet,
+  continueWithConfigName,
   goBack,
   sendSummary,
   stepView,
 } from './purchase.ts';
+
+import { showMyWallet } from './wallet.ts';
+import { showInvite } from './referrals.ts';
+import {
+  armTicketReply,
+  closeTicket,
+  openSupportEntry,
+  showTicketQueue,
+  viewTicket,
+} from './support.ts';
+import { runAnnouncementPass, showAnnouncements } from './announcements.ts';
 import { cancelToMenu } from './commands.ts';
+
 
 /**
  * Callback-query router.
@@ -89,6 +108,42 @@ export async function handleCallback(
     }
     const renewSession = await getSession(ctx.db, ctx.customerId);
     await startRenewal(ctx, renewSession, parsed.orderId, callbackQueryId);
+    return;
+  }
+
+  // ———— Phase 7: support ticket callbacks (admin-gated actions) ————
+  if (data.startsWith('tsk:')) {
+    const parsed = parseTicketCallback(data);
+    if (!parsed || !ctx.isAdmin) {
+      await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+      return;
+    }
+    if (parsed.action === 'vw') {
+      await viewTicket(ctx, parsed.ticketId, callbackQueryId);
+      return;
+    }
+    if (parsed.action === 'cl') {
+      await closeTicket(ctx, parsed.ticketId, callbackQueryId);
+      return;
+    }
+    await armTicketReply(ctx, parsed.ticketId, callbackQueryId, messageChatId, messageId);
+    return;
+  }
+
+  // ———— Phase 7: announcement job control ————
+  if (data.startsWith('ann:')) {
+    const parsed = parseAnnounceCallback(data);
+    if (!parsed || !ctx.isAdmin) {
+      await ctx.api.answerCallbackQuery(callbackQueryId, fa.invalidChoice);
+      return;
+    }
+    await runAnnouncementPass(
+      ctx,
+      parsed.announcementId,
+      callbackQueryId,
+      messageChatId,
+      messageId,
+    );
     return;
   }
 
@@ -173,7 +228,7 @@ export async function handleCallback(
     case CB.MENU_BUY: {
       await ctx.api.answerCallbackQuery(callbackQueryId);
       if (session.state === 'WAITING_CONFIG_NAME') {
-        await ctx.api.sendMessage(ctx.chatId, fa.buyWaitingConfigName, backToMenuKeyboard());
+        await ctx.api.sendMessage(ctx.chatId, fa.buyWaitingConfigName, configNameKeyboard());
         return;
       }
       if (isBusy(session.state)) {
@@ -201,7 +256,7 @@ export async function handleCallback(
       const afterBuy = reduce(session.state, 'buy'); // IDLE → BUYING
       if (afterBuy !== 'BUYING') return;
       await setSession(ctx.db, ctx.customerId, 'BUYING', session.data);
-      await ctx.api.sendMessage(ctx.chatId, fa.buyIntro, backToMenuKeyboard());
+      await ctx.api.sendMessage(ctx.chatId, fa.buyIntro, configNameKeyboard());
       // The config-name step is where text capture begins.
       await setSession(ctx.db, ctx.customerId, reduce('BUYING', 'name_prompt_shown'), session.data);
       return;
@@ -233,6 +288,18 @@ export async function handleCallback(
       return;
     }
 
+    case CB.CONFIG_AUTO: {
+      // ONLY meaningful while the name is being asked for. Anywhere else
+      // (stale/foreign/forged buttons) it is inert — no writes, no state.
+      if (session.state !== 'WAITING_CONFIG_NAME') {
+        await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+        return;
+      }
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await continueWithConfigName(ctx, session, randomConfigName());
+      return;
+    }
+
     case CB.MENU_SERVICES: {
       // Phase 6: was a "coming soon" stub before.
       await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -245,8 +312,74 @@ export async function handleCallback(
       return;
     }
     case CB.MENU_SUPPORT:
-      await replyToMenu(fa.comingSoonSupport);
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await openSupportEntry(ctx, session);
       return;
+
+    case CB.MENU_WALLET: {
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await showMyWallet(ctx);
+      return;
+    }
+    case CB.MENU_INVITE: {
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await showInvite(ctx);
+      return;
+    }
+    case CB.MENU_TICKETS: {
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        return;
+      }
+      await showTicketQueue(ctx);
+      return;
+    }
+    case CB.MENU_ANNOUNCE_LIST: {
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+        return;
+      }
+      await showAnnouncements(ctx);
+      return;
+    }
+
+    case CB.PAY_WALLET_FULL:
+    case CB.PAY_WALLET_PART: {
+      const walletMode = route.callback === CB.PAY_WALLET_FULL ? 'full' : 'partial';
+      const loaded = await loadCatalog(ctx.db);
+      if (!loaded.ok) {
+        await ctx.api.answerCallbackQuery(callbackQueryId, fa.catalogUnavailable, true);
+        return;
+      }
+      // Phase 6 ladder powers renewals too: state decides which flow owns it.
+      if (session.state === 'WAITING_RENEWAL_CONFIRMATION') {
+        if (typeof session.data['order_token'] !== 'string') {
+          await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+          return;
+        }
+        await ctx.api.answerCallbackQuery(callbackQueryId);
+        await confirmRenewalWithWallet(ctx, session, loaded.catalog, walletMode, callbackQueryId);
+        return;
+      }
+      if (
+        session.state !== 'WAITING_ORDER_CONFIRMATION' ||
+        typeof session.data['order_token'] !== 'string'
+      ) {
+        await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+        return;
+      }
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await confirmPurchaseWithWallet(
+        ctx,
+        session,
+        loaded.catalog,
+        walletMode,
+        callbackQueryId,
+      );
+      return;
+    }
 
     case CB.MENU_ACCOUNT: {
       const record = await getCustomer(ctx.db, ctx.actor.id);

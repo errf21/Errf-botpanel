@@ -15,40 +15,52 @@ migrations/0003_phase3.sql  orders.idempotency_key + seeded catalog/pricing docs
 migrations/0004_phase4.sql  payment_info seed + admin_actions table
 migrations/0005_phase5.sql  provision_attempts/subscription_url + provisioning doc seed
 migrations/0006_phase6.sql  orders.kind/service_expires_at + renewal states & docs
+migrations/0007_phase7.sql  wallet ledger + referrals + support tickets + announcements
 src/index.ts                Fetch router: /health, /telegram/webhook
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
-src/dispatch.ts             Update pipeline: dedupe → register → route to handlers
-src/admin.ts                Admin authorization, receipt forwarding, review actions + provisioning trigger
+src/dispatch.ts             Update pipeline: dedupe → register (first-start referral probe) → route
+src/admin.ts                Admin authorization, receipt forwarding, review + wallet refund + referral payout
 src/routes/health.ts        Liveness + D1 connectivity + binding status
 src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
 src/telegram/api.ts         Telegram Bot API client (token only in env)
-src/telegram/menu.ts        Callback vocabulary + keyboards (incl. admin `adm:`, service `svc:`)
+src/telegram/menu.ts        Callback vocabulary + keyboards (incl. admin `adm:`, service `svc:`, ticket `tsk:`, announce `ann:`)
 src/telegram/texts.ts       All user-facing text (Persian-first), one place
-src/handlers/commands.ts    /start /cancel /help /pending /failed (admin)
-src/handlers/callbacks.ts   Menu + flow + service + admin-review/retry buttons (format AND allowlist)
-src/handlers/messages.ts    Text → state machine; admin reject-reason interception
+src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit
+src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + admin-review buttons
+src/handlers/messages.ts    Text → state machine; admin intercepts (reject reason, ticket reply, wallet ops)
 src/handlers/payment.ts     Receipt submission, payment instructions, orders/queue views
 src/handlers/provisioning.ts Phase 5 admin queue: /failed + `adm:rt` retry taps
 src/handlers/services.ts    Phase 6 My Services: list + detail (+live panel status)
-src/handlers/renewal.ts     Phase 6 renewal ladder (duration → summary → confirm)
-src/state/machine.ts        Pure conversation state machine (incl. renewal ladder)
+src/handlers/renewal.ts     Phase 6 renewal ladder + Phase 7 wallet payment for renewals
+src/handlers/wallet.ts      Phase 7 wallet view, admin grant/debit (arm→amount→guarded apply)
+src/handlers/referrals.ts   Phase 7 invite screen, first-touch capture, payout notices
+src/handlers/support.ts     Phase 7 tickets: open/follow-up/queue/reply/close (admin relay)
+src/handlers/announcements.ts Phase 7 broadcast: draft → confirm → chunked resumable fan-out
+src/state/machine.ts        Pure conversation state machine (buy + renewal + support + announce ladders)
 src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
 src/catalog/pricing.ts      Pure integer price engine (rates + breakdown snapshot)
 src/catalog/payment.ts      Load + validate payment_info JSON (degrade-safe)
 src/catalog/provisioning.ts Load + validate provisioning-policy JSON (degrade-safe)
 src/catalog/renewal.ts      Load + validate renewal-policy JSON (kill switch, degrade-safe)
+src/catalog/wallet.ts       Load + validate wallet-policy JSON (kill switch + caps, degrade-safe)
+src/catalog/referral.ts     Load + validate referral-policy JSON (kill switch + reward/cap, degrade-safe)
 src/pasarguard/client.ts    PasarGuard REST client: X-Api-Key, timeouts, typed errors (GET/POST/PUT)
 src/provision/provision.ts  THE ONLY provisioning path: purchase-create + renewal-extend, audit
-src/db/orders.ts            Orders: atomic create, idempotency, guarded receipt/review/provision/renewal
-src/db/admin_actions.ts     Short-lived pending admin reject (reason prompt)
-src/db/customers.ts         Customers: idempotent upsert, is_admin flag, contact/admin-chat lookup
+src/db/orders.ts            Orders: atomic create (incl. born-approved wallet orders), guarded receipt/review/provision/renewal + same-batch reject refund
+src/db/wallet.ts            Wallet ledger: guarded credit/debit, exactly-once order payment/refund, re-point by id
+src/db/referrals.ts         Referral codes, first-touch attribution, exactly-once capped payout (PK guard)
+src/db/support.ts           Support tickets: one live per customer (UNIQUE), append-only messages
+src/db/announcements.ts     Broadcast jobs: seed-once deliveries, chunk claim/book/settle, stuck sweep
+src/db/admin_actions.ts     Short-lived armed admin prompts (reject / ticket reply / grant / debit)
+src/db/customers.ts         Customers: idempotent upsert, is_admin flag, first-ever probe, admin-chat lookup
 src/db/{states,dedupe}.ts   Conversation sessions (24h TTL) + webhook replay guard
-src/orders/checkout.ts      Draft → priced → durable order (purchase + renewal, replay-safe)
-src/handlers/purchase.ts    Buy steps + summary + confirmation (values re-checked vs DB catalog)
+src/orders/checkout.ts      Draft → priced → durable order: purchase + renewal + wallet plans (full/partial)
+src/handlers/purchase.ts    Buy steps + summary (+wallet buttons) + idempotent confirm & auto-approve
 src/lib/security.ts         ULID order IDs, constant-time secret comparison
-src/lib/validate.ts         Payload guards: callbacks (admin+service+ULID), media, sanitizers
+src/lib/validate.ts         Payload guards: callbacks (admin+service+ticket+announce+ULID), media, sanitizers
+src/lib/referralPayout.ts   Shared post-approval referral payout (manual + wallet auto-pay paths)
 src/lib/http.ts             Response helpers
-tests/                      node --test: machine, validation, price, e2e phases 2–6
+tests/                      node --test: machine, validation, price, e2e phases 2–7
 .dev.vars.example           Template for local secrets (copy → .dev.vars)
 ```
 

@@ -15,10 +15,19 @@ export const CB = {
   MENU_ORDERS: 'menu:orders',
   MENU_ACCOUNT: 'menu:account',
   MENU_SUPPORT: 'menu:support',
+  MENU_WALLET: 'menu:wallet',
+  MENU_INVITE: 'menu:invite',
+  MENU_TICKETS: 'menu:tickets',
+  MENU_ANNOUNCE_LIST: 'menu:anncs',
   ACT_CANCEL: 'act:cancel',
   ACT_BACK_MENU: 'act:back_menu',
   STEP_BACK: 'step:back',
   ORDER_CONFIRM: 'ord:confirm',
+  /** Phase 7: auto-pick a config name (allowed ONLY while WAITING_CONFIG_NAME). */
+  CONFIG_AUTO: 'cfg:auto',
+  /** Phase 7: wallet-paid order buttons on the purchase/renewal summary. */
+  PAY_WALLET_FULL: 'wlt:full',
+  PAY_WALLET_PART: 'wlt:part',
 } as const;
 
 /**
@@ -183,6 +192,7 @@ export function mainMenuKeyboard(): TelegramInlineKeyboardMarkup {
     inline_keyboard: [
       [button('🛒 خرید سرویس', CB.MENU_BUY), button('📦 سرویس‌های من', CB.MENU_SERVICES)],
       [button('💳 سفارش‌های من', CB.MENU_ORDERS), button('👤 حساب کاربری', CB.MENU_ACCOUNT)],
+      [button('💰 کیف پول', CB.MENU_WALLET), button('🤝 دعوت از دوستان', CB.MENU_INVITE)],
       [button('🆘 پشتیبانی', CB.MENU_SUPPORT)],
     ],
   };
@@ -249,3 +259,81 @@ export function confirmKeyboard(): TelegramInlineKeyboardMarkup {
   };
 }
 
+/* ———— Phase 7: wallet, support tickets, announcements ————
+ * `tsk:` and `ann:` carry full ULIDs, so — exactly like `adm:` and `svc:` —
+ * they live in a STRICT pattern in validate.ts and are produced ONLY by the
+ * builders below and parsed ONLY by parseTicketCallback/parseAnnounceCallback.
+ */
+export function ticketCallback(action: 'rp' | 'cl' | 'vw', ticketId: string): string {
+  return `tsk:${action}:${ticketId}`;
+}
+
+/** Queue row for one live ticket: [reply][view][close] + the subject. */
+export function adminTicketKeyboard(ticketId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('💬 پاسخ', ticketCallback('rp', ticketId)), button('👁 جزئیات', ticketCallback('vw', ticketId))],
+      [button('✅ بستن تیکت', ticketCallback('cl', ticketId))],
+    ],
+  };
+}
+
+/** One pushed ticket message: quick reply + queue. */
+export function adminTicketPushKeyboard(ticketId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('💬 پاسخ', ticketCallback('rp', ticketId))],
+      [button('🗂 صف پشتیبانی', CB.MENU_TICKETS)],
+    ],
+  };
+}
+
+/** Customer-facing ticket notice: back to menu. */
+export function ticketAcknowledgedKeyboard(): TelegramInlineKeyboardMarkup {
+  return { inline_keyboard: [[button(fa.backToMenu, CB.ACT_BACK_MENU)]] };
+}
+
+/** Announcement confirm/receive keyboard. */
+export function announceConfirmKeyboard(announcementId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('📢 ارسال', `ann:go:${announcementId}`)],
+      [button('❌ انصراف', CB.ACT_CANCEL)],
+    ],
+  };
+}
+
+/** Announcement job control: [continue] + the /announcements-style list. */
+export function announceProgressKeyboard(announcementId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('ادامه ارسال ➡️', `ann:ct:${announcementId}`)],
+      [button('🗂 اطلاعیه‌ها', CB.MENU_ANNOUNCE_LIST)],
+    ],
+  };
+}
+
+/** Summary buttons when the wallet is usable: pay-all-from-wallet / deduct. */
+export function walletPayKeyboard(partialAvailable: boolean): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [
+    [button(fa.payWalletFull, CB.PAY_WALLET_FULL)],
+  ];
+  if (partialAvailable) {
+    rows.push([button(fa.payWalletPart, CB.PAY_WALLET_PART)]);
+  }
+  rows.push(
+    [button(fa.confirmYes, CB.ORDER_CONFIRM)],
+    [button(fa.stepBack, CB.STEP_BACK), button('❌ لغو', CB.ACT_CANCEL)],
+  );
+  return { inline_keyboard: rows };
+}
+
+/** The config-name step: [🎲 انتخاب خودکار] directly below the prompt. */
+export function configNameKeyboard(): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('🎲 انتخاب خودکار', CB.CONFIG_AUTO)],
+      [button(fa.backToMenu, CB.ACT_BACK_MENU)],
+    ],
+  };
+}

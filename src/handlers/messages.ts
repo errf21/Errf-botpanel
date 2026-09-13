@@ -1,27 +1,32 @@
 import type { UpdateContext } from '../types.ts';
 import {
   parsePositiveInt,
-  sanitizeConfigName,
   sanitizeRejectionReason,
+  sanitizeSupportBody,
   type ReceiptMedia,
 } from '../lib/validate.ts';
-import { backToMenuKeyboard, mainMenuKeyboard } from '../telegram/menu.ts';
+import { backToMenuKeyboard, mainMenuKeyboard, configNameKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
-import { getSession, setSession } from '../db/states.ts';
+import { validateConfigName } from '../lib/configName.ts';
+import { getSession } from '../db/states.ts';
 import {
   clearPendingAdminAction,
   getPendingAdminAction,
 } from '../db/admin_actions.ts';
 import { performAdminReview } from '../admin.ts';
-import { acceptsTextInput, reduce } from '../state/machine.ts';
+import { acceptsTextInput } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { submitReceipt } from './payment.ts';
 import { resumeRenewal } from './renewal.ts';
+import { deliverTicketReply, submitSupportText } from './support.ts';
+import { saveAnnounceDraft } from './announcements.ts';
+import { completeArmedWalletAction } from './wallet.ts';
+import { findLiveTicket } from '../db/support.ts';
 import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
+  continueWithConfigName,
   sendSummary,
-  stepView,
 } from './purchase.ts';
 
 /**
@@ -29,8 +34,10 @@ import {
  * Accepted where `acceptsTextInput(state)`:
  *  - WAITING_CONFIG_NAME   → sanitized free-text name
  *  - WAITING_VOLUME / …    → a custom numeric ("دلخواه") value for that step
+ *  - WAITING_SUPPORT_MESSAGE / WAITING_ANNOUNCE_TEXT → Phase 7 bodies
  * Phase 4 additions (checked FIRST, they intercept an otherwise-valid flow):
  *  - admin with a pending "reject" action → the text IS the rejection reason
+ *  - Phase 7: pending support_reply / wallet_grant / wallet_debit likewise
  *  - photo/document while WAITING_PAYMENT_RECEIPT → receipt (dispatch routes
  *    media here via handleMedia).
  * Everything else is politely ignored (state preserved).
@@ -39,6 +46,34 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
   if (ctx.isAdmin) {
     const pending = await getPendingAdminAction(ctx.db, ctx.actor.id);
     if (pending) {
+      if (pending.action === 'support_reply' && pending.target_id) {
+        const body = sanitizeSupportBody(text);
+        if (body === null) {
+          await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt);
+          return;
+        }
+        // A consumed reply clears the arming; a stale one also clears — the
+        // ticket is gone and the prompt must not silently re-target others.
+        await clearPendingAdminAction(ctx.db, ctx.actor.id);
+        const outcome = await deliverTicketReply(ctx, pending.target_id, body);
+        await ctx.api.sendMessage(
+          ctx.chatId,
+          outcome === 'sent' ? fa.adminTicketSent : fa.adminTicketStale,
+        );
+        return;
+      }
+      if (pending.action === 'wallet_grant' || pending.action === 'wallet_debit') {
+        // Only a VALID amount consumes the arming; garbage keeps it alive.
+        const consumed = await completeArmedWalletAction(ctx, pending, text);
+        if (consumed) await clearPendingAdminAction(ctx.db, ctx.actor.id);
+        return;
+      }
+      // action === 'reject': unchanged Phase 4 behavior.
+      if (!pending.order_id) {
+        await clearPendingAdminAction(ctx.db, ctx.actor.id);
+        await ctx.api.sendMessage(ctx.chatId, fa.invalidChoice);
+        return;
+      }
       const reason = sanitizeRejectionReason(text);
       if (reason === null) {
         // too long / empty: pending action stays, ask again
@@ -65,6 +100,19 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
 
   const session = await getSession(ctx.db, ctx.customerId);
 
+  // ———— Phase 7: support ticket body (fresh from the ladder, or follow-up
+  // on an open ticket while IDLE — one indexed lookup, DB is the truth) ————
+  if (session.state === 'WAITING_SUPPORT_MESSAGE') {
+    await submitSupportText(ctx, session, text);
+    return;
+  }
+
+  // ———— Phase 7: announcement draft ————
+  if (session.state === 'WAITING_ANNOUNCE_TEXT') {
+    await saveAnnounceDraft(ctx, session, text);
+    return;
+  }
+
   if (!acceptsTextInput(session.state)) {
     if (session.state === 'WAITING_ORDER_CONFIRMATION') {
       // mid-summary typing: re-show summary without changing anything
@@ -87,6 +135,23 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       else await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
       return;
     }
+    if (session.state === 'WAITING_ANNOUNCE_CONFIRM') {
+      await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, backToMenuKeyboard());
+      return;
+    }
+    // While IDLE with a live ticket, ordinary text becomes a follow-up —
+    // only when the customer explicitly entered support before (state is
+    // otherwise unchanged): we route it to the ticket ONLY if one is open.
+    if (ctx.isAdmin === false) {
+      const live = await findLiveTicketSafe(ctx.db, ctx.customerId);
+      if (live) {
+        const body = sanitizeSupportBody(text);
+        if (body !== null) {
+          await submitSupportText(ctx, null, body);
+          return;
+        }
+      }
+    }
     await ctx.api.sendMessage(ctx.chatId, fa.idleInputHint, mainMenuKeyboard());
     return;
   }
@@ -108,24 +173,23 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
     return;
   }
 
-  // WAITING_CONFIG_NAME
-  const name = sanitizeConfigName(text);
+  // WAITING_CONFIG_NAME — strict English (>=3 words) display name; the
+  // auto-pick button stays available on refusals.
+  const name = validateConfigName(text);
   if (!name) {
-    await ctx.api.sendMessage(ctx.chatId, fa.configNameInvalid, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.configNameInvalid, configNameKeyboard());
     return;
   }
+  await continueWithConfigName(ctx, session, name);
+}
 
-  const next = reduce(session.state, 'name_accepted'); // → WAITING_VOLUME
-  await setSession(ctx.db, ctx.customerId, next, { ...session.data, config_name: name });
-
-  const loaded = await loadCatalog(ctx.db);
-  if (!loaded.ok) {
-    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
-    return;
+/** Live-ticket lookup must never trap a customer in the idle path. */
+async function findLiveTicketSafe(db: D1Database, customerId: number) {
+  try {
+    return await findLiveTicket(db, customerId);
+  } catch {
+    return null;
   }
-  await ctx.api.sendMessage(ctx.chatId, fa.configNameSaved(name), backToMenuKeyboard());
-  const view = stepView(next, loaded.catalog);
-  if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
 }
 
 function numericStepFor(state: string): StepKind | null {

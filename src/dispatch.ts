@@ -1,6 +1,7 @@
 import type { Env, TelegramUpdate, UpdateContext } from './types.ts';
 import { TelegramApi } from './telegram/api.ts';
-import { upsertCustomer } from './db/customers.ts';
+import { customerExists, upsertCustomer } from './db/customers.ts';
+import { REFERRAL_CODE_PREFIX } from './handlers/referrals.ts';
 import { claimUpdate, releaseUpdate } from './db/dedupe.ts';
 import {
   extractReceiptMedia,
@@ -38,6 +39,16 @@ export async function processTelegramUpdate(
       ? rawChat
       : actor.id;
 
+    // Phase 7: FIRST-EVER /start with a referral arg only — the pre-probe
+    // (one indexed SELECT) happens exclusively for those payloads.
+    let pendingReferralCode: string | undefined;
+    const startText = message?.text ?? message?.caption;
+    const arg = referralArg(startText);
+    if (arg) {
+      const neverSeen = message !== undefined && !(await customerExists(env.DB, actor.id));
+      if (neverSeen) pendingReferralCode = arg;
+    }
+
     const customerId = await upsertCustomer(env.DB, actor);
     const ctx: UpdateContext = {
       env,
@@ -48,6 +59,7 @@ export async function processTelegramUpdate(
       customerId,
       isAdmin: await resolveIsAdmin(env, env.DB, actor.id),
       waitUntil: options?.waitUntil,
+      ...(pendingReferralCode ? { pendingReferralCode } : {}),
     };
 
     if (callback) {
@@ -76,4 +88,15 @@ export async function processTelegramUpdate(
     // dedupe claim so a re-delivered update can be retried instead of dropped.
     await releaseUpdate(env.DB, update.update_id);
   }
+}
+
+/** Referral arg of a /start payload (incl. /start@BotName), or null. */
+function referralArg(text: string | undefined): string | null {
+  if (!text) return null;
+  const parts = text.trim().split(/\s+/);
+  const head = (parts[0] ?? '').slice(1).split('@')[0] ?? '';
+  if (head.toLowerCase() !== 'start') return null;
+  const arg = parts[1] ?? '';
+  if (!arg.startsWith(REFERRAL_CODE_PREFIX)) return null;
+  return arg.slice(REFERRAL_CODE_PREFIX.length) || null;
 }

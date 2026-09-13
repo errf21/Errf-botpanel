@@ -3,6 +3,7 @@
  * transaction for (order row + audit event), so orders and their audit trail
  * can never diverge.
  */
+import { newOrderId } from '../lib/security.ts';
 export interface OrderRow {
   id: string;
   customer_id: number;
@@ -39,34 +40,43 @@ export interface NewOrderFields {
   kind?: 'purchase' | 'renewal';
   /** Phase 6: service (purchase order) a renewal extends. */
   renewsOrderId?: string | null;
+  /** Phase 7: wallet-funded orders are born 'approved' (no receipt, no queue). */
+  initialState?: 'pending_payment' | 'approved';
+  /** Phase 7: 'wallet' when the order was paid from the balance. */
+  verifiedBy?: string | null;
 }
 
 export async function insertOrderWithEvent(
   db: D1Database,
   order: NewOrderFields,
 ): Promise<void> {
+  const initial = order.initialState ?? 'pending_payment';
+  const createdEvent =
+    initial === 'approved' ? 'order_created_wallet_paid' : 'order_created';
   await db.batch([
     db
       .prepare(
-        `INSERT INTO orders (id, customer_id, state, kind, selections, amount, currency, idempotency_key, renews_order_id)
-         VALUES (?1, ?2, 'pending_payment', ?3, ?4, ?5, ?6, ?7, ?8)`,
+        `INSERT INTO orders (id, customer_id, state, kind, selections, amount, currency, idempotency_key, renews_order_id, verified_by, verified_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, CASE WHEN ?3 = 'approved' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END)`,
       )
       .bind(
         order.id,
         order.customerId,
+        initial,
         order.kind ?? 'purchase',
         order.selections,
         order.amount,
         order.currency,
         order.idempotencyKey,
         order.renewsOrderId ?? null,
+        order.verifiedBy ?? null,
       ),
     db
       .prepare(
         `INSERT INTO order_events (order_id, actor, action, to_state, data)
-         VALUES (?1, 'customer', 'order_created', 'pending_payment', ?2)`,
+         VALUES (?1, 'customer', ?2, ?3, ?4)`,
       )
-      .bind(order.id, JSON.stringify({ idempotency_key: order.idempotencyKey })),
+      .bind(order.id, createdEvent, initial, JSON.stringify({ idempotency_key: order.idempotencyKey })),
   ]);
 }
 
@@ -157,7 +167,13 @@ export type AdminTransitionOutcome =
   | { ok: true; order: OrderRow }
   | { ok: false; error: 'not_found' | 'already_reviewed' };
 
-/** approve / reject — both ONLY from awaiting_review; double-taps lose the guard. */
+/**
+ * approve / reject — both ONLY from awaiting_review; the single guarded
+ * UPDATE claims the transition (double taps lose the race), then the audit
+ * trail and — on a winning reject WITH wallet credit — the refund statements
+ * (customer balance + ledger row) run in one atomic batch. Refund is bound
+ * to the winning claim, so exactly-once holds.
+ */
 async function guardedAdminTransition(
   db: D1Database,
   orderId: string,
@@ -165,6 +181,7 @@ async function guardedAdminTransition(
   action: 'payment_approved' | 'payment_rejected',
   adminTag: string,
   reason: string | null,
+  refund?: { customerId: number; amountIrt: number },
 ): Promise<AdminTransitionOutcome> {
   const before = await getOrderById(db, orderId);
   if (!before) return { ok: false, error: 'not_found' };
@@ -184,19 +201,46 @@ async function guardedAdminTransition(
     .run();
   if (changeCount(updated) === 0) return { ok: false, error: 'already_reviewed' };
 
-  await db
-    .prepare(
-      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
-       VALUES (?1, ?2, ?3, 'awaiting_review', ?4, ?5)`,
-    )
-    .bind(
-      orderId,
-      `admin:${adminTag}`,
-      action,
-      toState,
-      reason === null ? JSON.stringify({ via: 'admin' }) : JSON.stringify({ reason }),
-    )
-    .run();
+  const statements: Parameters<D1Database['batch']>[0] = [
+    db
+      .prepare(
+        `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
+         VALUES (?1, ?2, ?3, 'awaiting_review', ?4, ?5)`,
+      )
+      .bind(
+        orderId,
+        `admin:${adminTag}`,
+        action,
+        toState,
+        reason === null ? JSON.stringify({ via: 'admin' }) : JSON.stringify({ reason }),
+      ),
+  ];
+  if (refund && toState === 'rejected' && refund.amountIrt > 0) {
+    statements.push(
+      db
+        .prepare(
+          `UPDATE customers
+              SET balance_irt = balance_irt + ?2,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND balance_irt + ?2 >= 0`,
+        )
+        .bind(refund.customerId, refund.amountIrt),
+      db
+        .prepare(
+          `INSERT INTO wallet_entries (id, customer_id, delta_irt, kind, order_id, actor, balance_after)
+           SELECT ?1, ?2, ?3, 'order_refund', ?4, ?5, c.balance_irt
+             FROM customers c WHERE c.id = ?2`,
+        )
+        .bind(
+          newOrderId(),
+          refund.customerId,
+          refund.amountIrt,
+          orderId,
+          `admin:${adminTag}`,
+        ),
+    );
+  }
+  await db.batch(statements);
 
   const after = await getOrderById(db, orderId);
   return after ? { ok: true, order: after } : { ok: false, error: 'not_found' };
@@ -215,8 +259,9 @@ export function rejectOrderByAdmin(
   orderId: string,
   adminTag: string,
   reason: string | null,
+  refund?: { customerId: number; amountIrt: number },
 ): Promise<AdminTransitionOutcome> {
-  return guardedAdminTransition(db, orderId, 'rejected', 'payment_rejected', adminTag, reason);
+  return guardedAdminTransition(db, orderId, 'rejected', 'payment_rejected', adminTag, reason, refund);
 }
 
 export interface QueueRow extends OrderRow {

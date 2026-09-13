@@ -29,7 +29,8 @@ export class TelegramApi implements TelegramApiLike {
       | 'sendDocument'
       | 'editMessageText'
       | 'editMessageCaption'
-      | 'answerCallbackQuery',
+      | 'answerCallbackQuery'
+      | 'getMe',
     payload: Record<string, unknown>,
   ): Promise<T | null> {
     let response: Response;
@@ -150,5 +151,10 @@ export class TelegramApi implements TelegramApiLike {
       callback_query_id: id,
       ...(text ? { text, show_alert: showAlert } : {}),
     });
+  }
+
+  /** Bot identity for invite links (Phase 7). Null on any failure. */
+  async getMe(): Promise<Record<string, unknown> | null> {
+    return this.call<Record<string, unknown>>('getMe', {});
   }
 }

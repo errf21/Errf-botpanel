@@ -9,11 +9,25 @@ import {
   enabledDeviceCounts,
   enabledDurationDays,
   enabledVolumeGb,
+  loadCatalog,
 } from '../catalog/catalog.ts';
 import { calculatePrice } from '../catalog/pricing.ts';
+import { payableWalletBalance } from './wallet.ts';
+import { payOrderWithWallet, refundOrderWalletPayment, setPaidLedgerOrder } from '../db/wallet.ts';
+import { findOrderByIdempotencyKey } from '../db/orders.ts';
+
+async function findOrderByIdempotencyKeySoft(db: D1Database, token: string) {
+  try {
+    return await findOrderByIdempotencyKey(db, token);
+  } catch {
+    return undefined;
+  }
+}
+import { payReferrerIfDue } from '../lib/referralPayout.ts';
+import { provisionOrder } from '../provision/provision.ts';
 import { newOrderId } from '../lib/security.ts';
-import { checkoutOrder } from '../orders/checkout.ts';
-import { CB, deviceKeyboard, durationKeyboard, volumeKeyboard, confirmKeyboard, backToMenuKeyboard } from '../telegram/menu.ts';
+import { checkoutOrder, planWalletPayment, walletCreditFromSnapshot, type WalletPlan } from '../orders/checkout.ts';
+import { CB, deviceKeyboard, durationKeyboard, volumeKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard, configNameKeyboard } from '../telegram/menu.ts';
 import { fa, formatPrice } from '../telegram/texts.ts';
 import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
@@ -138,6 +152,7 @@ export async function sendSummary(
     return;
   }
   const b = computed.breakdown;
+  const balance = await payableWalletBalance(ctx.db, ctx.customerId);
   const lines = [
     fa.summaryHeader,
     fa.summaryName(String(session.data['config_name'])),
@@ -146,8 +161,20 @@ export async function sendSummary(
     fa.summaryDevices(b.device_count),
     fa.summaryPrice(formatPrice(b.total, b.currency)),
     fa.summaryId(String(session.data['order_token'])),
-    fa.summaryHint,
   ];
+  if (balance !== null && balance > 0) {
+    lines.push(fa.summaryWalletLine(formatPrice(balance, 'IRT')));
+    const full = balance >= b.total;
+    const partial = !full && balance >= 1 && b.total >= 2;
+    lines.push(fa.summaryHint);
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      lines.join('\n\n'),
+      full || partial ? walletPayKeyboard(partial) : confirmKeyboard(),
+    );
+    return;
+  }
+  lines.push(fa.summaryHint);
   await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), confirmKeyboard());
 }
 
@@ -157,6 +184,7 @@ export async function confirmPurchase(
   session: Session,
   catalog: Catalog,
   callbackQueryId: string,
+  wallet: WalletPlan | null = null,
 ): Promise<void> {
   const token = session.data['order_token'];
   const draft = extractDraft(session);
@@ -175,18 +203,116 @@ export async function confirmPurchase(
     return;
   }
 
-  const result = await checkoutOrder(ctx.db, {
-    customerId: ctx.customerId,
-    orderToken: token,
-    configName: String(session.data['config_name']),
-    catalog,
-    breakdown: computed.breakdown,
-  });
+  // Phase 7 wallet-full: plan → claim the debit against the DRAFT TOKEN
+  // (the only id that exists before the row; exactly-once by NOT EXISTS in
+  // the same UPDATE) → durable order is BORN 'approved' with amount=0 → one
+  // ledger re-point to the real order id for refund lookup. A lost debit
+  // (balance drained since the summary) degrades to the plain flow.
+  if (wallet && wallet.mode === 'full') {
+    const paid = await payOrderWithWallet(ctx.db, {
+      customerId: ctx.customerId,
+      amountIrt: wallet.creditIrt,
+      orderId: token,
+      actor: 'customer',
+    });
+    if (!paid.ok) {
+      await ctx.api.answerCallbackQuery(
+        callbackQueryId,
+        paid.reason === 'insufficient' ? fa.walletBalanceLow : fa.catalogUnavailable,
+        true,
+      );
+      await resendWalletGuidance(ctx, session, catalog, paid.reason);
+      return;
+    }
+    const result = await checkoutOrder(
+      ctx.db,
+      {
+        customerId: ctx.customerId,
+        orderToken: token,
+        configName: String(session.data['config_name']),
+        catalog,
+        breakdown: computed.breakdown,
+      },
+      wallet,
+    );
+    if (!result.ok) {
+      console.error(`checkout_failed ${result.error}`);
+      // Race with an earlier checkout? Then THAT row owns the paid money.
+      // Refund ONLY on a confirmed miss (null); an errored lookup stays
+      // undefined — never refund on "unknown".
+      const orphan = await findOrderByIdempotencyKeySoft(ctx.db, token);
+      if (orphan === null) {
+        await refundOrderWalletPayment(ctx.db, {
+          customerId: ctx.customerId,
+          orderId: token,
+          actor: 'customer',
+        }).catch(() => undefined);
+      }
+      await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      return;
+    }
+    if (result.created) {
+      await setPaidLedgerOrder(ctx.db, token, result.order.id);
+    }
+    await setSession(ctx.db, ctx.customerId, 'IDLE', {});
+    await ctx.api.answerCallbackQuery(callbackQueryId, fa.walletPayConfirmToast);
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      fa.walletPaidOrderCreated(result.order.id, formatPrice(wallet.creditIrt, 'IRT')),
+      backToMenuKeyboard(),
+    );
+    await afterOrderApproved(result.order, ctx);
+    return;
+  }
+
+  // Partial credit: debit BEFORE checkout (claim id = token), create as
+  // pending_payment with amount = remainder; the existing receipt pipeline
+  // continues untouched. Rejecting the order refunds via the re-pointed row.
+  if (wallet && wallet.mode === 'partial') {
+    const paid = await payOrderWithWallet(ctx.db, {
+      customerId: ctx.customerId,
+      amountIrt: wallet.creditIrt,
+      orderId: token,
+      actor: 'customer',
+    });
+    if (!paid.ok) {
+      await ctx.api.answerCallbackQuery(
+        callbackQueryId,
+        paid.reason === 'insufficient' ? fa.walletBalanceLow : fa.catalogUnavailable,
+        true,
+      );
+      await resendWalletGuidance(ctx, session, catalog, paid.reason);
+      return;
+    }
+  }
+
+  const result = await checkoutOrder(
+    ctx.db,
+    {
+      customerId: ctx.customerId,
+      orderToken: token,
+      configName: String(session.data['config_name']),
+      catalog,
+      breakdown: computed.breakdown,
+    },
+    wallet ?? undefined,
+  );
   if (!result.ok) {
     console.error(`checkout_failed ${result.error}`);
+    if (wallet && wallet.mode === 'partial') {
+      await refundOrderWalletPayment(ctx.db, {
+        customerId: ctx.customerId,
+        orderId: token,
+        actor: 'customer',
+      }).catch(() => undefined);
+    }
     await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
     await ctx.api.answerCallbackQuery(callbackQueryId);
     return;
+  }
+  if (result.created && wallet && wallet.mode === 'partial') {
+    await setPaidLedgerOrder(ctx.db, token, result.order.id);
   }
 
   const data = { ...session.data, order_id: result.order.id };
@@ -203,8 +329,85 @@ export async function confirmPurchase(
     await resendPaymentGuidance(ctx, result.order);
     return;
   }
-  await ctx.api.sendMessage(ctx.chatId, fa.orderCreated(result.order.id), backToMenuKeyboard());
+  if (wallet && wallet.mode === 'partial') {
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      fa.walletPartialCreated(
+        result.order.id,
+        formatPrice(wallet.creditIrt, 'IRT'),
+        formatPrice(result.order.amount, result.order.currency),
+      ),
+      backToMenuKeyboard(),
+    );
+  } else {
+    await ctx.api.sendMessage(ctx.chatId, fa.orderCreated(result.order.id), backToMenuKeyboard());
+  }
   await sendPaymentInstructions(ctx, result.order);
+}
+
+/**
+ * The wallet tap on a summary: plans the payment from the CURRENT balance,
+ * mints nothing new (order_token is already the draft identity), then runs
+ * the shared confirm path. A vanished/insufficient balance degrades the tap
+ * to a notice + a plain re-render of the summary.
+ */
+export async function confirmPurchaseWithWallet(
+  ctx: UpdateContext,
+  session: Session,
+  catalog: Catalog,
+  mode: 'full' | 'partial',
+  callbackQueryId: string,
+): Promise<void> {
+  const balance = await payableWalletBalance(ctx.db, ctx.customerId);
+  if (balance === null) {
+    await ctx.api.sendMessage(ctx.chatId, fa.walletUnavailable, backToMenuKeyboard());
+    return;
+  }
+  const draft = extractDraft(session);
+  if (!draft || session.state !== 'WAITING_ORDER_CONFIRMATION') {
+    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, backToMenuKeyboard());
+    return;
+  }
+  const computed = calculatePrice(catalog.pricing, draft);
+  if (!computed.ok) {
+    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    return;
+  }
+  const plan = planWalletPayment(computed.breakdown.total, balance, mode);
+  if (!plan) {
+    await ctx.api.sendMessage(ctx.chatId, fa.walletBalanceLow, backToMenuKeyboard());
+    return;
+  }
+  await confirmPurchase(ctx, session, catalog, callbackQueryId, plan);
+}
+
+async function resendWalletGuidance(
+  ctx: UpdateContext,
+  session: Session,
+  catalog: Catalog,
+  _reason: string,
+): Promise<void> {
+  await sendSummary(ctx, session, catalog);
+}
+
+/** Post-approval side effects shared with the admin-review path. */
+export async function afterOrderApproved(order: import('../db/orders.ts').OrderRow, ctx: UpdateContext): Promise<void> {
+  const provisioning = provisionOrder(
+    { env: ctx.env, db: ctx.db, api: ctx.api },
+    { orderId: order.id },
+  ).then((outcome) => {
+    if (!outcome.ok && 'skip' in outcome) {
+      console.log(`provision_skipped orderId=${order.id.slice(0, 32)} reason=${outcome.skip}`);
+    }
+    return outcome;
+  });
+  const payout = payReferrerIfDue(ctx.db, ctx.api, order, 'customer');
+  if (ctx.waitUntil) {
+    ctx.waitUntil(provisioning);
+    ctx.waitUntil(payout);
+  } else {
+    await Promise.all([provisioning, payout]);
+  }
 }
 
 /** Replays after confirmation: payment info (still payable) or live status. */
@@ -244,10 +447,34 @@ export async function goBack(
     return;
   }
   if (next === 'WAITING_CONFIG_NAME') {
-    await ctx.api.sendMessage(ctx.chatId, fa.buyWaitingConfigName, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.buyWaitingConfigName, configNameKeyboard());
     return;
   }
   const view = stepView(next, catalog);
+  if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
+}
+
+/**
+ * One accepted config name — IDENTICAL path for typed input and the
+ * 🎲 auto-pick tap (single source of truth). `name` must already be the
+ * result of `validateConfigName` (the auto picker generates names that pass
+ * by construction; nothing here trusts a keyboard).
+ */
+export async function continueWithConfigName(
+  ctx: UpdateContext,
+  session: Session,
+  name: string,
+): Promise<void> {
+  const next = reduce(session.state, 'name_accepted'); // → WAITING_VOLUME
+  await setSession(ctx.db, ctx.customerId, next, { ...session.data, config_name: name });
+
+  const loaded = await loadCatalog(ctx.db);
+  if (!loaded.ok) {
+    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    return;
+  }
+  await ctx.api.sendMessage(ctx.chatId, fa.configNameSaved(name), backToMenuKeyboard());
+  const view = stepView(next, loaded.catalog);
   if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
 }
 

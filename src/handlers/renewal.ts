@@ -22,8 +22,29 @@ import { isValidOrderId } from '../lib/validate.ts';
 import { setSession, clearSession } from '../db/states.ts';
 import { findActiveRenewalForService, getOwnedService } from '../db/orders.ts';
 import type { OrderRow } from '../db/orders.ts';
+import { provisionOrder } from '../provision/provision.ts';
+import { getOrderById, findOrderByIdempotencyKey } from '../db/orders.ts';
+
+async function getOrderByIdForReplay(db: D1Database, orderId: string) {
+  try {
+    return await getOrderById(db, orderId);
+  } catch {
+    return null;
+  }
+}
+
+async function findOrderByIdempotencyKeySoft(db: D1Database, token: string) {
+  try {
+    return await findOrderByIdempotencyKey(db, token);
+  } catch {
+    return undefined;
+  }
+}
 import { loadRenewalViewConfig, serviceSnapshotData, effectiveExpiryIso, expiryDisplay, showMyServices } from './services.ts';
-import { renewalDurationKeyboard, confirmKeyboard, backToMenuKeyboard } from '../telegram/menu.ts';
+import { renewalDurationKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard } from '../telegram/menu.ts';
+import { payableWalletBalance } from './wallet.ts';
+import { payOrderWithWallet, refundOrderWalletPayment, setPaidLedgerOrder } from '../db/wallet.ts';
+import { planWalletPayment, type WalletPlan } from '../orders/checkout.ts';
 import { fa, formatPrice } from '../telegram/texts.ts';
 import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
@@ -158,6 +179,7 @@ export async function sendRenewalSummary(
   );
   const newExpiryIso = new Date(baseMs + b.duration_days * DAY_MS).toISOString();
   const name = serviceSnapshotData(service).name ?? fa.accountNone;
+  const balance = await payableWalletBalance(ctx.db, ctx.customerId);
   const lines = [
     fa.renewSummaryHeader,
     fa.renewSummaryService(name),
@@ -166,8 +188,20 @@ export async function sendRenewalSummary(
     fa.renewSummaryFrom(expiryDisplay(localExpiry)),
     fa.renewSummaryUntil(expiryDisplay(newExpiryIso)),
     fa.summaryId(token),
-    fa.summaryHint,
   ];
+  if (balance !== null && balance > 0) {
+    lines.push(fa.summaryWalletLine(formatPrice(balance, 'IRT')));
+    const full = balance >= b.total;
+    const partial = !full && balance >= 1 && b.total >= 2;
+    lines.push(fa.summaryHint);
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      lines.join('\n\n'),
+      full || partial ? walletPayKeyboard(partial) : confirmKeyboard(),
+    );
+    return;
+  }
+  lines.push(fa.summaryHint);
   await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), confirmKeyboard());
 }
 
@@ -177,6 +211,7 @@ export async function confirmRenewal(
   session: Session,
   catalog: Catalog,
   callbackQueryId: string,
+  wallet: WalletPlan | null = null,
 ): Promise<void> {
   const token = session.data['order_token'];
   const days = session.data['duration_days'];
@@ -204,6 +239,22 @@ export async function confirmRenewal(
     return;
   }
   const snapshotName = serviceSnapshotData(guard.service).name ?? fa.accountNone;
+  if (wallet) {
+    const paid = await payOrderWithWallet(ctx.db, {
+      customerId: ctx.customerId,
+      amountIrt: wallet.creditIrt,
+      orderId: token,
+      actor: 'customer',
+    });
+    if (!paid.ok) {
+      await ctx.api.answerCallbackQuery(
+        callbackQueryId,
+        paid.reason === 'insufficient' ? fa.walletBalanceLow : fa.catalogUnavailable,
+        true,
+      );
+      return;
+    }
+  }
   const result = await checkoutRenewalOrder(
     ctx.db,
     {
@@ -214,11 +265,69 @@ export async function confirmRenewal(
       serviceOrderId: guard.service.id,
     },
     snapshotName,
+    wallet ?? undefined,
   );
   if (!result.ok) {
     console.error(`renewal_checkout_failed error=${result.error.slice(0, 60)}`);
+    // Wallet money was already claimed on the draft token. Race with an
+    // earlier checkout? Then THAT row owns the paid money — refund ONLY
+    // when no order exists for this token at all (same discipline as
+    // purchase.ts; refundOrderWalletPayment is claim-row exactly-once, so
+    // retries can never credit twice).
+    if (wallet) {
+      const orphan = await findOrderByIdempotencyKeySoft(ctx.db, token);
+      if (orphan === null) {
+        await refundOrderWalletPayment(ctx.db, {
+          customerId: ctx.customerId,
+          orderId: token,
+          actor: 'customer',
+        }).catch(() => undefined);
+      }
+    }
     await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
     await ctx.api.answerCallbackQuery(callbackQueryId);
+    return;
+  }
+  if (wallet && wallet.mode === 'full') {
+    if (!result.created) {
+      // Replay token: the order exists — never pay or re-provision again.
+      const fresh = await getOrderByIdForReplay(ctx.db, result.order.id);
+      await ctx.api.answerCallbackQuery(callbackQueryId, fa.alreadyConfirmed, true);
+      await ctx.api.sendMessage(
+        ctx.chatId,
+        fresh ? fa.paymentWaitNotice : fa.alreadyConfirmed,
+        backToMenuKeyboard(),
+      );
+      if (fresh) await sendPaymentInstructions(ctx, fresh);
+      return;
+    }
+    // Debit already claimed against the TOKEN before checkout (single
+    // payment path); re-point the ledger onto the created approved row.
+    await setPaidLedgerOrder(ctx.db, token, result.order.id);
+    await clearSession(ctx.db, ctx.customerId);
+    await ctx.api.answerCallbackQuery(callbackQueryId, fa.walletPayConfirmToast);
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      fa.walletPaidRenewal(result.order.id, formatPrice(wallet.creditIrt, 'IRT')),
+      backToMenuKeyboard(),
+    );
+    const provisioning = provisionOrder(
+      { env: ctx.env, db: ctx.db, api: ctx.api },
+      { orderId: result.order.id },
+    );
+    if (ctx.waitUntil) ctx.waitUntil(provisioning);
+    else await provisioning;
+    return;
+  }
+  if (wallet && wallet.mode === 'partial' && !result.created) {
+    const fresh = await getOrderByIdForReplay(ctx.db, result.order.id);
+    await ctx.api.answerCallbackQuery(callbackQueryId, fa.alreadyConfirmed, true);
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      fresh ? fa.paymentWaitNotice : fa.alreadyConfirmed,
+      backToMenuKeyboard(),
+    );
+    if (fresh) await sendPaymentInstructions(ctx, fresh);
     return;
   }
   const next = reduce(session.state, 'renew_confirmed');
@@ -231,12 +340,57 @@ export async function confirmRenewal(
     result.created ? fa.orderConfirmToast : fa.alreadyConfirmed,
     !result.created,
   );
+  if (result.created && wallet && wallet.mode === 'partial') {
+    await setPaidLedgerOrder(ctx.db, token, result.order.id);
+    {
+      await ctx.api.sendMessage(
+        ctx.chatId,
+        fa.walletPartialRenewal(
+          result.order.id,
+          formatPrice(wallet.creditIrt, 'IRT'),
+          formatPrice(result.order.amount, result.order.currency),
+        ),
+        backToMenuKeyboard(),
+      );
+    }
+  }
   await ctx.api.sendMessage(
     ctx.chatId,
     fa.renewConfirmed(result.order.id),
     backToMenuKeyboard(),
   );
   await sendPaymentInstructions(ctx, result.order);
+}
+
+/** `wlt:full|wlt:part` while WAITING_RENEWAL_CONFIRMATION. */
+export async function confirmRenewalWithWallet(
+  ctx: UpdateContext,
+  session: Session,
+  catalog: Catalog,
+  mode: 'full' | 'partial',
+  callbackQueryId: string,
+): Promise<void> {
+  const balance = await payableWalletBalance(ctx.db, ctx.customerId);
+  if (balance === null) {
+    await ctx.api.sendMessage(ctx.chatId, fa.walletUnavailable, backToMenuKeyboard());
+    return;
+  }
+  const days = session.data['duration_days'];
+  if (session.state !== 'WAITING_RENEWAL_CONFIRMATION' || typeof days !== 'number') {
+    await ctx.api.answerCallbackQuery(callbackQueryId, fa.staleChoice, true);
+    return;
+  }
+  const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days });
+  if (!computed.ok) {
+    await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
+    return;
+  }
+  const plan = planWalletPayment(computed.breakdown.total, balance, mode);
+  if (!plan) {
+    await ctx.api.sendMessage(ctx.chatId, fa.walletBalanceLow, backToMenuKeyboard());
+    return;
+  }
+  await confirmRenewal(ctx, session, catalog, callbackQueryId, plan);
 }
 
 /** `step:back` from the renewal confirmation → duration ladder step. */

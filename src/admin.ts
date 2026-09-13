@@ -18,6 +18,7 @@ import {
   type OrderRow,
 } from './db/orders.ts';
 import { provisionOrder } from './provision/provision.ts';
+import { payReferrerIfDue } from './lib/referralPayout.ts';
 import { isValidOrderId, type ReceiptMedia } from './lib/validate.ts';
 import { adminReceiptKeyboard } from './telegram/menu.ts';
 import { fa, formatPrice } from './telegram/texts.ts';
@@ -42,6 +43,18 @@ function parseSnapshot(order: OrderRow): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/** Wallet credit stored in the order snapshot (0 when the order is plain). */
+export function walletCreditFromOrder(order: OrderRow): number {
+  const wallet = parseSnapshot(order)['wallet'];
+  if (typeof wallet === 'object' && wallet !== null && !Array.isArray(wallet)) {
+    const credit = (wallet as Record<string, unknown>)['credit_irt'];
+    if (typeof credit === 'number' && Number.isSafeInteger(credit) && credit > 0) {
+      return credit;
+    }
+  }
+  return 0;
 }
 
 /** Server-side rendering of an order for admin review (snapshot is trusted). */
@@ -116,18 +129,19 @@ export type ReviewResult =
   | { ok: true; order: OrderRow }
   | { ok: false; error: 'invalid_id' | 'not_found' | 'already_reviewed' };
 
-/** Proactive result notice to the customer. Failures are logged, not fatal. */
+/** Proactive result notice to the customer. Failures are logged, not fatal.
+ *  Returns whether a wallet refund was applied (for the admin line). */
 async function notifyCustomerOfReview(
   db: D1Database,
   api: TelegramApiLike,
   order: OrderRow,
   decision: ReviewDecision,
   reason: string | null,
-): Promise<void> {
+): Promise<boolean> {
   const contact = await getCustomerContact(db, order.customer_id);
-  if (!contact) return;
+  if (!contact) return false;
   const chatId = Number(contact.telegram_user_id);
-  if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
+  if (!Number.isSafeInteger(chatId) || chatId <= 0) return false;
   const text =
     decision === 'approve'
       ? order.kind === 'renewal'
@@ -135,6 +149,7 @@ async function notifyCustomerOfReview(
         : fa.notifyApproved(order.id, formatPrice(order.amount, order.currency))
       : fa.notifyRejected(order.id, reason ?? fa.adminRejectDefaultReason);
   await api.sendMessage(chatId, text);
+  return true;
 }
 
 /**
@@ -143,6 +158,10 @@ async function notifyCustomerOfReview(
  * callback/text sender only. Phase 5: an approved order is fed to
  * `provisionOrder`, which stays a strict no-op until the panel + provisioning
  * document are configured, so approvals before Phase 5 wiring remain inert.
+ * Phase 7 additions, both inside the SAME guarded-transaction philosophy:
+ *  - approve → referral payout attempt (exactly-once via referral_rewards);
+ *  - reject  → wallet credit applied to this order is refunded inside the
+ *    reject batch and the customer is told.
  */
 export async function performAdminReview(opts: {
   env: Env;
@@ -157,10 +176,21 @@ export async function performAdminReview(opts: {
   const { db, api, actorId, orderId } = opts;
   if (!isValidOrderId(orderId)) return { ok: false, error: 'invalid_id' };
 
+  const preImage = opts.decision === 'approve' ? null : await getOrderById(db, orderId);
+  const creditIrt = preImage !== null ? walletCreditFromOrder(preImage) : 0;
+
   const result =
     opts.decision === 'approve'
       ? await approveOrderByAdmin(db, orderId, String(actorId))
-      : await rejectOrderByAdmin(db, orderId, String(actorId), opts.reason ?? null);
+      : await rejectOrderByAdmin(
+          db,
+          orderId,
+          String(actorId),
+          opts.reason ?? null,
+          preImage && creditIrt > 0
+            ? { customerId: preImage.customer_id, amountIrt: creditIrt }
+            : undefined,
+        );
 
   if (!result.ok) {
     if (result.error === 'not_found') return { ok: false, error: 'not_found' };
@@ -173,6 +203,9 @@ export async function performAdminReview(opts: {
   // The customer's receipt-waiting conversation is over either way.
   await clearSession(db, order.customer_id);
   await notifyCustomerOfReview(db, api, order, opts.decision, opts.reason ?? null);
+  if (opts.decision === 'reject' && creditIrt > 0) {
+    await notifyWalletRefunded(db, api, order, creditIrt).catch(() => undefined);
+  }
 
   if (opts.decision === 'approve') {
     const provisioning = provisionOrder(
@@ -184,12 +217,30 @@ export async function performAdminReview(opts: {
       }
       return outcome;
     });
+    const payout = payReferrerIfDue(db, api, order, `admin:${String(actorId)}`);
     // Defer past the webhook ACK in production; inline in tests/harnesses.
-    if (opts.waitUntil) opts.waitUntil(provisioning);
-    else await provisioning;
+    if (opts.waitUntil) {
+      opts.waitUntil(provisioning);
+      opts.waitUntil(payout);
+    } else {
+      await Promise.all([provisioning, payout]);
+    }
   }
 
   return { ok: true, order };
+}
+
+/** Second notice on a rejected order that carried wallet credit. */
+async function notifyWalletRefunded(
+  db: D1Database,
+  api: TelegramApiLike,
+  order: OrderRow,
+  creditIrt: number,
+): Promise<void> {
+  const contact = await getCustomerContact(db, order.customer_id);
+  const chatId = Number(contact?.telegram_user_id);
+  if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
+  await api.sendMessage(chatId, fa.notifyWalletRefunded(order.id, formatPrice(creditIrt, 'IRT')));
 }
 
 /**

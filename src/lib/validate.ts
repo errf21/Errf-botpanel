@@ -24,12 +24,24 @@ const ADMIN_CALLBACK_PATTERN = /^adm:(ok|no|skip|rt):[0-9A-HJKMNP-TV-Z]{28}$/;
  */
 const SERVICE_CALLBACK_PATTERN = /^svc:(det|ref|rnw):[0-9A-HJKMNP-TV-Z]{28}$/;
 
+/**
+ * Phase 7: ticket callbacks carry a full ULID ticket id — like `adm:`/`svc:`,
+ * stale buttons can only ever address the ticket they were minted for (the
+ * handler also checks the ticket is still live before acting).
+ */
+const TICKET_CALLBACK_PATTERN = /^tsk:(rp|cl|vw):[0-9A-HJKMNP-TV-Z]{28}$/;
+
+/** Phase 7: announcement job control carries the announcement id (ULID). */
+const ANNOUNCE_CALLBACK_PATTERN = /^ann:(go|ct):[0-9A-HJKMNP-TV-Z]{28}$/;
+
 export function isValidCallbackData(data: unknown): data is string {
   return (
     typeof data === 'string' &&
     (CALLBACK_DATA_PATTERN.test(data) ||
       ADMIN_CALLBACK_PATTERN.test(data) ||
-      SERVICE_CALLBACK_PATTERN.test(data))
+      SERVICE_CALLBACK_PATTERN.test(data) ||
+      TICKET_CALLBACK_PATTERN.test(data) ||
+      ANNOUNCE_CALLBACK_PATTERN.test(data))
   );
 }
 
@@ -65,6 +77,38 @@ export function parseServiceCallback(data: string): ServiceCallback | null {
   return { action, orderId };
 }
 
+export type TicketAction = 'rp' | 'cl' | 'vw';
+
+export interface TicketCallback {
+  action: TicketAction;
+  ticketId: string;
+}
+
+/** Parses ONLY data that already matched TICKET_CALLBACK_PATTERN (Phase 7). */
+export function parseTicketCallback(data: string): TicketCallback | null {
+  if (!TICKET_CALLBACK_PATTERN.test(data)) return null;
+  const [, action, ticketId] = /^tsk:(\w+):(.+)$/.exec(data) ?? [];
+  if (!ticketId || !ORDER_ID_PATTERN.test(ticketId)) return null;
+  if (action !== 'rp' && action !== 'cl' && action !== 'vw') return null;
+  return { action, ticketId };
+}
+
+export type AnnounceAction = 'go' | 'ct';
+
+export interface AnnounceCallback {
+  action: AnnounceAction;
+  announcementId: string;
+}
+
+/** Parses ONLY data that already matched ANNOUNCE_CALLBACK_PATTERN (Phase 7). */
+export function parseAnnounceCallback(data: string): AnnounceCallback | null {
+  if (!ANNOUNCE_CALLBACK_PATTERN.test(data)) return null;
+  const [, action, id] = /^ann:(\w+):(.+)$/.exec(data) ?? [];
+  if (!id || !ORDER_ID_PATTERN.test(id)) return null;
+  if (action !== 'go' && action !== 'ct') return null;
+  return { action, announcementId: id };
+}
+
 export function isValidOrderId(value: unknown): value is string {
   return typeof value === 'string' && ORDER_ID_PATTERN.test(value);
 }
@@ -90,6 +134,26 @@ export function sanitizeRejectionReason(raw: unknown): string | null {
   const text = raw.trim().replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
   if (text.length === 0 || text.length > 200) return null;
   return text;
+}
+
+/** Support message body (customer or admin): newlines kept, caps enforced. */
+export function sanitizeSupportBody(raw: unknown, max = 2000): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .trim();
+  if (text.length === 0 || text.length > max) return null;
+  return text;
+}
+
+/** Admin grant/debit argument: "+ <digits>" / "- <digits>" style amounts, IRT. */
+export function parseWalletAmount(raw: string): { sign: 1 | -1; amount: number } | null {
+  const match = /^([+-]?)[\s]*([0-9\u06F0-\u06F9\u0660-\u0669]{1,13})$/.exec(raw.trim());
+  if (!match) return null;
+  const amount = parsePositiveInt(match[2] ?? '');
+  if (amount === null || amount <= 0) return null;
+  return { sign: match[1] === '-' ? -1 : 1, amount };
 }
 
 export interface ReceiptMedia {

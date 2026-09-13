@@ -86,7 +86,7 @@ const sentTo = (chatId: number) => stub.sent.filter((s) => Number(s.payload['cha
 async function purchase(user: typeof USER = USER): Promise<string> {
   await dispatch(messageUpdateAs(user, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), user));
-  await dispatch(messageUpdateAs(user, `cfg-${nextId()}`, nextId()));
+  await dispatch(messageUpdateAs(user, `north valley signal`, nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), user));
   await dispatch(callbackUpdateAs('dur:30', nextId(), user));
   await dispatch(callbackUpdateAs('dev:3', nextId(), user));
@@ -399,7 +399,7 @@ test('text/notice behavior while waiting for receipt stays safe', async () => {
   const newOrderIdBefore = sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get()['n'];
   await dispatch(messageUpdateAs(USER, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), USER));
-  await dispatch(messageUpdateAs(USER, 'mid-flow', nextId())); // WAITING_VOLUME now
+  await dispatch(messageUpdateAs(USER, 'mid flow alpha', nextId())); // WAITING_VOLUME now
   stub.reset();
   await dispatch(mediaUpdate(nextId(), { kind: 'photo', fileId: 'WRONG_TIME' }));
   assert.ok(sends().some((s) => String(s.text).includes('تصویر یا فایل')));

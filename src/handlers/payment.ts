@@ -58,6 +58,9 @@ export async function sendPaymentInstructions(
     return;
   }
   const { info } = loaded;
+  // Phase 7: an order may carry a wallet credit; the payable line below the
+  // header is the ORDER AMOUNT column (the checkout already stored the
+  // remainder there), so instructions can never quote the pre-credit price.
   const lines = [
     fa.paymentInstructionsHeader,
     fa.paymentHolder(info.holder),

@@ -145,6 +145,18 @@ async function notifyCustomer(
   await notice(chatId, text, deps.api);
 }
 
+/**
+ * Does this failure reason READ LIKE a name/username rejection? The config
+ * name itself is never sent to the panel (username stays the deterministic
+ * prefix+order-id), but the honest customer copy for "rejected because of
+ * the name" is only worth its own text when the evidence points there:
+ * the client's own username_charset guard, or a panel detail mentioning
+ * username/name. Purely a copy decision — zero behavior change.
+ */
+function looksLikeNameRejection(reason: string): boolean {
+  return /username|user name|config[_ -]?name/i.test(reason);
+}
+
 /** Close out a failed attempt: DB transition + customer notice + admin push. */
 async function finalizeFailure(
   deps: ProvisionDeps,
@@ -161,7 +173,11 @@ async function finalizeFailure(
   await notifyCustomer(
     deps,
     result.order,
-    renewal ? fa.renewFailedNotice(result.order.id) : fa.provisionFailedNotice(result.order.id),
+    renewal
+      ? fa.renewFailedNotice(result.order.id)
+      : looksLikeNameRejection(reason)
+      ? fa.provisionNameRejectedNotice(result.order.id)
+      : fa.provisionFailedNotice(result.order.id),
   );
   await notifyAdminsOfFailure(deps, result.order, reason, renewal);
   return { ok: false, error: 'provision_failed' };

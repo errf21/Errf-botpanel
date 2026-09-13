@@ -23,6 +23,11 @@ export type ConversationEvent =
   | 'renew_start'
   | 'renew_duration_chosen'
   | 'renew_confirmed'
+  | 'support_start'
+  | 'support_message_sent'
+  | 'announce_start'
+  | 'announce_draft_saved'
+  | 'announce_confirmed'
   | 'step_back'
   | 'cancel'
   | 'back_to_menu'
@@ -44,6 +49,16 @@ const FORWARD: Partial<
   renew_start: [['IDLE', 'WAITING_RENEWAL_DURATION']],
   renew_duration_chosen: [['WAITING_RENEWAL_DURATION', 'WAITING_RENEWAL_CONFIRMATION']],
   renew_confirmed: [['WAITING_RENEWAL_CONFIRMATION', 'WAITING_PAYMENT_RECEIPT']],
+  // Phase 7 support: a one-message ladder. The ticket itself lives in D1
+  // (open until closed), so after the message is sent the conversation is
+  // IDLE again — follow-up routing keys off the open-ticket lookup, not state.
+  support_start: [['IDLE', 'WAITING_SUPPORT_MESSAGE']],
+  support_message_sent: [['WAITING_SUPPORT_MESSAGE', 'IDLE']],
+  // Phase 7 announcements: admin drafts text, confirms, and a waitUntil job
+  // fans it out. Confirmation exits to IDLE (sending continues in background).
+  announce_start: [['IDLE', 'WAITING_ANNOUNCE_TEXT']],
+  announce_draft_saved: [['WAITING_ANNOUNCE_TEXT', 'WAITING_ANNOUNCE_CONFIRM']],
+  announce_confirmed: [['WAITING_ANNOUNCE_CONFIRM', 'IDLE']],
 };
 
 export function isConversationState(value: string): value is ConversationState {
@@ -95,6 +110,9 @@ const TEXT_ACCEPTING_STATES: readonly ConversationState[] = [
   'WAITING_VOLUME',
   'WAITING_DURATION',
   'WAITING_DEVICE_LIMIT',
+  // Phase 7: support body and announcement text are free-text by design.
+  'WAITING_SUPPORT_MESSAGE',
+  'WAITING_ANNOUNCE_TEXT',
 ];
 
 export function acceptsTextInput(state: ConversationState): boolean {

@@ -46,14 +46,15 @@ test('dispatcher ignores non-update payloads entirely', async () => {
 });
 
 test('phase2 loop: start → buy → name → volume step → replay → back', async () => {
-  // /start registers + presents the 5-section menu
+  // /start registers + presents the main menu (5 sections in P2-P6; P7
+  // added wallet + invite → 7 buttons, one row per pair).
   stub.reset();
   await dispatch(messageUpdate('/start', 11));
   assert.equal(sendCalls().length, 1);
   const kb = sendCalls()[0]?.payload['reply_markup'] as {
     inline_keyboard: { callback_data: string }[][];
   };
-  assert.equal(kb.inline_keyboard.flat().length, 5);
+  assert.equal(kb.inline_keyboard.flat().length, 7);
   const customerCount = () =>
     (sqlite.prepare('SELECT COUNT(*) AS n FROM customers').get() as { n: number }).n;
   assert.equal(customerCount(), 1);
@@ -82,11 +83,11 @@ test('phase2 loop: start → buy → name → volume step → replay → back', 
 
   // valid name → saved into draft AND the real volume step appears (Phase 3)
   stub.reset();
-  await dispatch(messageUpdate('  vpn-main-01  ', 17));
+  await dispatch(messageUpdate('  north valley signal  ', 17));
   const session = currentSession();
   assert.equal(session?.state, 'WAITING_VOLUME');
-  assert.equal(JSON.parse(String(session?.data)).config_name, 'vpn-main-01');
-  assert.ok(String(sendCalls()[0]?.text).includes('vpn-main-01'));
+  assert.equal(JSON.parse(String(session?.data)).config_name, 'north valley signal');
+  assert.ok(String(sendCalls()[0]?.text).includes('north valley signal'));
   const volumeKb = sendCalls()[1]?.payload['reply_markup'] as {
     inline_keyboard: { callback_data: string }[][];
   };
@@ -104,7 +105,7 @@ test('phase2 loop: start → buy → name → volume step → replay → back', 
 
   // webhook replay of update 17: zero new API calls
   stub.reset();
-  await dispatch(messageUpdate('  vpn-main-01  ', 17));
+  await dispatch(messageUpdate('  north valley signal  ', 17));
   assert.equal(stub.sent.length, 0, 'replay suppressed');
 
   // back-to-menu aborts the draft; order tables untouched

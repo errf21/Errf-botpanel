@@ -131,11 +131,19 @@ export function makeD1Shim(db: DatabaseSync) {
   return {
     prepare,
     async batch(statements: ShimStatement[]): Promise<unknown[]> {
-      // Mirrors D1 batch semantics: sequential, stops on first failure.
+      // Mirrors D1 batch semantics: ONE atomic transaction, sequential
+      // execution, stops on first failure and rolls the whole batch back.
       const results: unknown[] = [];
-      for (const statement of statements) {
-        statement.__exec();
-        results.push({ success: true });
+      db.exec('BEGIN');
+      try {
+        for (const statement of statements) {
+          statement.__exec();
+          results.push({ success: true });
+        }
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
       }
       return results;
     },
@@ -151,6 +159,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0004_phase4.sql',
     'migrations/0005_phase5.sql',
     'migrations/0006_phase6.sql',
+    'migrations/0007_phase7.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }
