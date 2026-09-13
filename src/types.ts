@@ -33,6 +33,15 @@ export const ORDER_STATES = [
 
 export type OrderState = (typeof ORDER_STATES)[number];
 
+/**
+ * Phase 9: the two — and only two — once-per-service notices. The
+ * (order_id, kind) composite PK in service_notifications makes a THIRD kind
+ * the only way to ever notify a service again.
+ */
+export const NOTICE_KINDS = ['usage90', 'expiring'] as const;
+
+export type NoticeKind = (typeof NOTICE_KINDS)[number];
+
 /** Conversation state-machine states — must match the migration CHECK list. */
 export const CONVERSATION_STATES = [
   'IDLE',
@@ -115,7 +124,14 @@ export interface TelegramCallbackQuery {
 
 export interface TelegramInlineKeyboardButton {
   text: string;
-  callback_data: string;
+  /** Exactly one of callback_data / url is ever set (menu.ts builders). */
+  callback_data?: string;
+  /**
+   * Phase 9: opens the EXISTING panel subscription page — never invented
+   * URLs: builders accept only values that already passed
+   * resolveSubscriptionUrl (absolute http(s), capped).
+   */
+  url?: string;
 }
 
 export interface TelegramInlineKeyboardMarkup {

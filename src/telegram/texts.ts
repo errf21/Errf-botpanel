@@ -9,9 +9,10 @@
  *    welcomeGreeting) and important standalone customer notifications (see
  *    notifyApproved). NEVER force it into mid-flow prompts, validation
  *    errors, short confirmations, or back-to-back consecutive bubbles.
- *  - Future service notifications (e.g. the 90%-usage and single-expiry
- *    alerts) are OUT OF SCOPE for 8B but MUST open with «درود زیبا، …» and
- *    stay idempotent/non-spammy when they are implemented.
+ *  - The 90%-usage and single-expiry alerts were reserved here in 8B and
+ *    arrived in Phase 9: they open with «درود زیبا، …», stay idempotent
+ *    (one per service, enforced in `service_notifications`), and promise
+ *    nothing the panel contract does not actually guarantee.
  *  - «زیبا/رفیق/داداش» are sparing catchphrases, not filler.
  */
 import { tgCode, tgEscapeHtml } from './format.ts';
@@ -209,8 +210,11 @@ export const fa = {
   paymentReferenceLine: (v: string) => `🧾 مرجع پرداخت: ${v}`,
 
   // ————— Phase 5: automatic provisioning (PasarGuard) —————
+  // Phase 9 (approved UX): the SAME panel link IS the customer's dedicated
+  // service page — the bot only points at it (discovery/presentation), it
+  // never builds a page or promises content the panel doesn't own.
   serviceReady: (id: string, url: string) =>
-    `🎉 سرویس شما ساخته و فعال شد!\n\n🆔 سفارش: ${id}\n🔗 لینک اشتراک:\n${tgCode(url)}\n${fa.copyHint}\n\nاین لینک را در اپلیکیشن خود (v2rayNG / Nekobox / Streisand و…) وارد کنید.`,
+    `🎉 سرویس شما ساخته و فعال شد!\n\n🆔 سفارش: ${id}\n🔗 لینک اشتراک:\n${tgCode(url)}\n${fa.copyHint}\n\nاین لینک را در اپلیکیشن خود (v2rayNG / Nekobox / Streisand و…) وارد کنید.\n\n🌐 همین لینک، صفحه‌ی اختصاصی سرویس توئه؛ هر وقت خواستی لینک و اطلاعات سرویست رو دوباره ببینی، همین‌جاست.`,
   serviceReadyWithoutLink: (id: string) =>
     `🎉 سرویس شما ساخته شد.\n\n🆔 سفارش: ${id}\n\nلینک اتصال فعلاً قابل دریافت نیست؛ به‌زودی از بخش «سرویس‌های من» در دسترس خواهد بود. در صورت عجله با پشتیبانی در ارتباط باشید.`,
   provisionFailedNotice: (id: string) =>
@@ -239,8 +243,8 @@ export const fa = {
   serviceStatusExpiring: '⏳ رو به اتمام',
   serviceStatusExpired: '‼️ منقضی‌شده',
   serviceStatusUnknown: '⚪ نامشخص',
-  servicesEntry: (n: number, shortId: string, status: string, expires: string) =>
-    `${n}. 🆔 ${shortId} — ${status}\n   انقضا: ${expires}`,
+  servicesEntry: (n: number, name: string, shortId: string, status: string, expires: string) =>
+    `${n}. 📦 ${name} — ${status}\n   🆔 ${shortId} — انقضا: ${expires}`,
   serviceNotFound: '🚫 سرویسی با این شناسه ندارید یا در دسترس نیست.',
   serviceBusyFirst: '🛑 ابتدا فرآیند فعلی را کامل کنید یا /cancel بفرستید.',
 
@@ -392,6 +396,28 @@ export const fa = {
   announceStale: '🔄 این اطلاعیه تغییر کرده یا قبلاً کامل ارسال شده است.',
   announceReceived: '📢 اطلاعیه',
   userBlocked: (id: string) => `🎫 تیکت ${id} دیگر فعال نیست؛ ارسال متوقف شد.`,
+
+  // ————— Phase 9: service notifications + subscription-page discovery —————
+  // The 8B rule for these two alerts: they open with «درود زیبا»، they are
+  // once-per-service by construction, «سلام» never appears, copy is plain
+  // text, and NOTHING is promised beyond the panel contract actually holds:
+  // exhausted volume -> the panel puts the service in its own
+  // «محدود (حجم)» state (never a invented «deletion»); duration renewal does
+  // NOT add volume (the Phase 6 decision) — the notice must say so honestly.
+  usageNotice: (name: string, percent: string, remainingGb: string) =>
+    `درود زیبا، 📊 سرویس «${name}» به ${percent}٪ رسید — حدود ${remainingGb} گیگش باقی مونده.\n\nوقتی حجم تموم بشه، پنل سرویس رو در حالت «محدود (حجم)» می‌ذاره؛ تمدیدِ مدت حجم تازه اضافه نمی‌کند، پس اگه حجم بیشتری لازم داری سرویس تازه بخر یا از پشتیبانی راهنما بگیر.`,
+  expiryNotice: (name: string, remaining: string, expiresAt: string) =>
+    `درود زیبا، ⏳ سرویس «${name}» تا انقضا فقط ${remaining} فاصله داره — تاریخ انقضا: ${expiresAt}.\n\nهر وقت خواستی از «📦 سرویس‌های من» تمدیدش کن تا سرویست قطع نشه؛ صفحه‌ی اختصاصی سرویست هم از همین‌جا در دسترسه.`,
+  serviceNoticeView: '👁 مشاهده سرویس',
+  serviceNoticeList: '📦 سرویس‌های من',
+
+  // My Services audit — explicit remaining volume + degraded-usage pointer.
+  svcRemaining: (v: string) => `📥 باقی‌مانده حجم: ${v} گیگ`,
+  svcUsageHintSnapshot: '🔄 برای دیدن مصرف لحظه‌ای، «بروزرسانی وضعیت» را بزن.',
+  // Subscription-page discovery, shown wherever the URL itself is shown.
+  svcPageNote:
+    '🌐 همین لینک، صفحه‌ی اختصاصی سرویسه — اطلاعات اتصال و وضعیت سرویس همین‌جا هست.',
+  svcOpenPage: '🌐 باز کردن صفحه سرویس',
 } as const;
 
 /** Format integer money with Persian thousands + currency word. */

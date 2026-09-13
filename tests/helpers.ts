@@ -161,6 +161,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0006_phase6.sql',
     'migrations/0007_phase7.sql',
     'migrations/0008_phase8c.sql',
+    'migrations/0009_phase9.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }

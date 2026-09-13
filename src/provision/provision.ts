@@ -40,7 +40,7 @@ import {
 import type { OrderRow } from '../db/orders.ts';
 import { getCustomerContact, resolveAdminChatIds } from '../db/customers.ts';
 import { isValidOrderId } from '../lib/validate.ts';
-import { adminProvisionFailedKeyboard } from '../telegram/menu.ts';
+import { adminProvisionFailedKeyboard, serviceReadyKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 
 /** 1 GB = 10^9 bytes on the panel wire (SI). Confirm on first live read. */
@@ -140,11 +140,12 @@ async function notifyCustomer(
   order: OrderRow,
   text: string,
   parseMode?: Parameters<TelegramApiLike['sendMessage']>[3],
+  buttons?: Parameters<TelegramApiLike['sendMessage']>[2],
 ): Promise<void> {
   const contact = await getCustomerContact(deps.db, order.customer_id);
   const chatId = contact ? Number(contact.telegram_user_id) : NaN;
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
-  await notice(chatId, text, deps.api, undefined, parseMode);
+  await notice(chatId, text, deps.api, buttons, parseMode);
 }
 
 /**
@@ -229,7 +230,14 @@ async function finalizeSuccess(
       ? fa.serviceReady(result.order.id, result.order.subscription_url)
       : fa.serviceReadyWithoutLink(result.order.id);
   // Phase 8C: serviceReady carries an inline-code URL → send it as HTML.
-  await notifyCustomer(deps, result.order, text, result.order.subscription_url !== null ? 'HTML' : undefined);
+  // Phase 9: attach the service-page discovery keyboard (panel's own page).
+  await notifyCustomer(
+    deps,
+    result.order,
+    text,
+    result.order.subscription_url !== null ? 'HTML' : undefined,
+    serviceReadyKeyboard(result.order.subscription_url),
+  );
   return { ok: true, order: result.order, attempted: true };
 }
 

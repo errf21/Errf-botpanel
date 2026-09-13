@@ -107,19 +107,50 @@ export function servicesListKeyboard(
 }
 
 /** Service detail: optional renewal + refresh row, service list, menu. */
+/**
+ * The detail keyboard. `serviceUrl` (when present) becomes the FIRST button:
+ * Phase 9 discovery CTA that opens the EXISTING panel subscription page —
+ * the bot builds no page of its own, it only points at the panel's.
+ */
 export function serviceDetailKeyboard(
   orderId: string,
-  opts: { canRenew: boolean },
+  opts: { canRenew: boolean; serviceUrl: string | null },
 ): TelegramInlineKeyboardMarkup {
   const top: TelegramInlineKeyboardButton[] = [];
   if (opts.canRenew) top.push(button('🔁 تمدید سرویس', serviceCallback('rnw', orderId)));
   const rows: TelegramInlineKeyboardButton[][] = [
     ...(top.length > 0 ? [top] : []),
+    ...(opts.serviceUrl !== null ? [[urlButton(fa.svcOpenPage, opts.serviceUrl)]] : []),
     [button('🔄 بروزرسانی وضعیت', serviceCallback('ref', orderId))],
     [button('📦 سرویس‌های من', CB.MENU_SERVICES)],
     [button(fa.backToMenu, CB.ACT_BACK_MENU)],
   ];
   return { inline_keyboard: rows };
+}
+
+/**
+ * Phase 9 notice keyboard: view THIS service (validated `svc:det` tap with a
+ * server-side ownership re-check) + the services list. No URLs here: the
+ * detail view behind the first button carries the service-page CTA.
+ */
+export function serviceNoticeKeyboard(orderId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button(fa.serviceNoticeView, serviceCallback('det', orderId))],
+      [button(fa.serviceNoticeList, CB.MENU_SERVICES)],
+    ],
+  };
+}
+
+/** Phase 9: provisioning-success keyboard — open the panel's service page
+ *  (when the link exists) and the services list. Pure discovery. */
+export function serviceReadyKeyboard(serviceUrl: string | null): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      ...(serviceUrl !== null ? [[urlButton(fa.svcOpenPage, serviceUrl)]] : []),
+      [button(fa.serviceNoticeList, CB.MENU_SERVICES)],
+    ],
+  };
 }
 
 /** Renewal duration: preset buttons only (labels month-aware upstream). */
@@ -184,6 +215,11 @@ export function isKnownCallback(data: string): data is KnownCallback {
 
 function button(text: string, callbackData: string): TelegramInlineKeyboardButton {
   return { text, callback_data: callbackData };
+}
+
+/** Phase 9: opener for the EXISTING panel subscription page (never callback). */
+function urlButton(text: string, url: string): TelegramInlineKeyboardButton {
+  return { text, url };
 }
 
 /* ———— Phase 8A: main menu = a REAL Reply Keyboard (one source of truth) ————

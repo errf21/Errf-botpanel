@@ -82,6 +82,12 @@ export function expiryDisplay(expiresIso: string | null): string {
   return expiresIso === null ? fa.accountNone : digitsFa(expiresIso.slice(0, 10));
 }
 
+/** Phase 9 audit: detail shows expiry date AND TIME (repo displays UTC). */
+export function expiryDateTimeDisplay(expiresIso: string | null): string {
+  if (expiresIso === null) return fa.accountNone;
+  return digitsFa(`${expiresIso.slice(0, 10)} ${expiresIso.slice(11, 16)}`);
+}
+
 function gbDisplay(bytes: number | null): string {
   if (bytes === null) return fa.accountNone;
   return digitsFa(Math.round((bytes / GB_BYTES) * 10) / 10);
@@ -127,10 +133,16 @@ export async function showMyServices(ctx: UpdateContext): Promise<void> {
   rows.forEach((row, index) => {
     const expires = effectiveExpiryIso(row);
     const status = statusLineFor(expires, renewal.nearExpiryDays);
-    lines.push(
-      fa.servicesEntry(index + 1, row.id.slice(0, 10), status, expiryDisplay(expires)),
-    );
     const snapshot = serviceSnapshotData(row);
+    lines.push(
+      fa.servicesEntry(
+        index + 1,
+        snapshot.name ?? row.id.slice(0, 8),
+        row.id.slice(0, 10),
+        status,
+        expiryDisplay(expires),
+      ),
+    );
     entries.push({
       orderId: row.id,
       label: `📦 ${snapshot.name ?? row.id.slice(0, 8)} — ${status}`.slice(0, 60),
@@ -203,18 +215,32 @@ async function renderServiceDetail(
   if (service.service_created_at !== null) {
     lines.push(fa.svcCreated(digitsFa(service.service_created_at.slice(0, 10))));
   }
-  lines.push(fa.svcExpires(expiryDisplay(expiresIso)));
+  lines.push(fa.svcExpires(expiryDateTimeDisplay(expiresIso)));
   if (expiresIso !== null) {
     const left = Math.ceil((Date.parse(expiresIso) - Date.now()) / DAY_MS);
     lines.push(left > 0 ? fa.svcDaysLeft(left) : fa.svcExpiredDaysAgo(Math.max(0, -left)));
   }
   if (panelUser !== null) {
     lines.push(fa.svcUsage(gbDisplay(panelUser.usedTraffic), gbDisplay(panelUser.dataLimit)));
+    // Phase 9 audit: remaining volume, explicit (panel bytes, display GB).
+    if (panelUser.usedTraffic !== null && panelUser.dataLimit !== null) {
+      lines.push(
+        fa.svcRemaining(
+          digitsFa(Math.max(0, Math.round(((panelUser.dataLimit - panelUser.usedTraffic) / GB_BYTES) * 10) / 10)),
+        ),
+      );
+    }
+  } else if (service.pasarguard_username !== null) {
+    // Degraded path (snapshot render): point at the live-refresh affordance
+    // instead of silently dropping the usage lines.
+    lines.push(fa.svcUsageHintSnapshot);
   }
   if (service.subscription_url !== null) {
     // Phase 8C: show the subscription URL as tap-to-copy inline code. The
     // value is panel-sourced, so HTML-escaping is also a correctness win.
+    // Phase 9: name the panel page it opens (discovery only — no new page).
     lines.push(fa.svcLinkCode(service.subscription_url));
+    lines.push(fa.svcPageNote);
   }
   if (active !== null) {
     lines.push(fa.svcPendingRenewal(active.id.slice(0, 10)));
@@ -228,6 +254,7 @@ async function renderServiceDetail(
     text: lines.join('\n'),
     keyboard: serviceDetailKeyboard(service.id, {
       canRenew: renewal.enabled && active === null,
+      serviceUrl: service.subscription_url,
     }),
     live: panelUser !== null,
     parseMode: asHtml ? 'HTML' : undefined,

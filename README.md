@@ -16,7 +16,8 @@ migrations/0004_phase4.sql  payment_info seed + admin_actions table
 migrations/0005_phase5.sql  provision_attempts/subscription_url + provisioning doc seed
 migrations/0006_phase6.sql  orders.kind/service_expires_at + renewal states & docs
 migrations/0007_phase7.sql  wallet ledger + referrals + support tickets + announcements
-migrations/0008_phase8c.sql payment_reminders claim table (+safe backfill)
+migrations/0008_phase8c.sql  payment_reminders claim table (+safe backfill)
+migrations/0009_phase9.sql   service_notifications claim table (+suppress backfill)
 src/index.ts                Fetch router: /health, /telegram/webhook + 5-min cron (scheduled)
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
 src/dispatch.ts             Update pipeline: dedupe → register (first-start referral probe) → route
@@ -32,13 +33,14 @@ src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce
 src/handlers/messages.ts    Text → state machine; admin intercepts (reject reason, ticket reply, wallet ops)
 src/handlers/payment.ts     Receipt submission, payment instructions, orders/queue views
 src/handlers/provisioning.ts Phase 5 admin queue: /failed + `adm:rt` retry taps
-src/handlers/services.ts    Phase 6 My Services: list + detail (+live panel status)
+src/handlers/services.ts    Phase 6 My Services (Phase 9 audit: remaining vol, expiry time, page CTA)
 src/handlers/renewal.ts     Phase 6 renewal ladder + Phase 7 wallet payment for renewals
 src/handlers/wallet.ts      Phase 7 wallet view, admin grant/debit (arm→amount→guarded apply)
 src/handlers/referrals.ts   Phase 7 invite screen, first-touch capture, payout notices
 src/handlers/support.ts     Phase 7 tickets: open/follow-up/queue/reply/close (admin relay)
 src/handlers/announcements.ts Phase 7 broadcast: draft → confirm → chunked resumable fan-out
 src/handlers/paymentReminders.ts Phase 8C cron sweep: claimed 15/30/45 nudges + one admin digest/run
+src/handlers/serviceNotifications.ts Phase 9 cron sweep: one usage90 + one expiry notice per service (+page-discovery CTAs)
 src/state/machine.ts        Pure conversation state machine (buy + renewal + support + announce ladders)
 src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
 src/catalog/pricing.ts      Pure integer price engine (rates + breakdown snapshot)
@@ -56,6 +58,7 @@ src/db/support.ts           Support tickets: one live per customer (UNIQUE), app
 src/db/announcements.ts     Broadcast jobs: seed-once deliveries, chunk claim/book/settle, stuck sweep
 src/db/admin_actions.ts     Short-lived armed admin prompts (reject / ticket reply / grant / debit)
 src/db/paymentReminders.ts  Phase 8C: one-anchor reminder schedule per order + single-statement stage claims
+src/db/serviceNotifications.ts Phase 9: one usage90 + one expiring row per service; lease claims, sent never written pre-delivery
 src/db/customers.ts         Customers: idempotent upsert, is_admin flag, first-ever probe, admin-chat lookup
 src/db/{states,dedupe}.ts   Conversation sessions (24h TTL) + webhook replay guard
 src/orders/checkout.ts      Draft → priced → durable order: purchase + renewal + wallet plans (full/partial)
@@ -64,7 +67,7 @@ src/lib/security.ts         ULID order IDs, constant-time secret comparison
 src/lib/validate.ts         Payload guards: callbacks (admin+service+ticket+announce+ULID), media, sanitizers
 src/lib/referralPayout.ts   Shared post-approval referral payout (manual + wallet auto-pay paths)
 src/lib/http.ts             Response helpers
-tests/                      node --test: machine, validation, price, e2e phases 2–8C
+tests/                      node --test: machine, validation, price, e2e phases 2–9
 .dev.vars.example           Template for local secrets (copy → .dev.vars)
 ```
 
@@ -310,6 +313,37 @@ configured and rejects requests with a wrong token (401).
   covered identically; orders never entering `awaiting_review` (full-wallet,
   abandoned checkouts) have no anchor by construction → unschedulable.
 
+## Service notifications (Phase 9)
+
+- **Trigger:** the SAME five-minute Cloudflare **Cron** → `scheduled` handler as
+  8C, now running two independent sweeps (each in its own `try/catch`, so one
+  failing never cancels the other). No new trigger, no new infrastructure.
+- **Two notices per service, ever:** `service_notifications` has a composite
+  PK `(order_id, kind)` with `kind ∈ (usage90, expiring)`. The row itself IS
+  the once-per-service/order promise — a second notice is unrepresentable.
+- **Usage (90%):** needs a live panel read (`GET by-username`), so it is
+  strictly bounded — ≤ `USAGE_CHECK_LIMIT` reads/run, ≥
+  `USAGE_BACKOFF_MINUTES` per service, soonest-expiring first. A
+  `data_limit = 0/null` (unlimited) or unknown usage never fires; expired/deleted
+  panel states settle the row `skipped` (out of the set forever).
+- **Expiry (3d OR 2d, never both):** reads only local `service_expires_at`
+  (0006, forward-only), so it works even with the panel down — the single
+  notice fires on the first sweep that finds the service inside ≤3d and the PK
+  makes the 2d line a permanent no-op. Renewal-extended services keep the one
+  already-sent notice (no re-arm) per the agreed scope.
+- **Delivery safety:** `pending → sending (atomic lease claim) → sent` where
+  `sent` is written ONLY after Telegram confirms (same `!== null` signal 8C
+  uses). An overlapping run or replay can't double-claim; a won-then-crashed
+  claim is retried once the 30-min lease goes stale — so the worst case is a
+  single late self-healing duplicate, never a silent loss of an urgent notice.
+  Send failures return to `pending` up to `NOTICE_MAX_ATTEMPTS`, then rest
+  terminal `failed`. Approved/renewal/eligibility shifts are re-checked inside
+  the claim. No admin digest, no amounts — plain text, persona «درود زیبا»
+  opener, no invented cutoff promise.
+- **No new page:** both notices and My Services point at the EXISTING
+  PasarGuard subscription URL (now a tap button + a discovery line); the bot
+  builds no dashboard — presentation only.
+
 ## Roadmap
 
 - **Phase 1**: skeleton, config layer, webhook auth, schema ✅
@@ -321,6 +355,6 @@ configured and rejects requests with a wrong token (401).
 - **Phase 7**: support + referrals + wallet ✅
 - **Phase 8**: bot personality / friendly UX ✅
   - 8A reply keyboard ✅ · 8B persona copy ✅ · 8C payment UX + review reminders ✅
-- Phase 9: security hardening + duplicate prevention + tests
+- **Phase 9**: service notifications (90% usage + single expiry) + My Services audit ✅
 - Phase 10: final Cloudflare deployment + webhook registration
 
