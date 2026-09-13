@@ -1,6 +1,9 @@
 import type {
   TelegramInlineKeyboardButton,
   TelegramInlineKeyboardMarkup,
+  TelegramKeyboardButtonStyle,
+  TelegramReplyKeyboardButton,
+  TelegramReplyKeyboardMarkup,
 } from '../types.ts';
 import { durationLabelFa, fa } from './texts.ts';
 
@@ -50,13 +53,9 @@ export function adminReceiptKeyboard(orderId: string): TelegramInlineKeyboardMar
   };
 }
 
-export function adminRejectPromptKeyboard(orderId: string): TelegramInlineKeyboardMarkup {
-  return {
-    inline_keyboard: [
-      [button('❌ ثبت رد بدون دلیل', adminCallback('skip', orderId))],
-      [button(fa.backToMenu, CB.ACT_CANCEL)],
-    ],
-  };
+/** Phase 8A: the reject-reason prompt is text input → composing-mode buttons. */
+export function adminRejectPromptKeyboard(): TelegramReplyKeyboardMarkup {
+  return composingKeyboard([STEP_SKIP_REJECT_TEXT]);
 }
 
 export function adminQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardMarkup {
@@ -187,17 +186,75 @@ function button(text: string, callbackData: string): TelegramInlineKeyboardButto
   return { text, callback_data: callbackData };
 }
 
-export function mainMenuKeyboard(): TelegramInlineKeyboardMarkup {
-  return {
-    inline_keyboard: [
-      [button('🛒 خرید سرویس', CB.MENU_BUY), button('📦 سرویس‌های من', CB.MENU_SERVICES)],
-      [button('💳 سفارش‌های من', CB.MENU_ORDERS), button('👤 حساب کاربری', CB.MENU_ACCOUNT)],
-      [button('💰 کیف پول', CB.MENU_WALLET), button('🤝 دعوت از دوستان', CB.MENU_INVITE)],
-      [button('🆘 پشتیبانی', CB.MENU_SUPPORT)],
-    ],
-  };
+/* ———— Phase 8A: main menu = a REAL Reply Keyboard (one source of truth) ————
+ * Reply-keyboard taps arrive as ordinary text messages, so `MAIN_MENU_ENTRIES`
+ * doubles as the exact-match routing table (`menuCallbackForText`) feeding the
+ * SAME callback vocabulary the inline buttons historically used. Labels must
+ * stay byte-identical to the button text: Telegram echoes them verbatim.
+ * Exactly three entries carry a style (primary/primary/success); the rest are
+ * rendered by Telegram in the default/basic appearance.
+ */
+export const MAIN_MENU_ENTRIES: ReadonlyArray<{
+  label: string;
+  callback: KnownCallback;
+  style?: TelegramKeyboardButtonStyle;
+}> = [
+  { label: '🛒 خرید سرویس', callback: CB.MENU_BUY, style: 'primary' },
+  { label: '📦 سرویس‌های من', callback: CB.MENU_SERVICES, style: 'primary' },
+  { label: '💳 سفارش‌های من', callback: CB.MENU_ORDERS },
+  { label: '👤 حساب کاربری', callback: CB.MENU_ACCOUNT },
+  { label: '💰 کیف پول', callback: CB.MENU_WALLET, style: 'success' },
+  { label: '🤝 دعوت از دوستان', callback: CB.MENU_INVITE },
+  { label: '🆘 پشتیبانی', callback: CB.MENU_SUPPORT },
+];
+
+/** Composing-mode control texts (reply buttons whose press sends text). */
+export const STEP_BACK_TEXT = fa.backToMenu;
+export const STEP_AUTO_TEXT = '🎲 انتخاب خودکار';
+export const STEP_SKIP_REJECT_TEXT = '❌ ثبت رد بدون دلیل';
+
+function replyButton(text: string, style?: TelegramKeyboardButtonStyle): TelegramReplyKeyboardButton {
+  return style === undefined ? { text } : { text, style };
 }
 
+function replyKeyboard(
+  rows: TelegramReplyKeyboardButton[][],
+): TelegramReplyKeyboardMarkup {
+  return { keyboard: rows, resize_keyboard: true, is_persistent: true };
+}
+
+/** The persistent bottom main menu (4 rows: 2/2/2/1, RTL-paired like before). */
+export function mainMenuKeyboard(): TelegramReplyKeyboardMarkup {
+  const buttons = MAIN_MENU_ENTRIES.map((entry) =>
+    replyButton(entry.label, entry.style),
+  );
+  const rows: TelegramReplyKeyboardButton[][] = [];
+  for (let i = 0; i < buttons.length; i += 2) {
+    rows.push(buttons.slice(i, i + 2));
+  }
+  return replyKeyboard(rows);
+}
+
+/** Exact-match routing of a reply-button press to the callback vocabulary. */
+export function menuCallbackForText(text: string): KnownCallback | null {
+  const entry = MAIN_MENU_ENTRIES.find((candidate) => candidate.label === text);
+  return entry?.callback ?? null;
+}
+
+/**
+ * Composing mode: replaces the main keyboard while the bot awaits free text.
+ * Rows `[⬆ extras…]` (optional) then the always-present back row; pressing any
+ * of these lands in the exact-match interceptions of `handleText`.
+ */
+export function composingKeyboard(extras: string[] = []): TelegramReplyKeyboardMarkup {
+  const rows: TelegramReplyKeyboardButton[][] = [
+    ...extras.map((text) => [replyButton(text)]),
+    [replyButton(STEP_BACK_TEXT)],
+  ];
+  return replyKeyboard(rows);
+}
+
+/** Inline single back button — kept for mid-flow messages (not the main menu). */
 export function backToMenuKeyboard(): TelegramInlineKeyboardMarkup {
   return { inline_keyboard: [[button(fa.backToMenu, CB.ACT_BACK_MENU)]] };
 }
@@ -328,12 +385,7 @@ export function walletPayKeyboard(partialAvailable: boolean): TelegramInlineKeyb
   return { inline_keyboard: rows };
 }
 
-/** The config-name step: [🎲 انتخاب خودکار] directly below the prompt. */
-export function configNameKeyboard(): TelegramInlineKeyboardMarkup {
-  return {
-    inline_keyboard: [
-      [button('🎲 انتخاب خودکار', CB.CONFIG_AUTO)],
-      [button(fa.backToMenu, CB.ACT_BACK_MENU)],
-    ],
-  };
+/** Phase 8A: the config-name step is free text → composing mode with auto-pick. */
+export function configNameKeyboard(): TelegramReplyKeyboardMarkup {
+  return composingKeyboard([STEP_AUTO_TEXT]);
 }

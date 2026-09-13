@@ -27,7 +27,7 @@ import { payReferrerIfDue } from '../lib/referralPayout.ts';
 import { provisionOrder } from '../provision/provision.ts';
 import { newOrderId } from '../lib/security.ts';
 import { checkoutOrder, planWalletPayment, walletCreditFromSnapshot, type WalletPlan } from '../orders/checkout.ts';
-import { CB, deviceKeyboard, durationKeyboard, volumeKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard, configNameKeyboard } from '../telegram/menu.ts';
+import { CB, deviceKeyboard, durationKeyboard, volumeKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard, configNameKeyboard, mainMenuKeyboard } from '../telegram/menu.ts';
 import { fa, formatPrice } from '../telegram/texts.ts';
 import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
@@ -143,7 +143,8 @@ export async function sendSummary(
 ): Promise<void> {
   const price = extractDraft(session);
   if (!price) {
-    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, backToMenuKeyboard());
+    // Phase 8A: unrecoverable draft → land on the menu and restore the keyboard.
+    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, mainMenuKeyboard());
     return;
   }
   const computed = calculatePrice(catalog.pricing, price);
@@ -260,7 +261,7 @@ export async function confirmPurchase(
     await ctx.api.sendMessage(
       ctx.chatId,
       fa.walletPaidOrderCreated(result.order.id, formatPrice(wallet.creditIrt, 'IRT')),
-      backToMenuKeyboard(),
+      mainMenuKeyboard(),
     );
     await afterOrderApproved(result.order, ctx);
     return;
@@ -337,10 +338,10 @@ export async function confirmPurchase(
         formatPrice(wallet.creditIrt, 'IRT'),
         formatPrice(result.order.amount, result.order.currency),
       ),
-      backToMenuKeyboard(),
+      mainMenuKeyboard(),
     );
   } else {
-    await ctx.api.sendMessage(ctx.chatId, fa.orderCreated(result.order.id), backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.orderCreated(result.order.id), mainMenuKeyboard());
   }
   await sendPaymentInstructions(ctx, result.order);
 }
@@ -365,7 +366,7 @@ export async function confirmPurchaseWithWallet(
   }
   const draft = extractDraft(session);
   if (!draft || session.state !== 'WAITING_ORDER_CONFIRMATION') {
-    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.missingDraftData, mainMenuKeyboard());
     return;
   }
   const computed = calculatePrice(catalog.pricing, draft);

@@ -47,14 +47,16 @@ test('dispatcher ignores non-update payloads entirely', async () => {
 
 test('phase2 loop: start → buy → name → volume step → replay → back', async () => {
   // /start registers + presents the main menu (5 sections in P2-P6; P7
-  // added wallet + invite → 7 buttons, one row per pair).
+  // added wallet + invite → 7 buttons). Phase 8A: it is a REAL Reply Keyboard.
   stub.reset();
   await dispatch(messageUpdate('/start', 11));
   assert.equal(sendCalls().length, 1);
   const kb = sendCalls()[0]?.payload['reply_markup'] as {
-    inline_keyboard: { callback_data: string }[][];
+    keyboard: { text: string }[][];
+    resize_keyboard?: boolean;
   };
-  assert.equal(kb.inline_keyboard.flat().length, 7);
+  assert.equal(kb.keyboard.flat().length, 7);
+  assert.equal(kb.resize_keyboard, true);
   const customerCount = () =>
     (sqlite.prepare('SELECT COUNT(*) AS n FROM customers').get() as { n: number }).n;
   assert.equal(customerCount(), 1);
@@ -117,9 +119,10 @@ test('phase2 loop: start → buy → name → volume step → replay → back', 
     0,
   );
 
-  // account works for the registered customer
+  // account works for the registered customer. Phase 8A: the unified menu
+  // action SENDS the card even for a legacy inline `menu:account` tap.
   stub.reset();
   await dispatch(callbackUpdate('menu:account', 20));
-  const account = stub.sent.find((s) => s.method === 'editMessageText');
+  const account = sendCalls().find((s) => String(s.text).includes('👤 اطلاعات حساب'));
   assert.ok(account && String(account.payload['text']).includes('ali_dev'));
 });

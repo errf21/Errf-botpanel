@@ -26,6 +26,8 @@ import {
   adminTicketKeyboard,
   adminTicketPushKeyboard,
   backToMenuKeyboard,
+  composingKeyboard,
+  mainMenuKeyboard,
   ticketAcknowledgedKeyboard,
 } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
@@ -54,15 +56,17 @@ async function notifyAdmins(
 /** `menu:support` — intro (or reminder of the live ticket). */
 export async function openSupportEntry(ctx: UpdateContext, session: Session): Promise<void> {
   if (session.state === 'WAITING_SUPPORT_MESSAGE') {
-    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, backToMenuKeyboard());
+    // Still composing: keep the main keyboard hidden behind the back button.
+    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, composingKeyboard());
     return;
   }
   const live = await findLiveTicket(ctx.db, ctx.customerId);
   if (live) {
+    // IDLE with a live ticket: follow-ups are ordinary text, menu stays up.
     await ctx.api.sendMessage(
       ctx.chatId,
       `${fa.supportTicketExists(live.id)}\n\n${fa.supportQueueChoice}`,
-      backToMenuKeyboard(),
+      mainMenuKeyboard(),
     );
     return;
   }
@@ -72,7 +76,8 @@ export async function openSupportEntry(ctx: UpdateContext, session: Session): Pr
     return;
   }
   await setSession(ctx.db, ctx.customerId, next, session.data);
-  await ctx.api.sendMessage(ctx.chatId, fa.supportIntro, backToMenuKeyboard());
+  // Phase 8A: free-text composing — swap the bottom keyboard for [back].
+  await ctx.api.sendMessage(ctx.chatId, fa.supportIntro, composingKeyboard());
 }
 
 /** First text of a new ticket (or plain follow-up when a ticket is open). */
@@ -84,7 +89,7 @@ export async function submitSupportText(
   const trimmed = body.trim();
   if (trimmed.length === 0) {
     if (session) await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, mainMenuKeyboard());
     return;
   }
   const clipped = trimmed.slice(0, SUPPORT_BODY_MAX);
@@ -102,7 +107,8 @@ export async function submitSupportText(
       adminTicketPushKeyboard(live.id),
     );
     if (session) await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.supportTicketCreated(live.id), ticketAcknowledgedKeyboard());
+    // Conversation is IDLE again: restore the main menu keyboard.
+    await ctx.api.sendMessage(ctx.chatId, fa.supportTicketCreated(live.id), mainMenuKeyboard());
     return;
   }
   if (session && session.state !== 'WAITING_SUPPORT_MESSAGE') return; // never from elsewhere
@@ -128,12 +134,12 @@ export async function submitSupportText(
       await ctx.api.sendMessage(
         ctx.chatId,
         fa.supportTicketCreated(existing.id),
-        ticketAcknowledgedKeyboard(),
+        mainMenuKeyboard(),
       );
       return;
     }
     if (session) await clearSession(ctx.db, ctx.customerId);
-    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, mainMenuKeyboard());
     return;
   }
   if (session) await clearSession(ctx.db, ctx.customerId);
@@ -145,10 +151,11 @@ export async function submitSupportText(
     )}\n\n${clipped.slice(0, SUPPORT_BODY_MAX)}`,
     adminTicketPushKeyboard(outcome.ticket.id),
   );
+  // Ticket created, conversation IDLE: restore the main menu keyboard.
   await ctx.api.sendMessage(
     ctx.chatId,
     fa.supportTicketCreated(outcome.ticket.id),
-    ticketAcknowledgedKeyboard(),
+    mainMenuKeyboard(),
   );
 }
 
@@ -263,7 +270,8 @@ export async function armTicketReply(
   }
   await setPendingAdminTicketReply(ctx.db, ctx.actor.id, ticketId);
   await ctx.api.answerCallbackQuery(callbackQueryId);
-  await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt, backToMenuKeyboard());
+  // Phase 8A: admin now composes free text — hide the main keyboard.
+  await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt, composingKeyboard());
   void messageChatId;
   void messageId;
 }

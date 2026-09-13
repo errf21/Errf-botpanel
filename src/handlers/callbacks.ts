@@ -10,16 +10,13 @@ import {
 import {
   CB,
   adminRejectPromptKeyboard,
-  configNameKeyboard,
   isKnownCallback,
   mainMenuKeyboard,
-  backToMenuKeyboard,
   routeCallback,
 } from '../telegram/menu.ts';
 import { randomConfigName } from '../lib/configName.ts';
 import { fa } from '../telegram/texts.ts';
-import { getCustomer } from '../db/customers.ts';
-import { getSession, setSession } from '../db/states.ts';
+import { getSession } from '../db/states.ts';
 import {
   clearPendingAdminAction,
   getPendingAdminAction,
@@ -27,16 +24,14 @@ import {
 } from '../db/admin_actions.ts';
 import { performAdminReview, retireAdminMessage, type ReviewResult } from '../admin.ts';
 import { answerProvisionRetry, handleProvisionRetry } from './provisioning.ts';
-import { isBusy, reduce } from '../state/machine.ts';
+import { isBusy } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
-import { showMyOrders } from './payment.ts';
-import { refreshOwnedService, showMyServices, viewOwnedService } from './services.ts';
+import { refreshOwnedService, viewOwnedService } from './services.ts';
 import {
   applyRenewalDuration,
   confirmRenewal,
   confirmRenewalWithWallet,
   renewalGoBack,
-  resumeRenewal,
   startRenewal,
 } from './renewal.ts';
 import {
@@ -46,16 +41,11 @@ import {
   confirmPurchaseWithWallet,
   continueWithConfigName,
   goBack,
-  sendSummary,
-  stepView,
 } from './purchase.ts';
-
-import { showMyWallet } from './wallet.ts';
-import { showInvite } from './referrals.ts';
+import { isMenuShortcut, runMainMenuAction } from './menuActions.ts';
 import {
   armTicketReply,
   closeTicket,
-  openSupportEntry,
   showTicketQueue,
   viewTicket,
 } from './support.ts';
@@ -152,7 +142,9 @@ export async function handleCallback(
   const replyToMenu = async (text: string): Promise<void> => {
     await ctx.api.answerCallbackQuery(callbackQueryId);
     if (messageChatId !== null && messageId !== null && messageChatId === ctx.chatId) {
-      await ctx.api.editMessageText(messageChatId, messageId, text, mainMenuKeyboard());
+      // Phase 8A: the main menu lives in the chat's persistent Reply Keyboard;
+      // an inline tap must only clear its own legacy buttons (empty keyboard).
+      await ctx.api.editMessageText(messageChatId, messageId, text, { inline_keyboard: [] });
     } else {
       await ctx.api.sendMessage(ctx.chatId, text, mainMenuKeyboard());
     }
@@ -204,6 +196,15 @@ export async function handleCallback(
     return;
   }
 
+  // Phase 8A: main-menu shortcuts answer identically from either transport —
+  // legacy inline `menu:*` taps land here, keyboard-text taps are mapped to
+  // the same callback value by `handleText`. No logic lives in this branch.
+  if (isMenuShortcut(route.callback)) {
+    await ctx.api.answerCallbackQuery(callbackQueryId);
+    await runMainMenuAction(ctx, session, route.callback);
+    return;
+  }
+
   // ———— static vocabulary ————
   switch (route.callback) {
     case CB.ACT_CANCEL:
@@ -222,43 +223,6 @@ export async function handleCallback(
       }
       await ctx.api.answerCallbackQuery(callbackQueryId);
       await cancelToMenu(ctx); // clears session, sends menu
-      return;
-    }
-
-    case CB.MENU_BUY: {
-      await ctx.api.answerCallbackQuery(callbackQueryId);
-      if (session.state === 'WAITING_CONFIG_NAME') {
-        await ctx.api.sendMessage(ctx.chatId, fa.buyWaitingConfigName, configNameKeyboard());
-        return;
-      }
-      if (isBusy(session.state)) {
-        // Re-entering an active flow: redraw the CURRENT step (state preserved).
-        const loaded = await loadCatalog(ctx.db);
-        if (!loaded.ok) {
-          await ctx.api.sendMessage(ctx.chatId, fa.catalogUnavailable, backToMenuKeyboard());
-          return;
-        }
-        if (session.state === 'WAITING_ORDER_CONFIRMATION') {
-          await sendSummary(ctx, session, loaded.catalog);
-        } else if (session.state === 'WAITING_PAYMENT_RECEIPT') {
-          await ctx.api.sendMessage(ctx.chatId, fa.paymentWaitNotice, backToMenuKeyboard());
-        } else if (
-          session.state === 'WAITING_RENEWAL_DURATION' ||
-          session.state === 'WAITING_RENEWAL_CONFIRMATION'
-        ) {
-          await resumeRenewal(ctx, session, loaded.catalog);
-        } else {
-          const view = stepView(session.state, loaded.catalog);
-          if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
-        }
-        return;
-      }
-      const afterBuy = reduce(session.state, 'buy'); // IDLE → BUYING
-      if (afterBuy !== 'BUYING') return;
-      await setSession(ctx.db, ctx.customerId, 'BUYING', session.data);
-      await ctx.api.sendMessage(ctx.chatId, fa.buyIntro, configNameKeyboard());
-      // The config-name step is where text capture begins.
-      await setSession(ctx.db, ctx.customerId, reduce('BUYING', 'name_prompt_shown'), session.data);
       return;
     }
 
@@ -300,32 +264,6 @@ export async function handleCallback(
       return;
     }
 
-    case CB.MENU_SERVICES: {
-      // Phase 6: was a "coming soon" stub before.
-      await ctx.api.answerCallbackQuery(callbackQueryId);
-      await showMyServices(ctx);
-      return;
-    }
-    case CB.MENU_ORDERS: {
-      await ctx.api.answerCallbackQuery(callbackQueryId);
-      await showMyOrders(ctx);
-      return;
-    }
-    case CB.MENU_SUPPORT:
-      await ctx.api.answerCallbackQuery(callbackQueryId);
-      await openSupportEntry(ctx, session);
-      return;
-
-    case CB.MENU_WALLET: {
-      await ctx.api.answerCallbackQuery(callbackQueryId);
-      await showMyWallet(ctx);
-      return;
-    }
-    case CB.MENU_INVITE: {
-      await ctx.api.answerCallbackQuery(callbackQueryId);
-      await showInvite(ctx);
-      return;
-    }
     case CB.MENU_TICKETS: {
       await ctx.api.answerCallbackQuery(callbackQueryId);
       if (!ctx.isAdmin) {
@@ -380,19 +318,6 @@ export async function handleCallback(
       );
       return;
     }
-
-    case CB.MENU_ACCOUNT: {
-      const record = await getCustomer(ctx.db, ctx.actor.id);
-      const lines = [
-        fa.accountHeader,
-        fa.accountUsername(record?.telegram_username ?? fa.accountNone),
-        fa.accountLanguage(record?.language_code ?? fa.accountNone),
-        record ? fa.accountSince(record.created_at.slice(0, 10)) : '',
-        isBusy(session.state) ? fa.accountStatusBusy : fa.accountStatusIdle,
-      ].filter(Boolean);
-      await replyToMenu(lines.join('\n'));
-      return;
-    }
   }
 }
 
@@ -442,7 +367,7 @@ async function handleAdminCallback(
     await ctx.api.sendMessage(
       ctx.chatId,
       fa.adminRejectPromptMsg,
-      adminRejectPromptKeyboard(orderId),
+      adminRejectPromptKeyboard(),
     );
     return;
   }

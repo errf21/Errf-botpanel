@@ -9,7 +9,7 @@ import type { UpdateContext } from '../types.ts';
 import { getBalance, listWalletEntries, type WalletEntryRow } from '../db/wallet.ts';
 import { loadWalletConfig, type WalletConfig } from '../catalog/wallet.ts';
 import { getCustomer } from '../db/customers.ts';
-import { backToMenuKeyboard } from '../telegram/menu.ts';
+import { backToMenuKeyboard, composingKeyboard } from '../telegram/menu.ts';
 import { digitsFa, fa, formatPrice } from '../telegram/texts.ts';
 import { parseCommand, parseWalletAmount } from '../lib/validate.ts';
 import { applyWalletMutation } from '../db/wallet.ts';
@@ -118,9 +118,11 @@ export async function handleWalletAdminCommand(
   if (amount === null || amount.sign !== 1) {
     // arm via text interception if no valid amount given inline
     await setPendingAdminWalletAction(ctx.db, ctx.actor.id, grant ? 'wallet_grant' : 'wallet_debit', targetTg);
+    // Phase 8A: admin now types the amount as free text — hide the main keyboard.
     await ctx.api.sendMessage(
       ctx.chatId,
       `${fa.walletPromptAmount(grant ? 'افزودن' : 'کسر')}\n${fa.walletTargetUser(`@${record.telegram_username ?? record.telegram_user_id}`)}`,
+      composingKeyboard(),
     );
     return 'handled';
   }

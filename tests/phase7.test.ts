@@ -163,11 +163,12 @@ test('main menu grew wallet + invite rows (P7)', async () => {
   stub.reset();
   await dispatch(messageUpdateAs(USER, '/start', nextId()));
   const menu = sentTo(USER.id).find((s) => s.method === 'sendMessage');
-  const kb = menu?.payload['reply_markup'] as { inline_keyboard: { callback_data: string }[][] };
-  const data = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(data.includes('menu:wallet'));
-  assert.ok(data.includes('menu:invite'));
-  assert.ok(data.includes('menu:support'));
+  // Phase 8A: the main menu is a Reply Keyboard — buttons carry text, not data.
+  const kb = menu?.payload['reply_markup'] as { keyboard: { text: string }[][] };
+  const labels = kb.keyboard.flat().map((b) => b.text);
+  assert.ok(labels.includes('💰 کیف پول'));
+  assert.ok(labels.includes('🤝 دعوت از دوستان'));
+  assert.ok(labels.includes('🆘 پشتیبانی'));
 });
 
 // ————————————————————————— wallet admin ops —————————————————————————

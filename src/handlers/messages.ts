@@ -5,16 +5,26 @@ import {
   sanitizeSupportBody,
   type ReceiptMedia,
 } from '../lib/validate.ts';
-import { backToMenuKeyboard, mainMenuKeyboard, configNameKeyboard } from '../telegram/menu.ts';
+import {
+  adminRejectPromptKeyboard,
+  backToMenuKeyboard,
+  composingKeyboard,
+  mainMenuKeyboard,
+  configNameKeyboard,
+  menuCallbackForText,
+  STEP_AUTO_TEXT,
+  STEP_BACK_TEXT,
+  STEP_SKIP_REJECT_TEXT,
+} from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
-import { validateConfigName } from '../lib/configName.ts';
+import { randomConfigName, validateConfigName } from '../lib/configName.ts';
 import { getSession } from '../db/states.ts';
 import {
   clearPendingAdminAction,
   getPendingAdminAction,
 } from '../db/admin_actions.ts';
 import { performAdminReview } from '../admin.ts';
-import { acceptsTextInput } from '../state/machine.ts';
+import { acceptsTextInput, isBusy } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { submitReceipt } from './payment.ts';
 import { resumeRenewal } from './renewal.ts';
@@ -22,6 +32,8 @@ import { deliverTicketReply, submitSupportText } from './support.ts';
 import { saveAnnounceDraft } from './announcements.ts';
 import { completeArmedWalletAction } from './wallet.ts';
 import { findLiveTicket } from '../db/support.ts';
+import { cancelToMenu } from './commands.ts';
+import { runMainMenuAction } from './menuActions.ts';
 import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
@@ -31,11 +43,15 @@ import {
 
 /**
  * Plain-text messages, routed through the state machine.
+ * Phase 8A: Reply Keyboard taps arrive as ordinary text. The exact-match
+ * interceptions below cover ONLY labels the keyboard can currently display
+ * (main-menu entries while IDLE, back/auto on composing prompts, skip on a
+ * live reject arming); every other input flows exactly as before.
  * Accepted where `acceptsTextInput(state)`:
  *  - WAITING_CONFIG_NAME   → sanitized free-text name
  *  - WAITING_VOLUME / …    → a custom numeric ("دلخواه") value for that step
  *  - WAITING_SUPPORT_MESSAGE / WAITING_ANNOUNCE_TEXT → Phase 7 bodies
- * Phase 4 additions (checked FIRST, they intercept an otherwise-valid flow):
+ * Phase 4 additions (checked after the Phase 8A keyboard interceptions):
  *  - admin with a pending "reject" action → the text IS the rejection reason
  *  - Phase 7: pending support_reply / wallet_grant / wallet_debit likewise
  *  - photo/document while WAITING_PAYMENT_RECEIPT → receipt (dispatch routes
@@ -43,13 +59,59 @@ import {
  * Everything else is politely ignored (state preserved).
  */
 export async function handleText(ctx: UpdateContext, text: string): Promise<void> {
+  // ———— Phase 8A: keyboard back button — mirrors `act:back_menu` exactly.
+  // Clears a live admin arming first, then any busy flow; restores the menu.
+  if (text === STEP_BACK_TEXT) {
+    await handleBackToMenuText(ctx);
+    return;
+  }
+
+  const session = await getSession(ctx.db, ctx.customerId);
+
+  // Keyboard auto-pick: meaningful ONLY while the name is being asked for
+  // (identical state gate as the `cfg:auto` callback tap).
+  if (text === STEP_AUTO_TEXT && session.state === 'WAITING_CONFIG_NAME') {
+    await continueWithConfigName(ctx, session, randomConfigName());
+    return;
+  }
+
+  // Main-menu shortcuts: exact labels, ONLY from IDLE — any busy state keeps
+  // its existing safe text handling (validators/steps), never menu actions.
+  const shortcut = menuCallbackForText(text);
+  if (shortcut !== null && session.state === 'IDLE') {
+    await runMainMenuAction(ctx, session, shortcut);
+    return;
+  }
+
   if (ctx.isAdmin) {
     const pending = await getPendingAdminAction(ctx.db, ctx.actor.id);
     if (pending) {
+      if (
+        pending.action === 'reject' &&
+        pending.order_id !== null &&
+        text === STEP_SKIP_REJECT_TEXT
+      ) {
+        // Keyboard skip = the legacy `adm:skip:` tap (same guard, same effect).
+        await clearPendingAdminAction(ctx.db, ctx.actor.id);
+        const result = await performAdminReview({
+          env: ctx.env,
+          db: ctx.db,
+          api: ctx.api,
+          actorId: ctx.actor.id,
+          orderId: pending.order_id,
+          decision: 'reject',
+          reason: fa.adminRejectDefaultReason,
+        });
+        await ctx.api.sendMessage(
+          ctx.chatId,
+          result.ok ? fa.adminRejectedToast : fa.adminStaleToast,
+        );
+        return;
+      }
       if (pending.action === 'support_reply' && pending.target_id) {
         const body = sanitizeSupportBody(text);
         if (body === null) {
-          await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt);
+          await ctx.api.sendMessage(ctx.chatId, fa.adminTicketPrompt, composingKeyboard());
           return;
         }
         // A consumed reply clears the arming; a stale one also clears — the
@@ -77,7 +139,11 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       const reason = sanitizeRejectionReason(text);
       if (reason === null) {
         // too long / empty: pending action stays, ask again
-        await ctx.api.sendMessage(ctx.chatId, fa.adminRejectPromptMsg);
+        await ctx.api.sendMessage(
+          ctx.chatId,
+          fa.adminRejectPromptMsg,
+          adminRejectPromptKeyboard(),
+        );
         return;
       }
       await clearPendingAdminAction(ctx.db, ctx.actor.id);
@@ -97,8 +163,6 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       return;
     }
   }
-
-  const session = await getSession(ctx.db, ctx.customerId);
 
   // ———— Phase 7: support ticket body (fresh from the ladder, or follow-up
   // on an open ticket while IDLE — one indexed lookup, DB is the truth) ————
@@ -197,6 +261,34 @@ function numericStepFor(state: string): StepKind | null {
     if (state === expected) return kind;
   }
   return null;
+}
+
+/**
+ * Keyboard press of «🔙 بازگشت به منو» — the text-path twin of the
+ * `act:back_menu` callback in `handleCallback`: admin arming clears first,
+ * a busy flow is cancelled, IDLE just re-presents the main menu. Every
+ * branch restores the main Reply Keyboard (the composing keyboards replaced
+ * it while free text was awaited).
+ */
+async function handleBackToMenuText(ctx: UpdateContext): Promise<void> {
+  if (ctx.isAdmin) {
+    const pending = await getPendingAdminAction(ctx.db, ctx.actor.id);
+    if (pending) {
+      await clearPendingAdminAction(ctx.db, ctx.actor.id);
+      await ctx.api.sendMessage(
+        ctx.chatId,
+        fa.adminRejectCancelled,
+        mainMenuKeyboard(),
+      );
+      return;
+    }
+  }
+  const session = await getSession(ctx.db, ctx.customerId);
+  if (!isBusy(session.state)) {
+    await ctx.api.sendMessage(ctx.chatId, fa.idleInputHint, mainMenuKeyboard());
+    return;
+  }
+  await cancelToMenu(ctx); // clears session, sends menu
 }
 
 /**

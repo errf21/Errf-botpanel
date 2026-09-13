@@ -1,6 +1,7 @@
 import type {
   TelegramApiLike,
   TelegramInlineKeyboardMarkup,
+  TelegramReplyMarkup,
 } from '../types.ts';
 
 interface TgResponse<T> {
@@ -72,7 +73,7 @@ export class TelegramApi implements TelegramApiLike {
   sendMessage(
     chatId: number,
     text: string,
-    buttons?: TelegramInlineKeyboardMarkup,
+    buttons?: TelegramReplyMarkup,
   ): Promise<null> {
     return this.call<null>('sendMessage', {
       chat_id: chatId,

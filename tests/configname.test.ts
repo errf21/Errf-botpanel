@@ -154,6 +154,14 @@ const buttonsOf = (index = 0) => {
     | undefined;
   return (kb?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
 };
+// Phase 8A: the config-name step speaks Reply Keyboard — text buttons.
+const replyRowsOf = (index = 0) => {
+  const s = stub.sendCalls()[index];
+  const kb = s?.payload['reply_markup'] as
+    | { keyboard: { text: string; style?: string }[][] }
+    | undefined;
+  return kb?.keyboard ?? [];
+};
 function sessionRow(tgUserId: number): { state: string; data: Record<string, unknown> } {
   const row = sqlite
     .prepare(
@@ -190,12 +198,9 @@ test('name step: prompt + 🎲 انتخاب خودکار directly below the mess
   assert.equal(sessionRow(ALICE.id).state, 'WAITING_CONFIG_NAME');
   const intro = textsTo(ALICE.id).at(-1) ?? ''; // buyIntro carries the auto-pick keyboard
   assert.ok(intro.includes('نام'), `intro: ${intro}`);
-  const promptSend = stub.sendCalls().at(-1);
-  const kb = (promptSend?.payload['reply_markup'] as { inline_keyboard: { text: string; callback_data: string }[][] })
-    .inline_keyboard;
-  assert.equal(kb[0]?.[0]?.callback_data, 'cfg:auto', 'auto button sits on the FIRST row');
-  assert.equal(kb[0]?.[0]?.text, '🎲 انتخاب خودکار');
-  assert.equal(kb[1]?.[0]?.callback_data, 'act:back_menu');
+  const kb = replyRowsOf(stub.sendCalls().length - 1);
+  assert.equal(kb[0]?.[0]?.text, '🎲 انتخاب خودکار', 'auto button sits on the FIRST row');
+  assert.equal(kb[1]?.[0]?.text, '🔙 بازگشت به منو');
 
   // re-entering the buy flow mid-name → the exact requested prompt
   stub.reset();
@@ -205,7 +210,8 @@ test('name step: prompt + 🎲 انتخاب خودکار directly below the mess
     prompt,
     'زیبا لطفا یه نام انگلیسی حداقل سه کلمه‌ای انتخاب کن یا اگر میخوای من برات رندوم انتخاب کنم',
   );
-  assert.ok(buttonsOf(stub.sendCalls().length - 1).includes('cfg:auto'));
+  const rows = replyRowsOf(stub.sendCalls().length - 1);
+  assert.ok(rows.flat().some((b) => b.text === '🎲 انتخاب خودکار'));
 });
 
 test('typed names: valid 3-word continues; invalid refuses without state loss', async () => {
@@ -249,7 +255,7 @@ test('cfg:auto end-to-end: advances with a generated 3-word name', async () => {
   stub.reset();
   await dispatch(callbackUpdateAs('step:back', nextId(), CYD, CYD.id));
   assert.equal(sessionRow(CYD.id).state, 'WAITING_CONFIG_NAME');
-  assert.deepEqual(buttonsOf(stub.sendCalls().length - 1)[0], 'cfg:auto');
+  assert.deepEqual(replyRowsOf(stub.sendCalls().length - 1)[0]?.[0]?.text, '🎲 انتخاب خودکار');
 });
 
 test('cfg:auto is inert out of state, on replay, and forged for strangers', async () => {

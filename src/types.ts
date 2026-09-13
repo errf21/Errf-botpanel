@@ -116,30 +116,58 @@ export interface TelegramInlineKeyboardMarkup {
   inline_keyboard: TelegramInlineKeyboardButton[][];
 }
 
+/** The only three styles Telegram accepts on ReplyKeyboard buttons. */
+export type TelegramKeyboardButtonStyle = 'primary' | 'success' | 'danger';
+
+/** Phase 8A: a real Reply Keyboard button (tap sends `text` as a message). */
+export interface TelegramReplyKeyboardButton {
+  text: string;
+  /** Style requires Bot API 8.0+ clients; older clients render a plain button. */
+  style?: TelegramKeyboardButtonStyle;
+}
+
+export interface TelegramReplyKeyboardMarkup {
+  keyboard: TelegramReplyKeyboardButton[][];
+  resize_keyboard?: boolean;
+  is_persistent?: boolean;
+  selective?: boolean;
+}
+
+/** Hides the current reply keyboard (part of the markup type surface). */
+export interface TelegramReplyKeyboardRemove {
+  remove_keyboard: true;
+  selective?: boolean;
+}
+
+/** Anything the `reply_markup` field accepts on send/edit calls. */
+export type TelegramReplyMarkup =
+  | TelegramInlineKeyboardMarkup
+  | TelegramReplyKeyboardMarkup;
+
 /** Structural subset of TelegramApi that handlers need (avoids import cycles). */
 export interface TelegramApiLike {
   sendMessage(
     chatId: number,
     text: string,
-    buttons?: TelegramInlineKeyboardMarkup,
+    buttons?: TelegramReplyMarkup,
   ): Promise<unknown>;
   sendPhoto(
     chatId: number,
     fileId: string,
     caption: string,
-    buttons?: TelegramInlineKeyboardMarkup,
+    buttons?: TelegramReplyMarkup,
   ): Promise<unknown>;
   sendDocument(
     chatId: number,
     fileId: string,
     caption: string,
-    buttons?: TelegramInlineKeyboardMarkup,
+    buttons?: TelegramReplyMarkup,
   ): Promise<unknown>;
   editMessageText(
     chatId: number,
     messageId: number,
     text: string,
-    buttons?: TelegramInlineKeyboardMarkup,
+    buttons?: TelegramReplyMarkup,
   ): Promise<unknown>;
   /** Media messages can only have their caption+buttons replaced. */
   editMessageCaption(

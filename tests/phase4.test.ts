@@ -298,11 +298,16 @@ test('reject with reason: prompt → text reason on the customer order', async (
     assert.equal(pending?.action, 'reject');
     const prompt = sends().find((s) => String(s.text).includes('دلیل رد'));
     assert.ok(prompt);
+    // Phase 8A: the reject-reason prompt is free text → composing-mode Reply
+    // Keyboard; the skip is a text button now (legacy adm:skip: taps still work).
     const kb = prompt.payload['reply_markup'] as {
-      inline_keyboard: { callback_data: string }[][];
+      keyboard: { text: string }[][];
     };
     assert.ok(
-      kb.inline_keyboard.flat().some((b) => b.callback_data === `adm:skip:${orderId}`),
+      kb.keyboard.flat().some((b) => b.text === '❌ ثبت رد بدون دلیل'),
+    );
+    assert.ok(
+      kb.keyboard.flat().some((b) => b.text === '🔙 بازگشت به منو'),
     );
 
     stub.reset();

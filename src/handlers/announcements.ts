@@ -24,6 +24,7 @@ import {
   announceConfirmKeyboard,
   announceProgressKeyboard,
   backToMenuKeyboard,
+  composingKeyboard,
 } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 import { sanitizeSupportBody } from '../lib/validate.ts';
@@ -44,7 +45,8 @@ export async function startAnnounceDraft(ctx: UpdateContext, session: Session): 
     return;
   }
   await setSession(ctx.db, ctx.customerId, next, session.data);
-  await ctx.api.sendMessage(ctx.chatId, fa.announceIntro, backToMenuKeyboard());
+  // Phase 8A: admin composes the draft as free text — hide the main keyboard.
+  await ctx.api.sendMessage(ctx.chatId, fa.announceIntro, composingKeyboard());
 }
 
 /** The draft text lands here (text router while WAITING_ANNOUNCE_TEXT). */
@@ -56,7 +58,7 @@ export async function saveAnnounceDraft(
   if (session.state !== 'WAITING_ANNOUNCE_TEXT') return;
   const body = sanitizeSupportBody(text, ANNOUNCE_TEXT_MAX);
   if (!body) {
-    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, composingKeyboard());
     return;
   }
   const total = await countPotentialRecipients(ctx.db);
@@ -71,7 +73,7 @@ export async function saveAnnounceDraft(
     record = null;
   }
   if (!record) {
-    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, backToMenuKeyboard());
+    await ctx.api.sendMessage(ctx.chatId, fa.announceTooLong, composingKeyboard());
     return;
   }
   const next = reduce(session.state, 'announce_draft_saved');
