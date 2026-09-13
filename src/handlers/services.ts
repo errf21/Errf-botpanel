@@ -8,7 +8,6 @@
  * ever writes to the panel or mutates order state, and ownership is enforced
  * by the queries themselves (customer_id is in the WHERE clause, not the UI).
  */
-import type { TelegramInlineKeyboardMarkup, UpdateContext } from '../types.ts';
 import {
   findActiveRenewalForService,
   getOwnedService,
@@ -16,9 +15,11 @@ import {
   type OrderRow,
   type ServiceRow,
 } from '../db/orders.ts';
+import type { TelegramInlineKeyboardMarkup, TelegramParseMode, UpdateContext } from '../types.ts';
 import { loadRenewalConfig, type RenewalConfig } from '../catalog/renewal.ts';
 import { loadPanelConfig, PasarGuardClient, type PanelUser } from '../pasarguard/client.ts';
 import { backToMenuKeyboard, serviceDetailKeyboard, servicesListKeyboard } from '../telegram/menu.ts';
+import { tgEscapeHtml } from '../telegram/format.ts';
 import { digitsFa, fa } from '../telegram/texts.ts';
 
 const SERVICES_LIMIT = 10;
@@ -142,14 +143,26 @@ export async function showMyServices(ctx: UpdateContext): Promise<void> {
   );
 }
 
-/** Renders the owned service's detail (live panel read only when allowed). */
+/**
+ * Renders the owned service's detail (live panel read only when allowed).
+ * Phase 8C: when the subscription URL is shown the whole bubble opts into
+ * HTML (tap-to-copy); every user/panel-authored string in THAT message is
+ * escaped — machine values (ULIDs, dates, numbers) are injection-safe.
+ */
 async function renderServiceDetail(
   ctx: UpdateContext,
   orderId: string,
   live: boolean,
-): Promise<{ text: string; keyboard: TelegramInlineKeyboardMarkup; live: boolean } | null> {
+): Promise<{
+  text: string;
+  keyboard: TelegramInlineKeyboardMarkup;
+  live: boolean;
+  parseMode: TelegramParseMode | undefined;
+} | null> {
   const service = await getOwnedService(ctx.db, ctx.customerId, orderId);
   if (!service) return null;
+  const asHtml = service.subscription_url !== null;
+  const esc = (value: string): string => (asHtml ? tgEscapeHtml(value) : value);
 
   const [renewal, active] = await Promise.all([
     loadRenewalViewConfig(ctx.db),
@@ -175,10 +188,10 @@ async function renderServiceDetail(
   const expiresIso = expiresUnix === null ? null : new Date(expiresUnix * 1000).toISOString();
 
   const snapshot = serviceSnapshotData(service);
-  const lines: string[] = [fa.svcDetailHeader(snapshot.name ?? fa.accountNone)];
+  const lines: string[] = [fa.svcDetailHeader(esc(snapshot.name ?? fa.accountNone))];
   lines.push(
     panelUser !== null && panelUser.status !== null
-      ? panelStatusFa(panelUser.status)
+      ? esc(panelStatusFa(panelUser.status))
       : statusLineFor(expiresIso, renewal.nearExpiryDays),
   );
   lines.push(fa.svcId(service.id));
@@ -199,7 +212,9 @@ async function renderServiceDetail(
     lines.push(fa.svcUsage(gbDisplay(panelUser.usedTraffic), gbDisplay(panelUser.dataLimit)));
   }
   if (service.subscription_url !== null) {
-    lines.push(`${fa.svcLink}\n${service.subscription_url}`);
+    // Phase 8C: show the subscription URL as tap-to-copy inline code. The
+    // value is panel-sourced, so HTML-escaping is also a correctness win.
+    lines.push(fa.svcLinkCode(service.subscription_url));
   }
   if (active !== null) {
     lines.push(fa.svcPendingRenewal(active.id.slice(0, 10)));
@@ -215,6 +230,7 @@ async function renderServiceDetail(
       canRenew: renewal.enabled && active === null,
     }),
     live: panelUser !== null,
+    parseMode: asHtml ? 'HTML' : undefined,
   };
 }
 
@@ -230,7 +246,7 @@ export async function viewOwnedService(
     return;
   }
   await ctx.api.answerCallbackQuery(callbackQueryId);
-  await ctx.api.sendMessage(ctx.chatId, rendered.text, rendered.keyboard);
+  await ctx.api.sendMessage(ctx.chatId, rendered.text, rendered.keyboard, rendered.parseMode);
 }
 
 /** `svc:ref` — live panel read (best effort) + in-place edit of the detail. */
@@ -247,9 +263,15 @@ export async function refreshOwnedService(
     return;
   }
   if (messageChatId !== null && messageId !== null && messageChatId === ctx.chatId) {
-    await ctx.api.editMessageText(messageChatId, messageId, rendered.text, rendered.keyboard);
+    await ctx.api.editMessageText(
+      messageChatId,
+      messageId,
+      rendered.text,
+      rendered.keyboard,
+      rendered.parseMode,
+    );
   } else {
-    await ctx.api.sendMessage(ctx.chatId, rendered.text, rendered.keyboard);
+    await ctx.api.sendMessage(ctx.chatId, rendered.text, rendered.keyboard, rendered.parseMode);
   }
   await ctx.api.answerCallbackQuery(
     callbackQueryId,

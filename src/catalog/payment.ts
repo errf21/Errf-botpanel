@@ -9,7 +9,6 @@ export const PAYMENT_SCHEMA = 1;
 
 export interface PaymentInfo {
   holder: string;
-  cardNumber: string;
   iban: string | null;
   instructions: string;
 }
@@ -38,23 +37,38 @@ function boundedString(value: unknown, min: number, max: number, pattern?: RegEx
 const CARD_PATTERN = /^[0-9-]{10,34}$/;
 const IBAN_PATTERN = /^[A-Z0-9]{15,34}$/;
 
+/**
+ * Phase 8C: the seller card is a secret, sourced ONLY from the
+ * PAYMENT_CARD_NUMBER env binding (`wrangler secret put PAYMENT_CARD_NUMBER`)
+ * — never from source, D1, or Git. Whitespace from secret pasting is
+ * trimmed; a missing/invalid value fails CLOSED (the caller shows the
+ * existing paymentInfoUnavailable notice). The value is never logged.
+ */
+export function paymentCardFromEnv(env: { PAYMENT_CARD_NUMBER?: string }): string | null {
+  const value = (env.PAYMENT_CARD_NUMBER ?? '').trim();
+  if (value === '') return null;
+  return CARD_PATTERN.test(value) ? value : null;
+}
+
 export function parsePaymentInfo(doc: unknown): PaymentInfoResult {
   const record = asRecord(doc);
   if (!record || record['schema'] !== PAYMENT_SCHEMA) {
     return { ok: false, error: 'payment_info:schema' };
   }
   const holder = boundedString(record['holder'], 1, 100);
-  const card = boundedString(record['card_number'], 10, 34, CARD_PATTERN);
   const instructions = boundedString(record['instructions'], 1, 800);
   let iban: string | null = null;
   if (record['iban'] !== null && record['iban'] !== undefined) {
     iban = boundedString(record['iban'], 15, 34, IBAN_PATTERN);
     if (iban === null) return { ok: false, error: 'payment_info:iban' };
   }
-  if (holder === null || card === null || instructions === null) {
+  if (holder === null || instructions === null) {
     return { ok: false, error: 'payment_info:fields' };
   }
-  return { ok: true, info: { holder, cardNumber: card, iban, instructions } };
+  // Phase 8C: `card_number` in the doc is IGNORED (a stray/placeholder key
+  // never invalidates the document). The seller card comes ONLY from the
+  // PAYMENT_CARD_NUMBER Worker secret — `paymentCardFromEnv` above.
+  return { ok: true, info: { holder, iban, instructions } };
 }
 
 export async function loadPaymentInfo(db: D1Database): Promise<PaymentInfoResult> {

@@ -160,11 +160,19 @@ export function freshDb(): DatabaseSync {
     'migrations/0005_phase5.sql',
     'migrations/0006_phase6.sql',
     'migrations/0007_phase7.sql',
+    'migrations/0008_phase8c.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }
   return sqlite;
 }
+
+/**
+ * Phase 8C: the seller card is a Worker secret; tests inject this clearly
+ * synthetic value via the per-test env object. No realistic card number may
+ * ever appear in source, fixtures, or Git.
+ */
+export const TEST_CARD = '0000000000000000';
 
 export const USER = {
   id: 987654321,

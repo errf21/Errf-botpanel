@@ -14,6 +14,8 @@
  *    stay idempotent/non-spammy when they are implemented.
  *  - «زیبا/رفیق/داداش» are sparing catchphrases, not filler.
  */
+import { tgCode, tgEscapeHtml } from './format.ts';
+
 export const fa = {
   notConfigured:
     '⚠️ ربات هنوز به‌طور کامل پیکربندی نشده است.',
@@ -130,21 +132,40 @@ export const fa = {
 
   // ————— Phase 4: payment, receipts, admin review —————
   paymentInstructionsHeader: '💳 اطلاعات واریز وجه',
-  paymentHolder: (v: string) => `👤 به نام: ${v}`,
-  paymentCard: (v: string) => `🏦 شماره کارت: ${v}`,
-  paymentIban: (v: string) => `IBAN: ${v}`,
+  paymentHolder: (v: string) => `👤 به نام: ${tgEscapeHtml(v)}`,
+  // Phase 8C: the card line is only ever rendered in the HTML payment
+  // instructions bubble; the value arrives raw and becomes tap-to-copy code.
+  paymentCard: (v: string) => `🏦 شماره کارت: ${tgCode(v)}`,
+  paymentIban: (v: string) => `IBAN: ${tgCode(v)}`,
   paymentAmountLine: (v: string) => `💰 مبلغ قابل واریز: ${v}`,
   paymentReceiptPrompt:
     '🧾 پس از واریز، تصویر یا فایل فیش پرداخت را در همین گفتگو بفرستید.\n\nتوجه: بررسی فیش به‌صورت دستی انجام می‌شود و ممکن است کمی زمان ببرد.',
   paymentInfoUnavailable:
     '⚠️ اطلاعات واریز فعلاً در دسترس نیست. برای ادامه با پشتیبانی در ارتباط باشید.',
+  // Phase 8C: shown at most once per message, only when a <code> value is in it.
+  copyHint: '(یک بار بزن روی مقدار، کپی می‌شه)',
 
   receiptAccepted:
-    '✅ فیش پرداخت ثبت شد و برای بررسی ارسال گردید.\nنتیجه معمولاً تا چند ساعت اعلام می‌شود؛ وضعیت را از «💳 سفارش‌های من» پیگیری کنید.',
-  receiptReplaced: '✅ فیش جدید جایگزین شد و دوباره برای بررسی ارسال گردید.',
+    '✅ فیش پرداخت ثبت شد و برای بررسی ارسال گردید.\n\nبررسی دستی است؛ پس از تأیید، ادامه‌ی کار خودکار انجام می‌شود و از شما کاری لازم نیست.\n\nنتیجه معمولاً تا چند ساعت اعلام می‌شود؛ وضعیت را از «💳 سفارش‌های من» پیگیری کنید.',
+  receiptReplaced:
+    '✅ فیش جدید جایگزین شد و دوباره برای بررسی ارسال گردید.\n\nصف بررسی از همان فیش اول حساب می‌شود؛ لازم نیست دوباره فیش بفرستید.',
   receiptExpectedMedia: '🧾 لطفاً فیش را به‌صورت تصویر یا فایل (برگردان فیش) ارسال کنید؛ متن به‌تنهایی فیش محسوب نمی‌شود.',
   receiptOrderMissing: '⚠️ سفارش مرتبط با این گفتگو پیدا نشد. از منوی خرید شروع مجدد کنید.',
   receiptOrderNotPayable: '⚠️ این سفارش دیگر در مرحله‌ی ارسال فیش نیست. وضعیت آن را از «💳 سفارش‌های من» ببینید.',
+
+  // ————— Phase 8C: payment review reminders (15/30/45 min, max 3) —————
+  // Persona rules: three DISTINCT concise variants (never repeats itself),
+  // ⏳-anchored, no greeting (the customer's own receipt is the previous
+  // bubble), no invented promises beyond «به‌زودی», Persian digits.
+  reminderCustomer1: (id: string) =>
+    `⏳ فیش سفارش ${id} هنوز در انتظار بررسی است.\n\nبه‌زودی نتیجه مشخص می‌شود؛ نیاز به اقدام دیگری نیست.`,
+  reminderCustomer2: (id: string) =>
+    `⏳ سفارش ${id} هنوز در انتظار بررسی فیش است.\n\nاگر فیش را اشتباه فرستاده‌اید، تصویر/فایل جدیدی بفرستید تا جایگزین شود.`,
+  reminderCustomer3: (id: string) =>
+    `⏳ فیش سفارش ${id} هنوز در انتظار بررسی است.\n\nبررسی کمی طول کشیده — ممنون که صبر دارید؛ نتیجه به‌زودی اعلام می‌شود.`,
+  reminderAdminHeader: '⏰ یادآوری: این فیش‌ها هنوز در انتظار بررسی‌اند',
+  reminderAdminEntry: (n: number, shortId: string, minutes: number) =>
+    `${n}. 🆔 ${shortId} — ${digitsFa(minutes)} دقیقه است در انتظار`,
 
   statusPendingPayment: '⏳ در انتظار پرداخت',
   statusAwaitingReview: '🔎 در انتظار بررسی فیش',
@@ -189,7 +210,7 @@ export const fa = {
 
   // ————— Phase 5: automatic provisioning (PasarGuard) —————
   serviceReady: (id: string, url: string) =>
-    `🎉 سرویس شما ساخته و فعال شد!\n\n🆔 سفارش: ${id}\n🔗 لینک اشتراک:\n${url}\n\nاین لینک را در اپلیکیشن خود (v2rayNG / Nekobox / Streisand و…) وارد کنید.`,
+    `🎉 سرویس شما ساخته و فعال شد!\n\n🆔 سفارش: ${id}\n🔗 لینک اشتراک:\n${tgCode(url)}\n${fa.copyHint}\n\nاین لینک را در اپلیکیشن خود (v2rayNG / Nekobox / Streisand و…) وارد کنید.`,
   serviceReadyWithoutLink: (id: string) =>
     `🎉 سرویس شما ساخته شد.\n\n🆔 سفارش: ${id}\n\nلینک اتصال فعلاً قابل دریافت نیست؛ به‌زودی از بخش «سرویس‌های من» در دسترس خواهد بود. در صورت عجله با پشتیبانی در ارتباط باشید.`,
   provisionFailedNotice: (id: string) =>
@@ -240,6 +261,8 @@ export const fa = {
   svcExpiredDaysAgo: (days: number) => `⚠️ ${digitsFa(days)} روز پیش منقضی شده است`,
   svcUsage: (used: string, total: string) => `📊 مصرف ترافیک: ${used} از ${total} گیگ`,
   svcLink: '🔗 لینک اشتراک:',
+  // Phase 8C: the detail bubble opts into HTML so the URL is tap-to-copy.
+  svcLinkCode: (url: string) => `${fa.svcLink}\n${tgCode(url)}\n${fa.copyHint}`,
   svcSnapshotNote: '🖥 پنل در دسترس نبود؛ اطلاعات از آخرین وضعیت محلی نمایش داده می‌شود.',
   svcLiveNote: '🖥 وضعیت لحظه‌ای از پنل',
 

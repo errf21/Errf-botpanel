@@ -126,9 +126,10 @@ async function notice(
   text: string,
   api: TelegramApiLike,
   buttons?: Parameters<TelegramApiLike['sendMessage']>[2],
+  parseMode?: Parameters<TelegramApiLike['sendMessage']>[3],
 ): Promise<void> {
   try {
-    await api.sendMessage(chatId, text, buttons);
+    await api.sendMessage(chatId, text, buttons, parseMode);
   } catch {
     console.error(`provision_notice_failed chat=${String(chatId).slice(0, 20)}`);
   }
@@ -138,11 +139,12 @@ async function notifyCustomer(
   deps: ProvisionDeps,
   order: OrderRow,
   text: string,
+  parseMode?: Parameters<TelegramApiLike['sendMessage']>[3],
 ): Promise<void> {
   const contact = await getCustomerContact(deps.db, order.customer_id);
   const chatId = contact ? Number(contact.telegram_user_id) : NaN;
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
-  await notice(chatId, text, deps.api);
+  await notice(chatId, text, deps.api, undefined, parseMode);
 }
 
 /**
@@ -226,7 +228,8 @@ async function finalizeSuccess(
     result.order.subscription_url !== null
       ? fa.serviceReady(result.order.id, result.order.subscription_url)
       : fa.serviceReadyWithoutLink(result.order.id);
-  await notifyCustomer(deps, result.order, text);
+  // Phase 8C: serviceReady carries an inline-code URL → send it as HTML.
+  await notifyCustomer(deps, result.order, text, result.order.subscription_url !== null ? 'HTML' : undefined);
   return { ok: true, order: result.order, attempted: true };
 }
 

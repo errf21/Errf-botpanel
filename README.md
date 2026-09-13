@@ -16,13 +16,15 @@ migrations/0004_phase4.sql  payment_info seed + admin_actions table
 migrations/0005_phase5.sql  provision_attempts/subscription_url + provisioning doc seed
 migrations/0006_phase6.sql  orders.kind/service_expires_at + renewal states & docs
 migrations/0007_phase7.sql  wallet ledger + referrals + support tickets + announcements
-src/index.ts                Fetch router: /health, /telegram/webhook
+migrations/0008_phase8c.sql payment_reminders claim table (+safe backfill)
+src/index.ts                Fetch router: /health, /telegram/webhook + 5-min cron (scheduled)
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
 src/dispatch.ts             Update pipeline: dedupe → register (first-start referral probe) → route
 src/admin.ts                Admin authorization, receipt forwarding, review + wallet refund + referral payout
 src/routes/health.ts        Liveness + D1 connectivity + binding status
 src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
-src/telegram/api.ts         Telegram Bot API client (token only in env)
+src/telegram/api.ts         Telegram Bot API client (token only in env; opt-in HTML parse_mode)
+src/telegram/format.ts      Phase 8C: minimal Telegram HTML escape/inline-code helper (copy-friendly values)
 src/telegram/menu.ts        Callback vocabulary + keyboards (incl. admin `adm:`, service `svc:`, ticket `tsk:`, announce `ann:`)
 src/telegram/texts.ts       All user-facing text (Persian-first), one place
 src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit
@@ -36,6 +38,7 @@ src/handlers/wallet.ts      Phase 7 wallet view, admin grant/debit (arm→amount
 src/handlers/referrals.ts   Phase 7 invite screen, first-touch capture, payout notices
 src/handlers/support.ts     Phase 7 tickets: open/follow-up/queue/reply/close (admin relay)
 src/handlers/announcements.ts Phase 7 broadcast: draft → confirm → chunked resumable fan-out
+src/handlers/paymentReminders.ts Phase 8C cron sweep: claimed 15/30/45 nudges + one admin digest/run
 src/state/machine.ts        Pure conversation state machine (buy + renewal + support + announce ladders)
 src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
 src/catalog/pricing.ts      Pure integer price engine (rates + breakdown snapshot)
@@ -52,6 +55,7 @@ src/db/referrals.ts         Referral codes, first-touch attribution, exactly-onc
 src/db/support.ts           Support tickets: one live per customer (UNIQUE), append-only messages
 src/db/announcements.ts     Broadcast jobs: seed-once deliveries, chunk claim/book/settle, stuck sweep
 src/db/admin_actions.ts     Short-lived armed admin prompts (reject / ticket reply / grant / debit)
+src/db/paymentReminders.ts  Phase 8C: one-anchor reminder schedule per order + single-statement stage claims
 src/db/customers.ts         Customers: idempotent upsert, is_admin flag, first-ever probe, admin-chat lookup
 src/db/{states,dedupe}.ts   Conversation sessions (24h TTL) + webhook replay guard
 src/orders/checkout.ts      Draft → priced → durable order: purchase + renewal + wallet plans (full/partial)
@@ -60,7 +64,7 @@ src/lib/security.ts         ULID order IDs, constant-time secret comparison
 src/lib/validate.ts         Payload guards: callbacks (admin+service+ticket+announce+ULID), media, sanitizers
 src/lib/referralPayout.ts   Shared post-approval referral payout (manual + wallet auto-pay paths)
 src/lib/http.ts             Response helpers
-tests/                      node --test: machine, validation, price, e2e phases 2–7
+tests/                      node --test: machine, validation, price, e2e phases 2–8C
 .dev.vars.example           Template for local secrets (copy → .dev.vars)
 ```
 
@@ -93,7 +97,15 @@ npx wrangler d1 migrations apply telbot-db --remote   # production (at deploy ti
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 npx wrangler secret put PASARGUARD_API_KEY    # Phase 5 (panel admin → API keys)
+npx wrangler secret put PAYMENT_CARD_NUMBER   # Phase 8C: seller card — the ONLY card source
 ```
+
+**Deploy checklist (Phase 8C):** payment instructions fail **closed** without
+`PAYMENT_CARD_NUMBER` (customers get the "not available — contact support"
+notice and the event log shows `payment_card_secret_unconfigured` — the value
+is never logged). The `card_number` field left over inside the `payment_info`
+settings doc is inert at runtime; admins may delete it from the document at
+leisure (the 0004 seed placeholder must simply never be relied upon).
 
 Non-secret configuration (panel URL, admin chat id) lives in `wrangler.jsonc`
 as `vars`. **Business data** (volume/duration/device options, prices, payment
@@ -263,6 +275,41 @@ configured and rejects requests with a wrong token (401).
   missing/malformed doc; the single `provisioning.enabled` flag remains the
   one master switch over ALL panel writes (creates AND extensions).
 
+## Payment review reminders (Phase 8C)
+
+- **Trigger:** Cloudflare **Cron Triggers** (`wrangler.jsonc → triggers.crons =
+  ["*/5 * * * *"]` → the Worker's `scheduled` handler). The only wall-clock
+  mechanism that fires with zero traffic; DO alarms were considered and
+  rejected as overkill. `wrangler dev` does not fire crons — tests drive the
+  sweep directly with an explicit `now`.
+- **Ladder:** anchored at the FIRST receipt submission, stages fire at
+  ≥15/≥30/≥45 elapsed minutes — three distinct customer nudges MAX, never
+  early (cron granularity only delays ≤5 min), catch-up runs send only the
+  TOPMOST due stage (no burst), and nothing is ever sent afterwards: 3 and
+  done.
+- **Exactly-once mechanics (claim-first, at-most-once):** one
+  `payment_reminders` row per order (PK order_id, `INSERT OR IGNORE` —
+  a replacement receipt provably cannot add or re-anchor a schedule); each
+  stage is claimed by a SINGLE guarded UPDATE whose equality check on
+  `reminded_stage` and fused `state='awaiting_review'` subquery make
+  overlapping runs, replays and concurrent approvals converge on one winner.
+  A crash after a won claim loses that one nudge — the deliberate tradeoff
+  (duplicates are worse than a lost nudge).
+- **Admin UX:** one consolidated digest per sweep run per admin chat, reusing
+  the existing `/pending` queue keyboard (`adm:ok|adm:no`) — approvals from a
+  digest go through the unchanged review path; no new callbacks, auth, or
+  keyboards.
+- **Seller card is a SECRET now:** `PAYMENT_CARD_NUMBER` env is the ONLY card
+  source (missing/invalid → the existing fail-closed `paymentInfoUnavailable`
+  notice; the settings-doc `card_number` key is ignored). Card/IBAN/
+  subscription URLs render as Telegram inline code (tap-to-copy) with a
+  one-time «کپی» hint — HTML `parse_mode` is opt-in for exactly those
+  bubbles, every dynamic string in them passes through
+  `src/telegram/format.ts`, and everything else stays plain text.
+- Renewal receipts ride the SAME `submitOrderReceipt` path and are therefore
+  covered identically; orders never entering `awaiting_review` (full-wallet,
+  abandoned checkouts) have no anchor by construction → unschedulable.
+
 ## Roadmap
 
 - **Phase 1**: skeleton, config layer, webhook auth, schema ✅
@@ -271,8 +318,9 @@ configured and rejects requests with a wrong token (401).
 - **Phase 4**: payment receipt upload + admin approval queue (manual verification) ✅
 - **Phase 5**: PasarGuard integration + automatic provisioning (idempotent) ✅
 - **Phase 6**: My Services + live/snapshot status + months-only renewals ✅
-- Phase 7: support + referrals + wallet
-- Phase 8: bot personality / friendly UX
+- **Phase 7**: support + referrals + wallet ✅
+- **Phase 8**: bot personality / friendly UX ✅
+  - 8A reply keyboard ✅ · 8B persona copy ✅ · 8C payment UX + review reminders ✅
 - Phase 9: security hardening + duplicate prevention + tests
 - Phase 10: final Cloudflare deployment + webhook registration
 

@@ -1,6 +1,7 @@
 import type {
   TelegramApiLike,
   TelegramInlineKeyboardMarkup,
+  TelegramParseMode,
   TelegramReplyMarkup,
 } from '../types.ts';
 
@@ -74,11 +75,13 @@ export class TelegramApi implements TelegramApiLike {
     chatId: number,
     text: string,
     buttons?: TelegramReplyMarkup,
+    parseMode?: TelegramParseMode,
   ): Promise<null> {
     return this.call<null>('sendMessage', {
       chat_id: chatId,
       text,
       ...(buttons ? { reply_markup: buttons } : {}),
+      ...(parseMode ? { parse_mode: parseMode } : {}),
     });
   }
 
@@ -117,12 +120,14 @@ export class TelegramApi implements TelegramApiLike {
     messageId: number,
     text: string,
     buttons?: TelegramInlineKeyboardMarkup,
+    parseMode?: TelegramParseMode,
   ): Promise<boolean> {
     const result = await this.call<Record<string, unknown>>('editMessageText', {
       chat_id: chatId,
       message_id: messageId,
       text,
       ...(buttons ? { reply_markup: buttons } : {}),
+      ...(parseMode ? { parse_mode: parseMode } : {}),
     });
     return result !== null;
   }

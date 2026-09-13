@@ -12,3 +12,8 @@ TELEGRAM_WEBHOOK_SECRET=
 # strict no-op while this is empty — approvals then just park orders in
 # 'approved' until a key + settings row 'provisioning' exist.
 PASARGUARD_API_KEY=
+
+# Seller card number (Phase 8C). The ONLY source of the card shown in payment
+# instructions — never the settings doc, never code, never committed.
+# Production: npx wrangler secret put PAYMENT_CARD_NUMBER
+PAYMENT_CARD_NUMBER=

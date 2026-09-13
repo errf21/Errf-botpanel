@@ -11,6 +11,12 @@ export interface Env {
   PASARGUARD_API_KEY?: string;
   PASARGUARD_PANEL_URL?: string;
   ADMIN_CHAT_ID?: string;
+  /**
+   * Phase 8C: the SELLER CARD NUMBER lives here and nowhere else — never in
+   * source, migrations, README, tests or Git. `wrangler secret put
+   * PAYMENT_CARD_NUMBER`. Payment instructions fail closed when unset.
+   */
+  PAYMENT_CARD_NUMBER?: string;
 }
 
 /** Order lifecycle. One enum per phase, kept strict on the DB side too. */
@@ -144,12 +150,19 @@ export type TelegramReplyMarkup =
   | TelegramInlineKeyboardMarkup
   | TelegramReplyKeyboardMarkup;
 
+/**
+ * Opt-in parse mode for the copy-friendly HTML values (Phase 8C). The rest of
+ * the bot never sends a parse_mode, so this is the only value it ever takes.
+ */
+export type TelegramParseMode = 'HTML';
+
 /** Structural subset of TelegramApi that handlers need (avoids import cycles). */
 export interface TelegramApiLike {
   sendMessage(
     chatId: number,
     text: string,
     buttons?: TelegramReplyMarkup,
+    parseMode?: TelegramParseMode,
   ): Promise<unknown>;
   sendPhoto(
     chatId: number,
@@ -168,6 +181,7 @@ export interface TelegramApiLike {
     messageId: number,
     text: string,
     buttons?: TelegramReplyMarkup,
+    parseMode?: TelegramParseMode,
   ): Promise<unknown>;
   /** Media messages can only have their caption+buttons replaced. */
   editMessageCaption(

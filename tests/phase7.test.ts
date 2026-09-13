@@ -16,6 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ADMIN,
+  TEST_CARD,
   USER,
   callbackUpdate,
   callbackUpdateAs,
@@ -41,6 +42,7 @@ const env = {
   TELEGRAM_BOT_TOKEN: 'TEST',
   TELEGRAM_WEBHOOK_SECRET: 'TEST',
   ADMIN_CHAT_ID: String(ADMIN.id),
+  PAYMENT_CARD_NUMBER: TEST_CARD,
 } as unknown as Parameters<typeof processTelegramUpdate>[1];
 
 const dispatch = (update: unknown): Promise<void> => processTelegramUpdate(update, env);

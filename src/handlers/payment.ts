@@ -14,11 +14,12 @@ import {
   submitOrderReceipt,
   type OrderRow,
 } from '../db/orders.ts';
-import { loadPaymentInfo } from '../catalog/payment.ts';
+import { loadPaymentInfo, paymentCardFromEnv } from '../catalog/payment.ts';
 import { isValidOrderId, type ReceiptMedia } from '../lib/validate.ts';
 import { forwardReceiptToAdmins } from '../admin.ts';
 import { adminQueueKeyboard, backToMenuKeyboard } from '../telegram/menu.ts';
 import { fa, formatPrice } from '../telegram/texts.ts';
+import { tgEscapeHtml } from '../telegram/format.ts';
 
 const MY_ORDERS_LIMIT = 8;
 const PENDING_QUEUE_LIMIT = 10;
@@ -46,15 +47,30 @@ export function statusFa(state: string): string {
   }
 }
 
-/** Payment card + "send your receipt" instructions right after confirmation. */
+/**
+ * Payment card + "send your receipt" instructions right after confirmation.
+ * Phase 8C: the card number comes ONLY from the PAYMENT_CARD_NUMBER secret
+ * and the bubble is the bot's lone HTML send — values render as tap-to-copy
+ * inline code, every dynamic string goes through the escape helper.
+ */
 export async function sendPaymentInstructions(
   ctx: UpdateContext,
   order: OrderRow,
 ): Promise<void> {
-  const loaded = await loadPaymentInfo(ctx.db);
+  const [loaded, card] = await Promise.all([
+    loadPaymentInfo(ctx.db),
+    Promise.resolve(paymentCardFromEnv(ctx.env)),
+  ]);
   if (!loaded.ok) {
     await ctx.api.sendMessage(ctx.chatId, fa.paymentInfoUnavailable, backToMenuKeyboard());
     console.error(`payment_info_unavailable code=${loaded.error.slice(0, 60)}`);
+    return;
+  }
+  if (card === null) {
+    // Fail CLOSED: never render a half-instructed payment bubble and never
+    // fall back to the settings doc. The secret value is never logged.
+    await ctx.api.sendMessage(ctx.chatId, fa.paymentInfoUnavailable, backToMenuKeyboard());
+    console.error('payment_card_secret_unconfigured');
     return;
   }
   const { info } = loaded;
@@ -64,13 +80,14 @@ export async function sendPaymentInstructions(
   const lines = [
     fa.paymentInstructionsHeader,
     fa.paymentHolder(info.holder),
-    fa.paymentCard(info.cardNumber),
+    fa.paymentCard(card),
     ...(info.iban !== null ? [fa.paymentIban(info.iban)] : []),
     fa.paymentAmountLine(formatPrice(order.amount, order.currency)),
-    info.instructions,
+    tgEscapeHtml(info.instructions),
     fa.paymentReceiptPrompt,
+    fa.copyHint,
   ];
-  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard());
+  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard(), 'HTML');
 }
 
 function uploaderLabel(ctx: UpdateContext): string {

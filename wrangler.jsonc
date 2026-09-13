@@ -7,11 +7,18 @@
   "keep_vars": true,
 
   // Non-secret configuration only.
-  // Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, PASARGUARD_API_KEY)
-  // are managed with `wrangler secret put <NAME>` and live in `.dev.vars` locally.
+  // Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, PASARGUARD_API_KEY,
+  // PAYMENT_CARD_NUMBER) are managed with `wrangler secret put <NAME>` and
+  // live in `.dev.vars` locally.
   "vars": {
     "ADMIN_CHAT_ID": "",
     "PASARGUARD_PANEL_URL": "https://zerofee.ok-exor.ir"
+  },
+
+  // Phase 8C: payment review reminder sweep (never early, at-most-once per
+  // stage — every guard lives in the DB claims, so precision here is cosmetic).
+  "triggers": {
+    "crons": ["*/5 * * * *"]
   },
 
   "d1_databases": [

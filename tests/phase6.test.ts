@@ -13,6 +13,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ADMIN,
+  TEST_CARD,
   USER,
   callbackUpdateAs,
   freshDb,
@@ -115,6 +116,7 @@ const envRef: Record<string, unknown> = {
   ADMIN_CHAT_ID: String(ADMIN.id),
   PASARGUARD_API_KEY: PANEL_KEY,
   PASARGUARD_PANEL_URL: PANEL_BASE,
+  PAYMENT_CARD_NUMBER: TEST_CARD,
 };
 const env = envRef as unknown as Parameters<typeof processTelegramUpdate>[1];
 

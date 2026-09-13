@@ -14,7 +14,7 @@ import {
   type Catalog,
 } from '../src/catalog/catalog.ts';
 import { makeD1Shim, freshDb } from './helpers.ts';
-import { loadPaymentInfo, parsePaymentInfo } from '../src/catalog/payment.ts';
+import { loadPaymentInfo, parsePaymentInfo, paymentCardFromEnv } from '../src/catalog/payment.ts';
 
 const VOLUME_SEED = {
   schema: 1,
@@ -148,27 +148,41 @@ test('loadCatalog: degrades safely when config is broken', async () => {
   assert.equal(partial.ok, false);
 });
 
-// ————— Phase 4: payment_info document —————
+// ————— Phase 4: payment_info document (Phase 8C: card moved env-only) —————
 
 test('loadPaymentInfo: seeded doc validates with iban null', async () => {
   const shim = makeD1Shim(freshDb());
   const result = await loadPaymentInfo(shim as unknown as Parameters<typeof loadPaymentInfo>[0]);
   assert.equal(result.ok, true);
   if (result.ok) {
-    assert.match(result.info.cardNumber, /^\d{16}$/);
     assert.equal(result.info.iban, null);
     assert.ok(result.info.holder.length > 0);
   }
 });
 
-test('parsePaymentInfo: rejects malformed/hostile docs', () => {
+test('parsePaymentInfo: rejects malformed/hostile docs, ignores the card key', () => {
   assert.equal(parsePaymentInfo({ schema: 2, holder: 'a', card_number: '1234567890', instructions: 'x' }).ok, false);
   assert.equal(parsePaymentInfo({ schema: 1, holder: '', card_number: '1234567890', instructions: 'x' }).ok, false);
-  assert.equal(parsePaymentInfo({ schema: 1, holder: 'a', card_number: 'rm -rf', instructions: 'x' }).ok, false);
+  // Phase 8C: a hostile/absent card_number is INERT — never invalidates, and
+  // can never reach a customer (the card is a Worker secret now).
+  assert.equal(parsePaymentInfo({ schema: 1, holder: 'a', card_number: 'rm <b>rf', instructions: 'x' }).ok, true);
+  assert.equal(parsePaymentInfo({ schema: 1, holder: 'a', instructions: 'x' }).ok, true);
   assert.equal(parsePaymentInfo({ schema: 1, holder: 'a', card_number: '1234567890', instructions: 'x', iban: 'bad iban!' }).ok, false);
   assert.equal(parsePaymentInfo('string').ok, false);
   assert.equal(
     parsePaymentInfo({ schema: 1, holder: 'a', card_number: '1234567890', instructions: 'x', iban: 'IR000000000000000000000000' }).ok,
     true,
   );
+});
+
+// ————— Phase 8C: the seller card is an env secret only —————
+
+test('paymentCardFromEnv: valid trimmed value, everything else fails closed', () => {
+  assert.equal(paymentCardFromEnv({ PAYMENT_CARD_NUMBER: '0000-0000-0000-0001' }), '0000-0000-0000-0001');
+  assert.equal(paymentCardFromEnv({ PAYMENT_CARD_NUMBER: '  0000000000000001 \n' }), '0000000000000001');
+  assert.equal(paymentCardFromEnv({}), null);
+  assert.equal(paymentCardFromEnv({ PAYMENT_CARD_NUMBER: '' }), null);
+  assert.equal(paymentCardFromEnv({ PAYMENT_CARD_NUMBER: '   ' }), null);
+  assert.equal(paymentCardFromEnv({ PAYMENT_CARD_NUMBER: 'too-short-99' }), null);
+  assert.equal(paymentCardFromEnv({ PAYMENT_CARD_NUMBER: '<script>evil</script>' }), null);
 });

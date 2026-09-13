@@ -10,6 +10,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ADMIN,
+  TEST_CARD,
   USER,
   callbackUpdateAs,
   freshDb,
@@ -31,6 +32,7 @@ const env = {
   DB: shim,
   TELEGRAM_BOT_TOKEN: 'TEST',
   TELEGRAM_WEBHOOK_SECRET: 'TEST',
+  PAYMENT_CARD_NUMBER: TEST_CARD,
 } as unknown as Parameters<typeof processTelegramUpdate>[1];
 
 const dispatch = (update: unknown): Promise<void> => processTelegramUpdate(update, env);
@@ -106,7 +108,16 @@ test('payment instructions arrive right after confirmation', async () => {
   assert.ok(texts.some((t) => t.includes('سفارش شما ثبت شد')));
   const instructions = sends().find((s) => String(s.text).includes('شماره کارت'));
   assert.ok(instructions, 'payment instructions message expected');
-  assert.match(String(instructions.text), /6037997100000000/);
+  // Phase 8C: the card is the env secret, shown as tap-to-copy inline code —
+  // and the seeded placeholder in the settings doc never reaches the wire.
+  assert.equal(instructions.payload['parse_mode'], 'HTML');
+  assert.ok(String(instructions.text).includes(`<code>${TEST_CARD}</code>`));
+  assert.equal(String(instructions.text).includes('6037997100000000'), false);
+  assert.ok(String(instructions.text).includes('(یک بار بزن روی مقدار، کپی می‌شه)')); // hint once
+  assert.equal(
+    String(instructions.text).split('(یک بار بزن روی مقدار، کپی می‌شه)').length - 1,
+    1,
+  );
   assert.ok(String(instructions.text).includes('تومان')); // formatted amount
   assert.ok(String(instructions.text).includes('فیش'));
 });

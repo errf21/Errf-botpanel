@@ -4,6 +4,7 @@
  * can never diverge.
  */
 import { newOrderId } from '../lib/security.ts';
+import { ensureSchedule } from './paymentReminders.ts';
 export interface OrderRow {
   id: string;
   customer_id: number;
@@ -157,6 +158,11 @@ export async function submitOrderReceipt(
       }),
     )
     .run();
+
+  // Phase 8C: exactly one reminder schedule per order. The first winning
+  // submission anchors t0 at row creation; a replacement loses this insert
+  // to the PK and provably keeps the ORIGINAL schedule (stage never resets).
+  await ensureSchedule(db, opts.orderId);
 
   const after = await getOrderById(db, opts.orderId);
   if (!after || after.state !== 'awaiting_review') return { ok: false, error: 'state_changed' };
