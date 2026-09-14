@@ -19,7 +19,15 @@ import { isValidCallbackData } from '../src/lib/validate.ts';
 
 const PERSIAN = /[\u0600-\u06FF\u200C\u200D]/;
 /** Leaves that are LOCALE-FIXED (same text in both bundles, on purpose). */
-const LOCALE_FIXED_KEYS = new Set(['menuLanguage', 'langOptionFa']);
+const LOCALE_FIXED_KEYS = new Set([
+  'menuLanguage',
+  'langOptionFa',
+  // Phase 11: brand labels on the guide's official-link buttons.
+  'guideBtnPlay',
+  'guideBtnStore',
+  'guideBtnGithub',
+  'guideBtnReleases',
+]);
 
 /* ———— structural contract ———— */
 
@@ -223,11 +231,12 @@ test('NO text-routed label collides across locales (one text never means two but
   for (const t of [FA_UI.t, EN_UI.t]) {
     const callbacks = [
       CB.MENU_BUY, CB.MENU_SERVICES, CB.MENU_ORDERS, CB.MENU_ACCOUNT,
-      CB.MENU_WALLET, CB.MENU_INVITE, CB.MENU_SUPPORT, CB.MENU_LANGUAGE,
+      CB.MENU_WALLET, CB.MENU_INVITE, CB.MENU_SUPPORT, CB.MENU_GUIDE,
+      CB.MENU_LANGUAGE,
     ] as const;
     const labels = [
       t.menuBuy, t.menuServices, t.menuOrders, t.menuAccount,
-      t.menuWallet, t.menuInvite, t.menuSupport, t.menuLanguage,
+      t.menuWallet, t.menuInvite, t.menuSupport, t.menuGuide, t.menuLanguage,
     ];
     labels.forEach((label, i) => put(label, callbacks[i] ?? 'menu'));
     put(t.backToMenu, 'back');
@@ -236,11 +245,15 @@ test('NO text-routed label collides across locales (one text never means two but
   }
 });
 
-test('menu keyboard carries the 8 entries with the locale-fixed selector last', () => {
-  assert.equal(MAIN_MENU_ENTRIES.length, 8);
-  assert.equal(MAIN_MENU_ENTRIES[7]?.callback, CB.MENU_LANGUAGE);
-  assert.equal(MAIN_MENU_ENTRIES[7]?.label, '🌐 زبان / Language');
+test('menu keyboard carries the 9 entries: unstyled guide, then the locale-fixed selector last', () => {
+  assert.equal(MAIN_MENU_ENTRIES.length, 9);
+  // Phase 11: guide sits directly before the language button and stays unstyled.
+  assert.equal(MAIN_MENU_ENTRIES[7]?.callback, CB.MENU_GUIDE);
+  assert.equal(MAIN_MENU_ENTRIES[7]?.label, '📚 راهنمای اتصال');
   assert.equal(MAIN_MENU_ENTRIES[7]?.style, undefined);
+  assert.equal(MAIN_MENU_ENTRIES[8]?.callback, CB.MENU_LANGUAGE);
+  assert.equal(MAIN_MENU_ENTRIES[8]?.label, '🌐 زبان / Language');
+  assert.equal(MAIN_MENU_ENTRIES[8]?.style, undefined);
   assert.equal(MAIN_MENU_ENTRIES.filter((e) => e.style !== undefined).length, 3);
 });
 

@@ -25,10 +25,12 @@ import { showMyServices } from './services.ts';
 import { showMyWallet } from './wallet.ts';
 import { showInvite } from './referrals.ts';
 import { openSupportEntry } from './support.ts';
+import { openGuide } from './guide.ts';
 import { resumeRenewal } from './renewal.ts';
 import { sendSummary, stepView } from './purchase.ts';
 
-/** The eight main-menu shortcuts rendered on the Reply Keyboard (Phase 10). */
+/** The eight main-menu shortcuts (all keyboard buttons except the language
+ *  picker, which the callers own) — Phase 11 adds the guide. */
 const MENU_SHORTCUTS: readonly string[] = [
   CB.MENU_BUY,
   CB.MENU_SERVICES,
@@ -37,6 +39,8 @@ const MENU_SHORTCUTS: readonly string[] = [
   CB.MENU_WALLET,
   CB.MENU_INVITE,
   CB.MENU_SUPPORT,
+  /** Phase 11: stateless read-only screens — safe from IDLE and from busy. */
+  CB.MENU_GUIDE,
 ];
 
 export function isMenuShortcut(callback: string): callback is KnownCallback {
@@ -83,8 +87,8 @@ async function startPurchase(ctx: UpdateContext, session: Session): Promise<void
 /**
  * Runs one main-menu shortcut against the CURRENT session (the code the
  * callback switch used to hold inline). Returns false for anything other
- * than the seven shortcuts — the caller keeps owning the rest of the
- * callback vocabulary (`menu:lang` included).
+ * than the eight shortcuts — the caller keeps owning the rest of the
+ * callback vocabulary (`menu:lang` and `gud:*` included).
  */
 export async function runMainMenuAction(
   ctx: UpdateContext,
@@ -110,6 +114,10 @@ export async function runMainMenuAction(
       return true;
     case CB.MENU_SUPPORT:
       await openSupportEntry(ctx, session);
+      return true;
+    case CB.MENU_GUIDE:
+      // Phase 11: read-only; the session is passed but never touched.
+      await openGuide(ctx);
       return true;
     case CB.MENU_ACCOUNT: {
       const record = await getCustomer(ctx.db, ctx.actor.id);

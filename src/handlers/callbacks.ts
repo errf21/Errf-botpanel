@@ -44,6 +44,7 @@ import {
 } from './purchase.ts';
 import { isMenuShortcut, runMainMenuAction } from './menuActions.ts';
 import { applyLanguageChoice, showLanguageChoice } from './language.ts';
+import { handleGuideCallback } from './guide.ts';
 import {
   armTicketReply,
   closeTicket,
@@ -150,6 +151,13 @@ export async function handleCallback(
   if (data === CB.LANG_EN) {
     await ctx.api.answerCallbackQuery(callbackQueryId);
     await applyLanguageChoice(ctx, 'en');
+    return;
+  }
+
+  // ———— Phase 11: the connection guide (stateless screens; session never read,
+  // never written — handled before the session read on purpose) ————
+  if (data.startsWith('gud:')) {
+    await handleGuideCallback(ctx, data, callbackQueryId);
     return;
   }
 

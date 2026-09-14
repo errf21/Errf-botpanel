@@ -28,13 +28,15 @@ src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
 src/telegram/api.ts         Telegram Bot API client (token only in env; opt-in HTML parse_mode)
 src/telegram/format.ts      Phase 8C: minimal Telegram HTML escape/inline-code helper (copy-friendly values)
 src/telegram/menu.ts        Callback vocabulary + localized keyboards (admin-only keyboards stay Persian literals); all-locale tap routing
+src/telegram/guide.ts       Phase 11 connection guide: static registry — verified official links, keyboards (no DB, no session)
 src/telegram/texts.ts       Persian bundle — the `Texts` contract, frozen persona copy, fa formatters
 src/telegram/texts.en.ts     Phase 10 English bundle — authored natively, type-checked against `Texts`
 src/telegram/i18n.ts          Phase 10 boundary: Locale, Fmt, uiFor() — the ONLY language branch
 src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit
-src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + admin-review buttons + Phase 10 `lang:` taps
+src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + admin-review buttons + Phase 10 `lang:` + Phase 11 `gud:` taps
 src/handlers/messages.ts    Text → state machine; all-locale keyboard routing; admin intercepts (reject reason, ticket reply, wallet ops)
 src/handlers/language.ts     Phase 10 language selector: picker → explicit D1 persistence → keyboard re-render
+src/handlers/guide.ts        Phase 11 guide screens: `gud:*` taps re-rendered statelessly in the actor's language
 src/handlers/payment.ts     Receipt submission, payment instructions, orders/queue views
 src/handlers/provisioning.ts Phase 5 admin queue: /failed + `adm:rt` retry taps
 src/handlers/services.ts    Phase 6 My Services (Phase 9 audit: remaining vol, expiry time, page CTA)
@@ -71,7 +73,7 @@ src/lib/security.ts         ULID order IDs, constant-time secret comparison
 src/lib/validate.ts         Payload guards: callbacks (admin+service+ticket+announce+ULID), media, sanitizers
 src/lib/referralPayout.ts   Shared post-approval referral payout (manual + wallet auto-pay paths)
 src/lib/http.ts             Response helpers
-tests/                      node --test: machine, validation, price, e2e phases 2–9
+tests/                      node --test: machine, validation, price, e2e phases 2–11
 .dev.vars.example           Template for local secrets (copy → .dev.vars)
 ```
 
@@ -369,7 +371,7 @@ established ISO-slice with Persian digits) and personality rules.
   begins only at an explicit tap and survives profile churn; the upsert
   never touches `language`. Migration 0010 adds the nullable CHECK'd column
   with **no backfill** (every existing user keeps today's behavior).
-- **Selector.** Main menu's 8th button (🌐 — locale-FIXED bilingual label,
+- **Selector.** Main menu's last (9th) button (🌐 — locale-FIXED bilingual label,
   so it is always findable and never needs re-routing) → picker with
   «🇮🇷 فارسی» / «🇬🇧 English» → per-actor write → confirmation IN THE NEW
   LANGUAGE, and the keyboard fitting the current state (menu / composing /
@@ -394,8 +396,34 @@ established ISO-slice with Persian digits) and personality rules.
   verbatim: an English-facing operation should provide its own bilingual or
   English values in D1 (no redeploy, no code change).
 - **Invariant.** Every pre-Phase-10 test still passes byte-for-byte on the
-  Persian strings; only two layout pins moved with the new keyboard row
-  (8 labels in 4 rows of 2, styled trio unchanged).
+  Persian strings; only layout pins moved when the guide joined the keyboard
+  (9 labels in 2/2/2/2/1 rows, the styled trio unchanged).
+
+## Connection guide (Phase 11)
+
+A customer-facing «📚 راهنمای اتصال» screen walk: platform → app → official
+links + one-minute import steps. By design it is the dumbest flow in the bot:
+
+- **Stateless.** No FSM states or events, no DB, no session touch: every
+  `gud:*` tap re-renders the static registry in `src/telegram/guide.ts` in
+  the actor's current locale — stale buttons are harmless (idempotent). Tests
+  pin `conversation_states` empty through the entire walk, including a guide
+  visit from a busy purchase.
+- **Closed vocabulary.** The guide adds plain allowlisted values only
+  (`menu:guide`, `gud:…`, pattern-validated like everything else); unknown
+  `gud:` payloads get the standard neutral toast. Both transports — reply-keyboard
+  text taps and legacy inline taps — share `runMainMenuAction`, and
+  English renders only through the existing Phase 10 explicit-choice machinery
+  (never `language_code`).
+- **Official links only, live-verified at build time** against each project's
+  own store/repo page: Google Play (v2RayTun), GitHub Releases + repo (v2rayNG,
+  Throne), App Store (V2Box, Streisand, IDs via Apple's lookup API). Where a
+  source could not be verified (v2rayNG's Play listing, proprietary iOS apps'
+  repos) the button simply does not exist — links are never guessed; unit +
+  e2e tests pin the exact URL set and hosts.
+- **Review rules baked into copy:** the v2rayNG install step and the Throne
+  SmartScreen step carry the operator-mandated safety wording (verify the
+  official source; never "bypass"), reviewed verbatim before build.
 
 ## Roadmap
 
@@ -410,5 +438,6 @@ established ISO-slice with Persian digits) and personality rules.
   - 8A reply keyboard ✅ · 8B persona copy ✅ · 8C payment UX + review reminders ✅
 - **Phase 9**: service notifications (90% usage + single expiry) + My Services audit ✅
 - **Phase 10**: full English support — native second voice, i18n boundary, selector, D1 persistence ✅
-- Phase 11 (next): final Cloudflare deployment + webhook registration
+- **Phase 11**: connection guide — stateless «📚 راهنمای اتصال» screens, verified official links, both locales ✅
+- Phase 12 (next): final Cloudflare deployment + webhook registration
 

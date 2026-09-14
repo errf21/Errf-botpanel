@@ -78,6 +78,8 @@ const MAIN_LABELS = [
   '💰 کیف پول',
   '🤝 دعوت از دوستان',
   '🆘 پشتیبانی',
+  // Phase 11: the connection guide — before the language button.
+  '📚 راهنمای اتصال',
   // Phase 10: the language selector — one locale-FIXED bilingual button.
   '🌐 زبان / Language',
 ];
@@ -116,7 +118,7 @@ function hasMainLabel(kb: ReplyKeyboard | undefined, label: string): boolean {
 
 // ————————————————————— keyboard shape —————————————————————
 
-test('/start presents a Reply Keyboard: 8 labels in 4 rows (2/2/2/2), RTL pairing', async () => {
+test('/start presents a Reply Keyboard: 9 labels in 5 rows (2/2/2/2/1), RTL pairing', async () => {
   const hero = { ...USER, id: 810000001, username: 'p8a_shape' };
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
@@ -126,7 +128,7 @@ test('/start presents a Reply Keyboard: 8 labels in 4 rows (2/2/2/2), RTL pairin
   assert.equal(kb!.is_persistent, true);
   assert.deepEqual(
     kb!.keyboard.map((r) => r.length),
-    [2, 2, 2, 2],
+    [2, 2, 2, 2, 1],
   );
   assert.deepEqual(
     kb!.keyboard.flat().map((b) => b.text),
@@ -174,6 +176,8 @@ test('every menu label sent as text triggers its existing action from IDLE', asy
     { label: '💰 کیف پول', stateAfter: 'IDLE', textMust: 'کیف پول' },
     { label: '🤝 دعوت از دوستان', stateAfter: 'IDLE', textMust: 'دعوت از دوستان' },
     { label: '🆘 پشتیبانی', stateAfter: 'WAITING_SUPPORT_MESSAGE', textMust: 'پشتیبانی' },
+    // Phase 11: the guide runs WITHOUT session involvement — IDLE stays IDLE.
+    { label: '📚 راهنمای اتصال', stateAfter: 'IDLE', textMust: 'سه قدم کوتاه' },
   ];
   let index = 0;
   for (const scenario of cases) {

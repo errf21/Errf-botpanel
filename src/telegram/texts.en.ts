@@ -450,6 +450,70 @@ const en: Texts = {
   accountLanguageEn: 'English',
   noticeServiceFallback: 'your service',
 
+  // ————— Phase 11: connection guide — reviewed English copy —————
+  // Authored to the Phase 10 voice rules: competent service desk, contractions
+  // welcome, no hype. Store/platform/app names are locale-fixed brand text.
+  menuGuide: '📚 Connection guide',
+  guideIntro:
+    '📚 Connection guide\n\nConnecting takes three quick steps:\n\n1) Copy the subscription link from 📦 My Services\n2) Install an app that fits your device\n3) Import the link into the app — and connect\n\nFirst — what are you connecting with? 👇',
+  guidePlatformAndroid:
+    '🤖 Connecting on Android\n\nPick one of the two apps below — both handle your subscription link, and each comes with its own step-by-step guide. For most phones, v2RayTun is the simpler pick.',
+  guidePlatformIos:
+    '🍎 Connecting on iPhone (iOS)\n\nInstall one of these two apps from the App Store — both import your subscription link. V2Box is the simpler pick.',
+  guidePlatformWindows:
+    '🪟 Connecting on Windows\n\nThrone is the pick for Windows — free and open-source. It imports subscription links straight from the official Releases page.',
+  guideHowToApp: (app: string) => `📖 How to connect — ${app}`,
+  guideBtnPlay: '📥 Google Play',
+  guideBtnStore: '🍏 App Store',
+  guideBtnReleases: '⬇️ Releases',
+  guideBtnGithub: '📦 GitHub',
+  guideOtherApps: '↩️ Other apps',
+  guideStepsTun: `📚 v2RayTun — connect in a minute
+
+1. Copy your subscription link: 📦 My Services → pick your service → tap the Subscription link.
+2. Install v2RayTun from Google Play using the button below.
+3. Open the app, tap +, and choose to import from the clipboard (QR or pasting the URL works too).
+4. Name the profile anything you like — "My service" is fine.
+5. Select the profile and tap Connect. When Android asks to set up a VPN connection, tap Allow.
+
+Once traffic starts counting, you're online. Leave the rest of the settings alone — your link already does the work.`,
+  guideStepsNg: `📚 v2rayNG — connect in a minute
+
+1. Copy your subscription link: 📦 My Services → pick your service → tap the Subscription link.
+2. This app ships through GitHub, not Google Play: the official download is the ⬇️ Releases button below. Grab the latest .apk and install it. If Android shows a security warning, follow the on-screen steps and make sure you are installing the release from the official 2dust/v2rayNG GitHub page.
+3. Open v2rayNG → menu (☰) → "Add subscription over URL".
+4. Paste the link, name the group, and confirm — the servers load right away.
+5. Pick a server and press the ▶ Connect button. Tap Allow on the VPN request.
+
+Defaults are fine — nothing else needs changing.`,
+  guideStepsV2box: `📚 V2Box — connect in a minute
+
+1. On your iPhone: copy your subscription link from 📦 My Services → pick your service → tap the Subscription link.
+2. Install V2Box from the App Store using the button below.
+3. Tap + (top right) → Subscribe → "Paste from clipboard" → name it → save.
+4. Select your new profile and flip the switch at the top.
+5. Tap Allow when iOS asks to add a VPN configuration — that's the only prompt.
+
+The status turns green once you're connected.`,
+  guideStepsStreisand: `📚 Streisand — connect in a minute
+
+1. On your iPhone: copy your subscription link from 📦 My Services → pick your service → tap the Subscription link.
+2. Install Streisand from the App Store using the button below.
+3. Open Configs (the list icon) → tap + → Subscription.
+4. Paste the link, keep the name it suggests, and save.
+5. Choose the new config as your active profile, then flip the main switch and tap Allow on the VPN prompt.
+
+Traffic in the status bar means you're online.`,
+  guideStepsThrone: `📚 Throne — connect in a minute
+
+1. Copy your subscription link from 📦 My Services → pick your service → tap the Subscription link. (On Telegram Desktop, right-click the link to copy it.)
+2. Click ⬇️ Releases below and grab the latest version — the installer, or the portable ZIP if you'd rather not install anything.
+3. If Windows SmartScreen shows a warning, verify that you downloaded Throne from the official GitHub releases page before continuing.
+4. Open Throne → add a profile → choose the subscription/URL type and paste the link.
+5. Pick your server and press Connect. Keep the default proxy mode.
+
+Green status in the app means your whole machine is routed.`,
+
   orderStatus(state: string): string {
     switch (state) {
       case 'pending_payment':

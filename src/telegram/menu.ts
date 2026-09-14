@@ -24,11 +24,27 @@ export const CB = {
   MENU_INVITE: 'menu:invite',
   MENU_TICKETS: 'menu:tickets',
   MENU_ANNOUNCE_LIST: 'menu:anncs',
-  /** Phase 10: opens the language picker (main menu 8th button). */
+  /** Phase 10: opens the language picker (stays the LAST main-menu button). */
   MENU_LANGUAGE: 'menu:lang',
   /** Phase 10: the two explicit choices; persisted server-side, never guessed. */
   LANG_FA: 'lang:fa',
   LANG_EN: 'lang:en',
+  /** Phase 11: opens the connection guide (main menu 9th button). */
+  MENU_GUIDE: 'menu:guide',
+  /**
+   * Phase 11: stateless guide navigation. Every screen is re-derived from the
+   * static registry in `guide.ts`, so these bare flat values (same validated
+   * `name:payload` shape as everything above) are safe to tap repeatedly —
+   * no state reads, no writes, no session involvement.
+   */
+  GUIDE_ANDROID: 'gud:android',
+  GUIDE_IOS: 'gud:ios',
+  GUIDE_WINDOWS: 'gud:windows',
+  GUIDE_AND_TUN: 'gud:and_tun',
+  GUIDE_AND_NG: 'gud:and_ng',
+  GUIDE_IOS_V2BOX: 'gud:ios_v2box',
+  GUIDE_IOS_STREISAND: 'gud:ios_streisand',
+  GUIDE_WIN_THRONE: 'gud:win_throne',
   ACT_CANCEL: 'act:cancel',
   ACT_BACK_MENU: 'act:back_menu',
   STEP_BACK: 'step:back',
@@ -269,6 +285,8 @@ const MAIN_MENU_CORE: readonly MenuCore[] = [
   { label: (t) => t.menuWallet, callback: CB.MENU_WALLET, style: 'success' },
   { label: (t) => t.menuInvite, callback: CB.MENU_INVITE },
   { label: (t) => t.menuSupport, callback: CB.MENU_SUPPORT },
+  /** Phase 11: the connection guide — deliberately unstyled, next to language. */
+  { label: (t) => t.menuGuide, callback: CB.MENU_GUIDE },
   { label: () => LANG_LABEL, callback: CB.MENU_LANGUAGE },
 ];
 
