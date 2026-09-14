@@ -1,511 +1,167 @@
-# telbotv2 — Telegram VPN Sales Bot
+# TELBOTV2 — Telegram VPN Sales Bot
 
-Professional Telegram bot for selling VPN configurations/services.
+> A production-grade Telegram bot for selling VPN services, running entirely on
+> Cloudflare Workers + D1, with automatic provisioning on a **PasarGuard** panel and
+> intentionally **manual** (admin-verified) card payments.
 
-**Architecture:** Telegram Bot → Cloudflare Worker → Cloudflare D1 → PasarGuard Panel API.
-Payment verification is intentionally **manual** (admin approval); everything else is automated where practical.
+[🇮🇷 **مستندات فارسی**](docs/fa/README.md) · English (default)
 
-## Project layout
+**Creator / سازنده:** [Espierz](https://t.me/Espierz) · Telegram / تلگرام: [@Espierz](https://t.me/Espierz)
+
+---
+
+## What it does
+
+TELBOTV2 is a self-contained sales office for a VPN operation:
+
+- Customers browse options, place orders, pay by **card**, upload a receipt, and get a
+  working subscription link — all inside Telegram, in **Persian or English**.
+- The bot prices every order with a live, admin-editable pricing model, provisions the
+  service on the PasarGuard panel automatically after payment approval, handles
+  renewals, wallets, referrals, support tickets, announcements, usage/expiry notices,
+  and a connection guide — with an audit trail behind every money decision.
+
+**Automated:** catalog & order placement flows, pricing, idempotent order creation,
+provision (one guarded path), renewals, wallet ledger, referral payouts, reminders and
+service notifications, language, safety checks everywhere.
+**Manual by design:** payment verification (the admin reviews every uploaded receipt),
+funds reconciliation on rejected payments (wallet refund), wallet grants/debits
+(`admin /credit` / `admin /debit`), announcements authoring, sales stop/resume, pricing edits (admin-confirmed).
+
+## Architecture
 
 ```
-wrangler.jsonc              Worker config: D1 binding, non-secret vars
-migrations/0001_init.sql    D1 foundation schema (orders, audit trail, settings)
-migrations/0002_phase2.sql  conversation_states + update_dedupe
-migrations/0003_phase3.sql  orders.idempotency_key + seeded catalog/pricing docs
-migrations/0004_phase4.sql  payment_info seed + admin_actions table
-migrations/0005_phase5.sql  provision_attempts/subscription_url + provisioning doc seed
-migrations/0006_phase6.sql  orders.kind/service_expires_at + renewal states & docs
-migrations/0007_phase7.sql  wallet ledger + referrals + support tickets + announcements
-migrations/0008_phase8c.sql  payment_reminders claim table (+safe backfill)
-migrations/0009_phase9.sql   service_notifications claim table (+suppress backfill)
-migrations/0010_phase10.sql  customers.language: Phase 10 explicit-choice column
-migrations/0011_pricing_model.sql  'pricing' admin arming + settings_audit + schema-2 pricing doc (placeholders again)
-migrations/0012_device_limit.sql   device_options ladder → presets {1,2,3}, custom OFF (pricing doc untouched)
-migrations/0013_sales_switch.sql   'sales' settings doc: {"schema":1,"stopped":false} (fail-open commercial stop)
-src/index.ts                Fetch router: /health, /telegram/webhook + 5-min cron (scheduled)
-src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
-src/dispatch.ts             Update pipeline: dedupe → register (upsert carries the locale → ctx.ui) → route
-src/admin.ts                Admin authorization, receipt forwarding, review + wallet refund + referral payout
-src/routes/health.ts        Liveness + D1 connectivity + binding status
-src/routes/webhook.ts       Auth webhook gates → dispatch (always ACKs)
-src/telegram/api.ts         Telegram Bot API client (token only in env; opt-in HTML parse_mode)
-src/telegram/format.ts      Phase 8C: minimal Telegram HTML escape/inline-code helper (copy-friendly values)
-src/telegram/menu.ts        Callback vocabulary + localized keyboards (admin-only keyboards stay Persian literals); all-locale tap routing
-src/telegram/guide.ts       Phase 11 connection guide: static registry — verified official links, keyboards (no DB, no session)
-src/telegram/texts.ts       Persian bundle — the `Texts` contract, frozen persona copy, fa formatters
-src/telegram/texts.en.ts     Phase 10 English bundle — authored natively, type-checked against `Texts`
-src/telegram/i18n.ts          Phase 10 boundary: Locale, Fmt, uiFor() — the ONLY language branch
-src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit /pricing /sales
-src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + sales + admin-review buttons + Phase 10 `lang:` + Phase 11 `gud:` taps
-src/handlers/messages.ts    Text → state machine; all-locale keyboard routing; admin intercepts (reject reason, ticket reply, wallet ops)
-src/handlers/language.ts     Phase 10 language selector: picker → explicit D1 persistence → keyboard re-render
-src/handlers/guide.ts        Phase 11 guide screens: `gud:*` taps re-rendered statelessly in the actor's language
-src/handlers/payment.ts     Receipt submission, payment instructions, orders/queue views
-src/handlers/provisioning.ts Phase 5 admin queue: /failed + `adm:rt` retry taps
-src/handlers/services.ts    Phase 6 My Services (Phase 9 audit: remaining vol, expiry time, page CTA)
-src/handlers/renewal.ts     Phase 6 renewal ladder + Phase 7 wallet payment for renewals
-src/handlers/wallet.ts      Phase 7 wallet view, admin grant/debit (arm→amount→guarded apply)
-src/handlers/referrals.ts   Phase 7 invite screen, first-touch capture, payout notices
-src/handlers/support.ts     Phase 7 tickets: open/follow-up/queue/reply/close (admin relay)
-src/handlers/announcements.ts Phase 7 broadcast: draft → confirm → chunked resumable fan-out
-src/handlers/paymentReminders.ts Phase 8C cron sweep: claimed 15/30/45 nudges + one admin digest/run
-src/handlers/serviceNotifications.ts Phase 9 cron sweep: one usage90 + one expiry notice per service (+page-discovery CTAs)
-src/handlers/pricingAdmin.ts Phase 12 admin surface: /pricing view → arm → type → stage → confirm → guarded apply
-src/handlers/salesAdmin.ts   Phase 13 admin surface: /sales view + sal:stop/start (+ CAS + settings_audit toggle)
-src/state/machine.ts        Pure conversation state machine (buy + renewal + support + announce ladders)
-src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
-src/catalog/pricing.ts      Pure integer price engine (exact admin entries; breakdown snapshots its inputs)
-src/catalog/pricingDoc.ts   Phase 12 admin edit layer: field tokens, per-field bounds, canonical round trip
-src/catalog/payment.ts      Load + validate payment_info JSON (degrade-safe)
-src/catalog/provisioning.ts Load + validate provisioning-policy JSON (degrade-safe)
-src/catalog/renewal.ts      Load + validate renewal-policy JSON (kill switch, degrade-safe)
-src/catalog/sales.ts        Phase 13 commercial-stop loader — FAIL-OPEN (only explicit stopped:true blocks)
-src/db/sales.ts             Phase 13 sales-doc CAS toggle (raw doc = token) + append-only settings_audit
-src/catalog/wallet.ts       Load + validate wallet-policy JSON (kill switch + caps, degrade-safe)
-src/catalog/referral.ts     Load + validate referral-policy JSON (kill switch + reward/cap, degrade-safe)
-src/pasarguard/client.ts    PasarGuard REST client: X-Api-Key, timeouts, typed errors (GET/POST/PUT)
-src/provision/provision.ts  THE ONLY provisioning path: purchase-create + renewal-extend, audit
-src/db/orders.ts            Orders: atomic create (incl. born-approved wallet orders), guarded receipt/review/provision/renewal + same-batch reject refund
-src/db/wallet.ts            Wallet ledger: guarded credit/debit, exactly-once order payment/refund, re-point by id
-src/db/referrals.ts         Referral codes, first-touch attribution, exactly-once capped payout (PK guard)
-src/db/support.ts           Support tickets: one live per customer (UNIQUE), append-only messages
-src/db/announcements.ts     Broadcast jobs: seed-once deliveries, chunk claim/book/settle, stuck sweep
-src/db/admin_actions.ts     Short-lived armed admin prompts (reject / ticket reply / grant / debit / pricing edit)
-src/db/pricing.ts           Pricing arming payload (token=staged:fingerprint), CAS doc swap + settings_audit
-src/db/paymentReminders.ts  Phase 8C: one-anchor reminder schedule per order + single-statement stage claims
-src/db/serviceNotifications.ts Phase 9: one usage90 + one expiring row per service; lease claims, sent never written pre-delivery
-src/db/customers.ts         Customers: idempotent upsert, is_admin flag, first-ever probe, admin-chat lookup
-src/db/{states,dedupe}.ts   Conversation sessions (24h TTL) + webhook replay guard
-src/orders/checkout.ts      Draft → priced → durable order: purchase + renewal + wallet plans (full/partial)
-src/handlers/purchase.ts    Buy steps + summary (+wallet buttons) + idempotent confirm & auto-approve + Phase 13 stop gates
-src/lib/security.ts         ULID order IDs, constant-time secret comparison
-src/lib/validate.ts         Payload guards: callbacks (admin+service+ticket+announce+ULID), media, sanitizers
-src/lib/referralPayout.ts   Shared post-approval referral payout (manual + wallet auto-pay paths)
-src/lib/http.ts             Response helpers
-tests/                      node --test: machine, validation, price, e2e phases 2–11
-.dev.vars.example           Template for local secrets (copy → .dev.vars)
+Telegram ⇄ Cloudflare Worker (this repo) ⇄ Cloudflare D1 ⇄ PasarGuard panel API
+             webhook /telegram/webhook      single source      provisioning &
+             + /health + 5-min cron         of truth (JSON     live reads
+              sweeps                settings docs, orders,
+                                    ledgers, audit)
 ```
 
+Full details: [Architecture](docs/en/architecture.md) · [معماری](docs/fa/architecture.md)
 
-## Prerequisites
+## Feature overview
 
-- Node.js (v20+), npm
-- A Cloudflare account (`npx wrangler login`)
+| Area | Status | Where |
+| --- | --- | --- |
+| Browse & buy (volume / duration / device presets, custom input where allowed) | ✅ | [Features](docs/en/features.md) |
+| Card payment + manual receipt verification by admins | ✅ | [Payment & Wallet](docs/en/payment-wallet.md) |
+| PasarGuard provisioning (idempotent create + renewal extend) | ✅ | [PasarGuard](docs/en/pasarguard.md) |
+| Integer pricing model, live `/pricing` editing, snapshots, audit | ✅ | [Pricing](docs/en/pricing.md) |
+| My Services (live panel status + local snapshot), renewals | ✅ | [Features](docs/en/features.md) |
+| Wallet (ledger-based, guarded credit/debit, full/partial order payment) | ✅ | [Payment & Wallet](docs/en/payment-wallet.md) |
+| Referrals (first-touch attribution, capped exactly-once payouts) | ✅ | [Payment & Wallet](docs/en/payment-wallet.md) |
+| Support tickets + chunked resumable broadcast announcements | ✅ | [Admin](docs/en/admin.md) |
+| Payment-review reminders + usage-90%/expiry service notices (cron sweeps) | ✅ | [Architecture](docs/en/architecture.md) |
+| Sales stop / resume switch `/sales` (commercial kill switch) | ✅ | [Pricing](docs/en/pricing.md) |
+| Connection guide (stateless, verified official app links) | ✅ | [Customer guide](docs/en/customer-guide.md) |
+| Full Persian + English UI (explicit choice, Persian default) | ✅ | [Localization](docs/en/localization.md) |
 
-## Setup
+## Quick start
 
 ```bash
+git clone <this-repo-url> && cd telbotv2
 npm install
-cp .dev.vars.example .dev.vars   # fill in local secret values
+cp .dev.vars.example .dev.vars        # fill with LOCAL dev secrets — never commit
+npx wrangler d1 create telbot-db      # paste database_id into wrangler.jsonc
+npm run db:migrate:local              # apply migrations 0001→0013 to the local DB
+npx wrangler secret put TELEGRAM_BOT_TOKEN        # (and the other 3 secrets)
+npm run typecheck && npm test         # must pass before anything else
+npm run dev                           # http://localhost:8787/health
 ```
 
-### D1 database
+The complete from-zero → production path is
+[setup](docs/en/setup.md) + [deployment](docs/en/deployment.md).
 
-```bash
-npx wrangler d1 create telbot-db
-# paste the returned database_id into wrangler.jsonc (replaces REPLACE_WITH_D1_DATABASE_ID)
+## Configuration in one table
 
-npx wrangler d1 migrations apply telbot-db --local    # local dev DB
-npx wrangler d1 migrations apply telbot-db --remote   # production (at deploy time)
-```
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `DB` | D1 binding | The database `telbot-db` (schema + business config as JSON docs) |
+| `TELEGRAM_BOT_TOKEN` | Secret | Bot token from BotFather — send replies only |
+| `TELEGRAM_WEBHOOK_SECRET` | Secret | Echoed by Telegram in `X-Telegram-Bot-Api-Secret-Token`; webhook fails closed without it |
+| `PASARGUARD_API_KEY` | Secret | Panel API key (`x-api-key` header); provisioning a strict no-op while unset |
+| `PAYMENT_CARD_NUMBER` | Secret | Seller card — the ONLY runtime source of the card shown to customers |
+| `ADMIN_CHAT_ID` | Var (`wrangler.jsonc`) | One numeric Telegram user id of the primary admin |
+| `PASARGUARD_PANEL_URL` | Var (`wrangler.jsonc`) | Panel base URL (HTTPS-only, validated) |
 
-### Secrets — never commit, never hardcode, never log
+All variables, how to obtain them, and every business settings document that lives in
+D1 are documented in [Configuration](docs/en/configuration.md) ·
+[پیکربندی](docs/fa/configuration.md). **Never commit real values; never log secrets.**
 
-```bash
-npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
-npx wrangler secret put PASARGUARD_API_KEY    # Phase 5 (panel admin → API keys)
-npx wrangler secret put PAYMENT_CARD_NUMBER   # Phase 8C: seller card — the ONLY card source
-```
-
-**Deploy checklist (Phase 8C):** payment instructions fail **closed** without
-`PAYMENT_CARD_NUMBER` (customers get the "not available — contact support"
-notice and the event log shows `payment_card_secret_unconfigured` — the value
-is never logged). The `card_number` field left over inside the `payment_info`
-settings doc is inert at runtime; admins may delete it from the document at
-leisure (the 0004 seed placeholder must simply never be relied upon).
-
-Non-secret configuration (panel URL, admin chat id) lives in `wrangler.jsonc`
-as `vars`. **Business data** (volume/duration/device options, prices, payment
-information) lives in the D1 `settings` table as JSON documents (schema-versioned).
-The 0003 migration seeds placeholder catalog/pricing (0011 reseeds the pricing
-document to the Phase-12 schema-2 shape — still placeholders; 0012 replaces the
-device_options ladder with the purchasable range presets {1,2,3}, custom OFF —
-the pricing document is NOT touched, so `user_prices` 4..10 remain as unreachable
-compat entries); changing a preset, a minimum, or enabling/disabling/reordering an
-option is a **D1 edit only** —
-never a code change, never a redeploy. The four price NUMBERS the business cares
-about (base, per-GB, duration entries, user entries) are editable live by admins
-from Telegram via `/pricing` (armed, confirmed, audited — see below).
-
-### Catalog & pricing model
-
-Each of `volume_options`, `duration_options`, `device_options`, `pricing` is a
-versioned JSON document validated at load time (`src/catalog/catalog.ts`). A
-malformed/incompatible document degrades to a friendly "temporarily unavailable"
-response; it never crashes or silently invents defaults.
-
-**Price formula** (`src/catalog/pricing.ts`, Phase 12 model, integer-only — no
-float money, no invented multipliers):
+## Repository layout
 
 ```
-total = time + volume + users
-  time   = months == 1 ? base_product.price : duration_prices[months]
-  volume = max(0, volume_gb − base_product.gb) × price_per_gb
-  users  = user_prices[device_count]
+src/                TypeScript Worker (no framework, minimal deps)
+├─ index.ts         fetch router + scheduled (cron) entry points
+├─ dispatch.ts      update pipeline: dedupe → register → route (always ACK)
+├─ admin.ts         admin authorization, review, refund/payout
+├─ routes/          /health  /telegram/webhook
+├─ handlers/        all Telegram flows (customer + admin surfaces)
+├─ state/machine.ts pure conversation state machine
+├─ catalog/         config-doc loaders + price/validation engines (fail-closed)
+├─ db/              guarded SQL (D1) per domain — claims, CAS, ledgers, audits
+├─ orders/checkout  the single path from priced draft → durable order
+├─ pasarguard/      typed REST client (X-Api-Key, timeouts, error kinds)
+├─ provision/       THE provisioning orchestrator (create + extend, idempotent)
+└─ telegram/        api client, keyboards, en/fa text bundles, i18n boundary
+migrations/         0001→0013 — strict linear order, additive/seeded (enum
+                    changes shipped as CHECK-rebuild migrations)
+tests/              node --test: unit + e2e against in-memory SQLite D1 shim
+docs/en/ docs/fa/   full bilingual documentation (this site)
+wrangler.jsonc      Worker config: binding, vars, cron, migrations dir
 ```
 
-The base product is 10GB + 1 user + 1 month and costs `base_product.price`;
-every other month count and every user count is priced by its OWN exact
-admin-defined entry (2 months is deliberately not 2 × 1 month — the admin's
-numbers decide). Renewals charge only the same time table. `days_per_month` is
-purely the days↔months unit bridge (the catalog and provisioning stay day-based).
+## Documentation
 
-`loadCatalog` cross-validates the pricing tables against the ladder documents:
-every choice a customer can actually reach (enabled presets, and the whole
-custom range where allowed) must carry a price, or the catalog fails closed
-with a "temporarily unavailable" response instead of mid-flow surprises.
+| # | English (English) | فارسی (Persian) |
+| --- | --- | --- |
+| 1 | [Setup & requirements](docs/en/setup.md) | [راه‌اندازی و پیش‌نیازها](docs/fa/setup.md) |
+| 2 | [Configuration](docs/en/configuration.md) | [پیکربندی](docs/fa/configuration.md) |
+| 3 | [Architecture & source map](docs/en/architecture.md) | [معماری و نقشهٔ کد](docs/fa/architecture.md) |
+| 4 | [Database & migrations](docs/en/database.md) | [پایگاه داده و مهاجرت‌ها](docs/fa/database.md) |
+| 5 | [Telegram setup](docs/en/telegram.md) | [راه‌اندازی تلگرام](docs/fa/telegram.md) |
+| 6 | [PasarGuard integration](docs/en/pasarguard.md) | [یکپارچه‌سازی PasarGuard](docs/fa/pasarguard.md) |
+| 7 | [Features (implemented)](docs/en/features.md) | [امکانات پیاده‌سازی‌شده](docs/fa/features.md) |
+| 8 | [Pricing model & sales stop](docs/en/pricing.md) | [مدل قیمت‌گذاری و توقف فروش](docs/fa/pricing.md) |
+| 9 | [Payment, wallet & referrals](docs/en/payment-wallet.md) | [پرداخت، کیف پول و دعوت](docs/fa/payment-wallet.md) |
+| 10 | [Admin operations guide](docs/en/admin.md) | [راهنمای عملیات ادمین](docs/fa/admin.md) |
+| 11 | [Customer guide](docs/en/customer-guide.md) | [راهنمای مشتری](docs/fa/customer-guide.md) |
+| 12 | [Localization](docs/en/localization.md) | [زبان و بومی‌سازی](docs/fa/localization.md) |
+| 13 | [Security model](docs/en/security.md) | [مدل امنیتی](docs/fa/security.md) |
+| 14 | [Development](docs/en/development.md) | [توسعه](docs/fa/development.md) |
+| 15 | [Deployment & updates](docs/en/deployment.md) | [استقرار و به‌روزرسانی](docs/fa/deployment.md) |
+| 16 | [Troubleshooting](docs/en/troubleshooting.md) | [عیب‌یابی](docs/fa/troubleshooting.md) |
+| 17 | [Maintenance](docs/en/maintenance.md) | [نگهداری](docs/fa/maintenance.md) |
 
-**Admin pricing (`/pricing`, Phase 12 — Persian operational surface):** admins
-see the live values with one button per editable entry (the field list is
-generated from the document, so new duration/user entries appear with no code
-change). Tapping a field arms the edit (`admin_actions`, one pending per admin,
-15-min TTL); the admin types the number, which is STAGED server-side (never
-embedded in a button) and only lands after an explicit ✅ confirm. Application
-is a compare-and-swap on the exact document read at staging time (fingerprint
-mismatch or lost race → "another admin changed this", zero writes), every
-successful change appends the FULL before/after documents to `settings_audit`,
-and `settings.updated_by` records the actor. Customers can never receive the
-keyboard, the `/pricing` reply, or a routed `prc:` tap — every path re-checks
-`ctx.isAdmin` server-side and foreign payloads are inert.
+## Production status
 
-**Sales stop (`/sales`, Phase 13 — Persian operational surface):** a persistent
-D1 switch (`settings['sales']` = `{"schema":1,"stopped":bool}`, seed 0013) for a
-**temporary commercial stop**: while `stopped:true`, every path that CREATES or
-EXTENDS a paid service refuses with the same customer-facing notice — fresh buy
-entry (both transports), `ord:confirm`, wallet full/partial, and renewals
-(entry, duration step, receipt confirm and wallet confirm alike; the renew
-button is also hidden). The enforcement is layered: gates at each entry/confirm
-point plus a structurally unbypassable backstop inside `checkoutOrder`/
-`checkoutRenewalOrder` (and gates fire BEFORE any wallet debit, so a stop can
-never consume credit; a toggle racing in-flight is caught by the backstop and
-the existing no-order-means-refund path). What MUST keep working while stopped:
-`/start`, existing services (list/detail/refresh/panel page), order history,
-receipt upload and admin approval of orders created before the stop (their
-provisioning fulfillment is deliberately NOT gated — no stranded money),
-wallet/account/referral/support/guide/language, announcements, and the admin
-surfaces themselves (an admin can always resume, and may announce the resumption
-with `/announce`). The loader FAILS OPEN: a missing/malformed row means sales
-ENABLED — only an explicit `stopped:true` blocks. Toggling is CAS-protected
-(two admins, one winner) and every change appends full before/after documents
-to `settings_audit` (actor `admin:<id>`, action `stop`/`start`); the state lives
-only in D1, read fresh on every webhook, so it survives restarts by construction.
+The codebase implements Phases 1–13 (each with green tests). **The Worker itself has
+not been proven deployed in this repository's evidence**: `wrangler.jsonc` still ships
+with `database_id = REPLACE_WITH_D1_DATABASE_ID`, and migrations/webhook registration
+are operator actions done outside the repo. Follow
+[Deployment](docs/en/deployment.md) / [استقرار](docs/fa/deployment.md) and the
+**Production checklist** there to go live or to audit a live instance — including
+checking which of the 13 migrations are actually applied.
 
-All inputs are validated as safe integers with hard caps, so prices cannot
-overflow. The calculated **breakdown including the exact table entries used**
-is snapshotted into each order, so later pricing edits can never alter a
-placed order. Presets and custom values are re-validated against the freshly loaded
-catalog on every update — keyboard payload values are never trusted.
+## Security notes
 
-## Local development
+- Secrets are only ever provided via `wrangler secret put` / `.dev.vars`; the `.dev.vars`
+  file is git-ignored. No token, card number, or API key may ever enter commits, logs, or
+  Telegram messages (enforced by the code paths themselves).
+- The webhook is fail-closed until `TELEGRAM_WEBHOOK_SECRET` is set and validates the
+  secret (constant-time) before touching anything.
+- Panel keys travel only in the `x-api-key` HTTPS header.
+- All money transitions are single guarded SQL updates plus append-only ledger/audit rows —
+  double taps, replays, and concurrent admins converge on exactly one winner.
 
-```bash
-npm run typecheck        # tsc --noEmit
-npm test                 # node --test (state machine, payload validation, D1+dispatcher e2e)
-npm run dev              # wrangler dev  (uses .dev.vars + local D1 copy)
+## License
 
-curl http://localhost:8787/health                  # status + checks
-printf '{"update_id":1}' | curl -sX POST http://localhost:8787/telegram/webhook \
-  -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'content-type: application/json' -d @-
-```
+No license file is present in this repository yet (as of this documentation pass). All
+rights are reserved by the author until a `LICENSE` is added. © [Espierz](https://t.me/Espierz)
 
-## Endpoints
+---
 
-| Method | Path                | Purpose                                            |
-| ------ | ------------------- | -------------------------------------------------- |
-| GET    | `/health`           | Liveness, D1 connectivity, binding status          |
-| POST   | `/telegram/webhook` | Telegram updates; requires matching secret header  |
-
-The webhook endpoint fails **closed** (503) until `TELEGRAM_WEBHOOK_SECRET` is
-configured and rejects requests with a wrong token (401).
-
-## Order safety model
-
-- ULID unique order IDs (sortable, collision-resistant)
-- Strict order `state` enum (CHECK constraint in SQLite); drafts start `pending_payment`
-- Draft `order_token` → `orders.idempotency_key` with **partial UNIQUE index**:
-  the same confirmation can never create two order rows (3 layers: update
-  dedupe → session order_id check → DB unique race guard)
-- Order creation = `db.batch()` transaction (order row + audit event, atomic)
-- `selections` stores an immutable snapshot: chosen options + full price
-  breakdown with applied rates + catalog limits — later config changes
-  cannot alter placed orders
-- `pasarguard_username` / `pasarguard_user_id` are `UNIQUE` → duplicate service creation prevented at DB level
-- `order_events` = append-only audit trail of every transition and admin action
-- Payment receipt fields isolated from selections; admin verification tracked separately
-
-## Payment & admin review model (Phase 4)
-
-- After confirmation the customer receives payment instructions rendered from
-  the D1 `payment_info` settings doc (card/holder/IBAN/instructions — placeholders
-  in 0004, edited without redeploy) plus the order's snapshotted amount.
-- A receipt is a **photo or document message** (caption = optional payment
-  reference); text is politely ignored. Submitted in `WAITING_PAYMENT_RECEIPT`,
-  stored on the order (`receipt_file_id`/`payment_reference`), order moves
-  `pending_payment → awaiting_review` and the receipt is forwarded to every
-  admin (photo/document + approve/reject buttons). A second upload **replaces**
-  the receipt while still `awaiting_review` (audited, re-forwarded).
-- Admins = env `ADMIN_CHAT_ID` **or** `customers.is_admin = 1` (row added in
-  P1). Forwarding targets both. `/pending` re-lists awaiting orders with
-  buttons (recovery path).
-- Approval/rejection: inline buttons on the forwarded receipt. Reject asks for
-  a reason (free text, sanitized, ≤200 chars; a skip button applies a default);
-  the pending prompt lives in `admin_actions` with a 15-min TTL. Transitions
-  are **single guarded UPDATEs** (`WHERE state='awaiting_review'` + affected-row
-  check) so double taps / two admins cannot process an order twice; winners
-  audit `payment_approved|payment_rejected` with `actor='admin:<telegram_id>'`.
-- Every admin action resets the customer's conversation to IDLE, notifies the
-  customer of the outcome (with the rejection reason), and edits the admin
-  message to neutralize dead buttons. Verification is **always manual** —
-  Phase 5 (PasarGuard) only ever acts on `approved` orders.
-
-## Provisioning model (Phase 5)
-
-- Approval triggers one provisioning attempt: the webhook ACKs immediately and
-  provisioning runs on the Worker's `waitUntil` (`pasarguard/client.ts` →
-  `provision/provision.ts`).
-- One guarded UPDATE claims `approved → provisioning` (admin retry claims
-  `failed → provisioning` against a cap) — double taps, replays and parallel
-  instances can never run two creates for one order.
-- The panel username is deterministic (`provisioning.username_prefix` +
-  order id, lower case) and is claimed on the order row **before** any panel
-  call (`UNIQUE` guard). Every attempt pre-checks `GET /api/user/by-username/`
-  first: a pre-existing service is adopted (e.g. after an ambiguous timeout),
-  so the POST is never blindly repeated and duplicates are impossible by
-  design. A 409 from create re-reads the winner and adopts it.
-- `POST /api/user` payload: `status`, `data_limit` (= volume GB × 10⁹ bytes),
-  `expire_duration` (= days × 86400 s), `hwid_limit` (= device count),
-  `group_ids` + policy from the versioned `provisioning` settings doc (0005 —
-  admin-editable, never code), and `note: telbot:<order-id>`.
-- Success → `completed` + `pasarguard_user_id`/`subscription_url` +
-  `service_created_at`, audited, and the customer instantly receives the
-  panel's subscription link. Failure (network/5xx/rejected) → `failed` +
-  capped sanitized reason; the customer is told it is being handled, admins
-  get a push with a retry button and `/failed` lists the whole queue.
-- **Strict fail-closed no-op**: without `PASARGUARD_API_KEY`/panel URL, or a
-  valid+enabled `provisioning` doc, `provisionOrder` performs zero DB or
-  network writes and the order simply remains `approved` (Phase 1–4 behavior
-  unchanged on every existing path).
-- The API key travels only in the `x-api-key` HTTPS header, is never logged and
-  never reaches any Telegram text. The panel wire formats were re-confirmed in
-  Phase 6 directly against the dashboard's own bundles (`/statics/api-*.js`,
-  its user-edit dialog and the `+1m/+2m/+3m` quick buttons): SI `data_limit`
-  bytes, absolute unix-second `expire`, `X-Api-Key` auth. Final live proof
-  still comes from **read-only** authenticated GETs before the first real
-  production deploy.
-
-## Services & renewals model (Phase 6)
-
-- A **service IS a completed purchase order** — no separate table. The order
-  gains `kind` (`purchase|renewal`), and services carry `renew_target_unix` /
-  `service_expires_at` for exact renewal bookkeeping.
-- **My Services** (`menu:services`) lists the customer's completed purchases
-  from D1 with a local-computed status (🟢 active / ⏳ near / ‼️ expired).
-  A service **detail** optionally enriches with a live panel read
-  (`GET by-username`: panel status, absolute expire, used/total traffic) and
-  **degrades safely to the D1 snapshot when the panel key/URL is missing or
-  the call fails** — an unconfigured panel changes no existing Phase 1–5 path.
-- **Renewal is duration-only** (the Phase-6 decision): the ladder asks for 1/2/3
-  months (presets, **never custom text**) → summary → confirm → a durable
-  `kind='renewal'` order priced at the EXACT admin entry for that duration
-  (1 month = the base product price, otherwise the `duration_prices` entry —
-  the same table the purchase ladder uses, table-snapshotted like a purchase)
-  that reuses the SAME
-  receipt + manual admin-review pipeline. `step:back` steps out of the ladder.
-- Renewals are allowed per the `renewal` policy doc (`enabled` kill switch;
-  `renewal.near_expiry_days` only lights up the "soon" badge) — and, since
-  Phase 13, they are ALWAYS refused while the sales-stop switch is ON (a stop
-  may mean panel/template capacity is exhausted). An **expired** service renews
-  from `now`, not from its past expiry — `target = max(now, live/local expire) + days`.
-- The renewal `svc:` callbacks embed a full 28-char order id, so they get a
-  strict allowlisted pattern (`svc:(det|ref|rnw):<28>`) parsed by
-  `parseServiceCallback`; every action re-checks **ownership in the WHERE
-  clause** (`customer_id`) server-side — a forged or cross-user id is a
-  neutral toast with zero data leak.
-- Applying an approved renewal (also via `waitUntil`): one guarded claim
-  `approved→provisioning` → resolve the owned **service row** → read current
-  expire → claim an ABSOLUTE `renew_target_unix` on the renewal row **before**
-  any panel write → if the panel already shows `>= target` ADOPT it (no PUT),
-  else `PUT by-username {expire: target}` → verify `>= target` → mark the
-  renewal `completed` + book the service's local `service_expires_at`
-  **forward-only** (a late/parallel bookkeeping can never shorten it) +
-  `service_extended` audit on the service row. Failure → `failed` + retryable
-  through `/failed` exactly like a purchase; retries **converge on the already
-  claimed target** so an ambiguous write can never stack a double extension.
-  It never touches `pasarguard_user_id`/`subscription_url` (they are the
-  service's UNIQUE identity).
-- The renewal policy lives in a versioned `renewal` settings doc (0006):
-  `enabled` is a kill switch that makes the apply step + UI degrade to "not
-  available right now" with **strict fail-closed zero DB/network writes** on a
-  missing/malformed doc; the single `provisioning.enabled` flag remains the
-  one master switch over ALL panel writes (creates AND extensions).
-
-## Payment review reminders (Phase 8C)
-
-- **Trigger:** Cloudflare **Cron Triggers** (`wrangler.jsonc → triggers.crons =
-  ["*/5 * * * *"]` → the Worker's `scheduled` handler). The only wall-clock
-  mechanism that fires with zero traffic; DO alarms were considered and
-  rejected as overkill. `wrangler dev` does not fire crons — tests drive the
-  sweep directly with an explicit `now`.
-- **Ladder:** anchored at the FIRST receipt submission, stages fire at
-  ≥15/≥30/≥45 elapsed minutes — three distinct customer nudges MAX, never
-  early (cron granularity only delays ≤5 min), catch-up runs send only the
-  TOPMOST due stage (no burst), and nothing is ever sent afterwards: 3 and
-  done.
-- **Exactly-once mechanics (claim-first, at-most-once):** one
-  `payment_reminders` row per order (PK order_id, `INSERT OR IGNORE` —
-  a replacement receipt provably cannot add or re-anchor a schedule); each
-  stage is claimed by a SINGLE guarded UPDATE whose equality check on
-  `reminded_stage` and fused `state='awaiting_review'` subquery make
-  overlapping runs, replays and concurrent approvals converge on one winner.
-  A crash after a won claim loses that one nudge — the deliberate tradeoff
-  (duplicates are worse than a lost nudge).
-- **Admin UX:** one consolidated digest per sweep run per admin chat, reusing
-  the existing `/pending` queue keyboard (`adm:ok|adm:no`) — approvals from a
-  digest go through the unchanged review path; no new callbacks, auth, or
-  keyboards.
-- **Seller card is a SECRET now:** `PAYMENT_CARD_NUMBER` env is the ONLY card
-  source (missing/invalid → the existing fail-closed `paymentInfoUnavailable`
-  notice; the settings-doc `card_number` key is ignored). Card/IBAN/
-  subscription URLs render as Telegram inline code (tap-to-copy) with a
-  one-time «کپی» hint — HTML `parse_mode` is opt-in for exactly those
-  bubbles, every dynamic string in them passes through
-  `src/telegram/format.ts`, and everything else stays plain text.
-- Renewal receipts ride the SAME `submitOrderReceipt` path and are therefore
-  covered identically; orders never entering `awaiting_review` (full-wallet,
-  abandoned checkouts) have no anchor by construction → unschedulable.
-
-## Service notifications (Phase 9)
-
-- **Trigger:** the SAME five-minute Cloudflare **Cron** → `scheduled` handler as
-  8C, now running two independent sweeps (each in its own `try/catch`, so one
-  failing never cancels the other). No new trigger, no new infrastructure.
-- **Two notices per service, ever:** `service_notifications` has a composite
-  PK `(order_id, kind)` with `kind ∈ (usage90, expiring)`. The row itself IS
-  the once-per-service/order promise — a second notice is unrepresentable.
-- **Usage (90%):** needs a live panel read (`GET by-username`), so it is
-  strictly bounded — ≤ `USAGE_CHECK_LIMIT` reads/run, ≥
-  `USAGE_BACKOFF_MINUTES` per service, soonest-expiring first. A
-  `data_limit = 0/null` (unlimited) or unknown usage never fires; expired/deleted
-  panel states settle the row `skipped` (out of the set forever).
-- **Expiry (3d OR 2d, never both):** reads only local `service_expires_at`
-  (0006, forward-only), so it works even with the panel down — the single
-  notice fires on the first sweep that finds the service inside ≤3d and the PK
-  makes the 2d line a permanent no-op. Renewal-extended services keep the one
-  already-sent notice (no re-arm) per the agreed scope.
-- **Delivery safety:** `pending → sending (atomic lease claim) → sent` where
-  `sent` is written ONLY after Telegram confirms (same `!== null` signal 8C
-  uses). An overlapping run or replay can't double-claim; a won-then-crashed
-  claim is retried once the 30-min lease goes stale — so the worst case is a
-  single late self-healing duplicate, never a silent loss of an urgent notice.
-  Send failures return to `pending` up to `NOTICE_MAX_ATTEMPTS`, then rest
-  terminal `failed`. Approved/renewal/eligibility shifts are re-checked inside
-  the claim. No admin digest, no amounts — plain text, persona «درود زیبا»
-  opener, no invented cutoff promise.
-- **No new page:** both notices and My Services point at the EXISTING
-  PasarGuard subscription URL (now a tap button + a discovery line); the bot
-  builds no dashboard — presentation only.
-
-## Language model (Phase 10)
-
-English is a SECOND, NATIVE voice — written from each step's purpose, not
-translated word-for-word from the Persian copy. Both locales share one
-business meaning; each owns its own wording, keyboard labels, money style
-(`12,500,000 Toman` in English vs the Persian-digit line in fa), dates
-(English: `2026-09-14`, `2026-09-14 08:30 UTC`; Persian keeps the
-established ISO-slice with Persian digits) and personality rules.
-
-- **Boundary.** `src/telegram/i18n.ts` is the ONE language branch: `uiFor()`
-  returns the singletons `{ locale, t: Texts, f: Fmt }`. `Texts` is derived
-  from `fa` (`typeof`), so a missing or wrongly-shaped English key is a
-  **compile error** (`texts.en.ts` must mirror every key). Handlers only
-  ever call `ctx.ui.t.*` / `ctx.ui.f.*` — no `if (language === ...)` anywhere.
-- **Resolution.** `customers.language` (explicit choice, written ONLY by the
-  selector `lang:fa|lang:en`) wins. NULL always means **Persian**.
-  Telegram's `language_code` is stored for display on the Account screen
-  and NEVER selects a language (operator decision, Phase 10) — English
-  begins only at an explicit tap and survives profile churn; the upsert
-  never touches `language`. Migration 0010 adds the nullable CHECK'd column
-  with **no backfill** (every existing user keeps today's behavior).
-- **Selector.** Main menu's last (9th) button (🌐 — locale-FIXED bilingual label,
-  so it is always findable and never needs re-routing) → picker with
-  «🇮🇷 فارسی» / «🇬🇧 English» → per-actor write → confirmation IN THE NEW
-  LANGUAGE, and the keyboard fitting the current state (menu / composing /
-  inline back) re-rendered in it. Language never enters the state machine.
-- **Stale keyboards are safe.** Reply-keyboard labels ARE the routing
-  (`menuCallbackForText`), so the exact-match tables span **both** locales:
-  a Persian tap inside an English session routes to the English screen
-  (never as free text), and vice versa. A unit test pins cross-locale label
-  uniqueness; `lang:` values are validated against the static allowlist.
-- **Proactive paths follow the RECIPIENT.** Review results, provisioning
-  success/failure, renewal-applied, refunds, referral payout/join, ticket
-  replies/closure, payment reminders (8C) and usage/expiry notices (9)
-  resolve the customer's stored `language` via the existing customer JOIN/
-  contact read (zero extra queries) — the claim/idempotency mechanics are
-  untouched; only the composed text localizes.
-- **The admin surface stays Persian** (operator decision): queues
-  (`/pending`, `/failed`, `/tickets`, `/pricing`), review buttons/toasts,
-  ticket relays, announcement job control and the 8C admin digest are `fa`
-  constants on purpose — no English variant leaks into them.
-- **Admin-authored content is NOT bot copy.** Announcement bodies and the
-  `payment_info.instructions`/`holder` doc are settings content rendered
-  verbatim: an English-facing operation should provide its own bilingual or
-  English values in D1 (no redeploy, no code change).
-- **Invariant.** Every pre-Phase-10 test still passes byte-for-byte on the
-  Persian strings; only layout pins moved when the guide joined the keyboard
-  (9 labels in 2/2/2/2/1 rows, the styled trio unchanged).
-
-## Connection guide (Phase 11)
-
-A customer-facing «📚 راهنمای اتصال» screen walk: platform → app → official
-links + one-minute import steps. By design it is the dumbest flow in the bot:
-
-- **Stateless.** No FSM states or events, no DB, no session touch: every
-  `gud:*` tap re-renders the static registry in `src/telegram/guide.ts` in
-  the actor's current locale — stale buttons are harmless (idempotent). Tests
-  pin `conversation_states` empty through the entire walk, including a guide
-  visit from a busy purchase.
-- **Closed vocabulary.** The guide adds plain allowlisted values only
-  (`menu:guide`, `gud:…`, pattern-validated like everything else); unknown
-  `gud:` payloads get the standard neutral toast. Both transports — reply-keyboard
-  text taps and legacy inline taps — share `runMainMenuAction`, and
-  English renders only through the existing Phase 10 explicit-choice machinery
-  (never `language_code`).
-- **Official links only, live-verified at build time** against each project's
-  own store/repo page: Google Play (v2RayTun), GitHub Releases + repo (v2rayNG,
-  Throne), App Store (V2Box, Streisand, IDs via Apple's lookup API). Where a
-  source could not be verified (v2rayNG's Play listing, proprietary iOS apps'
-  repos) the button simply does not exist — links are never guessed; unit +
-  e2e tests pin the exact URL set and hosts.
-- **Review rules baked into copy:** the v2rayNG install step and the Throne
-  SmartScreen step carry the operator-mandated safety wording (verify the
-  official source; never "bypass"), reviewed verbatim before build.
-
-## Roadmap
-
-- **Phase 1**: skeleton, config layer, webhook auth, schema ✅
-- **Phase 2**: registration, main menu, callbacks, conversation state machine ✅
-- **Phase 3**: catalog config layer, integer pricing, buy steps → summary → idempotent order creation ✅
-- **Phase 4**: payment receipt upload + admin approval queue (manual verification) ✅
-- **Phase 5**: PasarGuard integration + automatic provisioning (idempotent) ✅
-- **Phase 6**: My Services + live/snapshot status + months-only renewals ✅
-- **Phase 7**: support + referrals + wallet ✅
-- **Phase 8**: bot personality / friendly UX ✅
-  - 8A reply keyboard ✅ · 8B persona copy ✅ · 8C payment UX + review reminders ✅
-- **Phase 9**: service notifications (90% usage + single expiry) + My Services audit ✅
-- **Phase 10**: full English support — native second voice, i18n boundary, selector, D1 persistence ✅
-- **Phase 11**: connection guide — stateless «📚 راهنمای اتصال» screens, verified official links, both locales ✅
-- **Phase 12**: admin pricing model — exact per-duration/user entries, /pricing edit flow (arm→confirm), CAS + settings_audit, snapshot immutability ✅
-- **Phase 13**: device limit {1,2,3} (0012) + admin sales-stop switch `/sales` (0013, fail-open, CAS+audit, server-side gates across purchase + renewal + wallet + checkout backstop) ✅
-- Next: final Cloudflare deployment + webhook registration
-
+Creator / سازنده: **[Espierz](https://t.me/Espierz)** ·
+Telegram / تلگرام: [@Espierz](https://t.me/Espierz)
+— [🇮🇷 فارسی](docs/fa/README.md)
