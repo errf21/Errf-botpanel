@@ -52,6 +52,7 @@ import {
   viewTicket,
 } from './support.ts';
 import { runAnnouncementPass, showAnnouncements } from './announcements.ts';
+import { handlePricingCallback } from './pricingAdmin.ts';
 import { cancelToMenu } from './commands.ts';
 
 
@@ -83,6 +84,12 @@ export async function handleCallback(
   // ———— admin review callbacks: authorization BEFORE anything else ————
   if (data.startsWith('adm:')) {
     await handleAdminCallback(ctx, data, callbackQueryId, messageChatId, messageId);
+    return;
+  }
+
+  // ———— Phase 12: pricing management (strict parser + admin gate inside) ————
+  if (data.startsWith('prc:')) {
+    await handlePricingCallback(ctx, data, callbackQueryId);
     return;
   }
 

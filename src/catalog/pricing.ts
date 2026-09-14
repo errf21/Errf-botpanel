@@ -1,11 +1,18 @@
 /**
  * Pure integer price calculation. No floating-point money, ever.
  *
- *   total = volume_gb * gb_rate
- *         + ceil(duration_days / days_per_month) * month_rate
- *         + max(0, device_count - 1) * device_rate
+ * Phase 12 model — every value is an EXACT admin-defined number:
  *
- * The applied rates are returned inside the breakdown so orders persist a
+ *   total = time + volume + users
+ *     time   = months === 1 ? base_product.price : duration_prices[months]
+ *     volume = max(0, volume_gb - base_product.gb) * price_per_gb
+ *     users  = user_prices[device_count]
+ *
+ * There are intentionally NO multipliers and NO months*rate arithmetic for
+ * duration or users: the bot only multiplies where the business says so (GB
+ * beyond the base) and otherwise looks the admin's number up verbatim.
+ *
+ * The applied inputs are returned inside the breakdown so orders persist a
  * complete price snapshot (config may change later; orders must not).
  */
 import type { PricingConfig } from './catalog.ts';
@@ -16,23 +23,32 @@ export interface PriceSelection {
   deviceCount: number;
 }
 
+/** The exact inputs behind one calculation — persisted in the order snapshot. */
+export interface PriceInputs {
+  base_gb: number;
+  base_product_price: number;
+  price_per_gb: number;
+  /** 'base' for 1 month; otherwise the duration_prices key that was used. */
+  duration_key: 'base' | number;
+  duration_price: number;
+  user_count: number;
+  user_price: number;
+  days_per_month: number;
+}
+
 export interface PriceBreakdown {
-  schema: 1;
+  schema: 2;
   currency: string;
-  rates: {
-    gb_rate: number;
-    month_rate: number;
-    device_rate: number;
-    days_per_month: number;
-  };
+  inputs: PriceInputs;
   volume_gb: number;
+  extra_gb: number;
   volume_cost: number;
   duration_days: number;
   months: number;
-  duration_cost: number;
+  /** The time component (base price for 1 month, else the duration entry). */
+  time_cost: number;
   device_count: number;
-  extra_devices: number;
-  device_cost: number;
+  user_cost: number;
   total: number;
 }
 
@@ -54,61 +70,99 @@ function safeInt(value: unknown, max: number): value is number {
   );
 }
 
+/** Validate a whole live config against the calculator's own boundaries. */
+function usableConfig(pricing: PricingConfig): boolean {
+  return (
+    safeInt(pricing.baseGb, 1_000_000_000) &&
+    pricing.baseGb >= 1 &&
+    safeInt(pricing.baseProductPrice, 1_000_000_000) &&
+    pricing.baseProductPrice >= 1 &&
+    safeInt(pricing.pricePerGb, 1_000_000_000) &&
+    pricing.pricePerGb >= 1 &&
+    safeInt(pricing.daysPerMonth, 365) &&
+    pricing.daysPerMonth >= 1
+  );
+}
+
+/**
+ * Resolve the TIME component for a month count: 1 month is the base product
+ * price itself; every other supported count is its exact table entry. An
+ * unpriced month count is a contradictory config, never a silent default.
+ */
+export function durationEntry(
+  pricing: PricingConfig,
+  durationDays: number,
+): { ok: true; months: number; key: 'base' | number; price: number } | { ok: false; error: string } {
+  if (!safeInt(durationDays, 1_000_000) || durationDays < 1) {
+    return { ok: false, error: 'selection_range' };
+  }
+  if (durationDays % pricing.daysPerMonth !== 0) {
+    return { ok: false, error: 'duration_unmapped' };
+  }
+  const months = durationDays / pricing.daysPerMonth;
+  if (months === 1) {
+    return { ok: true, months, key: 'base', price: pricing.baseProductPrice };
+  }
+  const price = pricing.durationPrices[months];
+  if (price === undefined || !Number.isSafeInteger(price)) {
+    return { ok: false, error: 'duration_unpriced' };
+  }
+  return { ok: true, months, key: months, price };
+}
+
 export function calculatePrice(
   pricing: PricingConfig,
   selection: PriceSelection,
 ): PriceResult {
-  if (
-    !safeInt(pricing.gbRate, 1_000_000_000) ||
-    !safeInt(pricing.monthRate, 1_000_000_000) ||
-    !safeInt(pricing.deviceRate, 1_000_000_000) ||
-    !safeInt(pricing.daysPerMonth, 365) ||
-    pricing.daysPerMonth < 1
-  ) {
+  if (!usableConfig(pricing)) {
     return { ok: false, error: 'pricing_config' };
   }
   if (
     !safeInt(selection.volumeGb, 1_000_000) ||
-    !safeInt(selection.durationDays, 1_000_000) ||
     !safeInt(selection.deviceCount, 100_000) ||
     selection.volumeGb < 1 ||
-    selection.durationDays < 1 ||
     selection.deviceCount < 1
   ) {
     return { ok: false, error: 'selection_range' };
   }
 
-  const volumeCost = product(selection.volumeGb, pricing.gbRate);
-  const months = Math.ceil(selection.durationDays / pricing.daysPerMonth);
-  if (!safeInt(months, 100_000)) return { ok: false, error: 'range' };
-  const durationCost = product(months, pricing.monthRate);
-  const extraDevices = Math.max(0, selection.deviceCount - 1);
-  const deviceCost = product(extraDevices, pricing.deviceRate);
-  if (volumeCost === null || durationCost === null || deviceCost === null) {
-    return { ok: false, error: 'overflow' };
+  const time = durationEntry(pricing, selection.durationDays);
+  if (!time.ok) return { ok: false, error: time.error };
+
+  const userPrice = pricing.userPrices[selection.deviceCount];
+  if (userPrice === undefined || !Number.isSafeInteger(userPrice)) {
+    return { ok: false, error: 'user_unpriced' };
   }
-  const total = volumeCost + durationCost + deviceCost;
+
+  const extraGb = Math.max(0, selection.volumeGb - pricing.baseGb);
+  const volumeCost = product(extraGb, pricing.pricePerGb);
+  if (volumeCost === null) return { ok: false, error: 'overflow' };
+  const total = time.price + volumeCost + userPrice;
   if (!Number.isSafeInteger(total)) return { ok: false, error: 'overflow' };
 
   return {
     ok: true,
     breakdown: {
-      schema: 1,
+      schema: 2,
       currency: pricing.currency,
-      rates: {
-        gb_rate: pricing.gbRate,
-        month_rate: pricing.monthRate,
-        device_rate: pricing.deviceRate,
+      inputs: {
+        base_gb: pricing.baseGb,
+        base_product_price: pricing.baseProductPrice,
+        price_per_gb: pricing.pricePerGb,
+        duration_key: time.key,
+        duration_price: time.price,
+        user_count: selection.deviceCount,
+        user_price: userPrice,
         days_per_month: pricing.daysPerMonth,
       },
       volume_gb: selection.volumeGb,
+      extra_gb: extraGb,
       volume_cost: volumeCost,
       duration_days: selection.durationDays,
-      months,
-      duration_cost: durationCost,
+      months: time.months,
+      time_cost: time.price,
       device_count: selection.deviceCount,
-      extra_devices: extraDevices,
-      device_cost: deviceCost,
+      user_cost: userPrice,
       total,
     },
   };
@@ -136,28 +190,28 @@ export function catalogLimits(catalog: {
   };
 }
 
-/* ———— Phase 6: renewals ————
- * A renewal extends the SAME service (same volume/devices) by additional
- * months. Only the time component is re-charged:
- *
- *   months = ceil(renewal_days / days_per_month)
- *   total  = months * month_rate
- *
- * Integer-only; the applied rates are snapshotted exactly like a purchase so
- * a later price edit cannot retroactively change a placed renewal.
+/* ———— Phase 6 + 12: renewals ————
+ * A renewal extends the SAME service (same volume/users) by additional
+ * months. Only the TIME component is re-charged: the exact admin entry for
+ * the requested duration (1 month renews at the base product price — the
+ * same table the purchase ladder uses; no multipliers here either). The
+ * applied inputs are snapshotted exactly like a purchase so a later price
+ * edit cannot retroactively change a placed renewal.
  */
 export interface RenewalBreakdown {
-  schema: 1;
+  schema: 2;
   kind: 'renewal';
   currency: string;
-  rates: {
-    month_rate: number;
+  inputs: {
+    base_product_price: number;
+    duration_key: 'base' | number;
+    duration_price: number;
     days_per_month: number;
   };
   /** Days being added (the selected renewal duration). */
   duration_days: number;
   months: number;
-  duration_cost: number;
+  time_cost: number;
   total: number;
 }
 
@@ -165,31 +219,28 @@ export function calculateRenewalPrice(
   pricing: PricingConfig,
   selection: { durationDays: number },
 ): { ok: true; breakdown: RenewalBreakdown } | { ok: false; error: string } {
-  if (
-    !safeInt(pricing.monthRate, 1_000_000_000) ||
-    !safeInt(pricing.daysPerMonth, 365) ||
-    pricing.daysPerMonth < 1
-  ) {
+  if (!usableConfig(pricing)) {
     return { ok: false, error: 'pricing_config' };
   }
-  if (!safeInt(selection.durationDays, 1_000_000) || selection.durationDays < 1) {
-    return { ok: false, error: 'selection_range' };
-  }
-  const months = Math.ceil(selection.durationDays / pricing.daysPerMonth);
-  if (!safeInt(months, 100_000)) return { ok: false, error: 'range' };
-  const durationCost = product(months, pricing.monthRate);
-  if (durationCost === null) return { ok: false, error: 'overflow' };
+  const time = durationEntry(pricing, selection.durationDays);
+  if (!time.ok) return { ok: false, error: time.error };
+  if (!Number.isSafeInteger(time.price)) return { ok: false, error: 'overflow' };
   return {
     ok: true,
     breakdown: {
-      schema: 1,
+      schema: 2,
       kind: 'renewal',
       currency: pricing.currency,
-      rates: { month_rate: pricing.monthRate, days_per_month: pricing.daysPerMonth },
+      inputs: {
+        base_product_price: pricing.baseProductPrice,
+        duration_key: time.key,
+        duration_price: time.price,
+        days_per_month: pricing.daysPerMonth,
+      },
       duration_days: selection.durationDays,
-      months,
-      duration_cost: durationCost,
-      total: durationCost,
+      months: time.months,
+      time_cost: time.price,
+      total: time.price,
     },
   };
 }

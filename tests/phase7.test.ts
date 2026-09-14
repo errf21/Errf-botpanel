@@ -123,14 +123,16 @@ async function inviteWithGetMe(user: typeof USER): Promise<void> {
   }
 }
 
-/** Full purchase ladder up to (not including) the confirm tap; price 360000. */
+/** Full purchase ladder up to (not including) the confirm tap; price 95000
+ *  (base product 45000 + 0 extra GB + the 3-user entry 50000 — exact table
+ *  values, no multipliers). */
 async function purchaseToSummary(user: typeof USER): Promise<string> {
   await dispatch(messageUpdateAs(user, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), user));
   await dispatch(messageUpdateAs(user, `north valley signal`, nextId()));
-  await dispatch(callbackUpdateAs('vol:10', nextId(), user)); // 10 GB × 12000 = 120000
-  await dispatch(callbackUpdateAs('dur:30', nextId(), user)); // +1 month = 120000
-  await dispatch(callbackUpdateAs('dev:3', nextId(), user)); // +2 devices = 120000
+  await dispatch(callbackUpdateAs('vol:10', nextId(), user)); // base volume: +0
+  await dispatch(callbackUpdateAs('dur:30', nextId(), user)); // 1 month = base 45000
+  await dispatch(callbackUpdateAs('dev:3', nextId(), user)); // users entry: 50000
   assert.equal(sessionFor(user.id).state, 'WAITING_ORDER_CONFIRMATION');
   const token = sessionFor(user.id).data['order_token'];
   assert.equal(typeof token, 'string');
@@ -282,12 +284,12 @@ test('wlt:full pays, order is BORN approved — no receipt, no admin queue', asy
   assert.equal(order.state, 'approved');
   assert.equal(Number(order.amount), 0); // remainder after full credit
   assert.equal(order.verified_by, 'wallet');
-  assert.equal(balanceOf(target), 40000);
+  assert.equal(balanceOf(target), 305000);
   const paid = sqlite
     .prepare("SELECT * FROM wallet_entries WHERE kind = 'order_payment' AND order_id = ?1")
     .get(order.id) as Record<string, unknown> | undefined;
   assert.ok(paid, 'payment ledger re-pointed onto the real order id');
-  assert.equal(Number(paid['delta_irt']), -360000);
+  assert.equal(Number(paid['delta_irt']), -95000);
   const events = sqlite
     .prepare('SELECT action, to_state FROM order_events WHERE order_id = ?1 ORDER BY id')
     .all(order.id) as Array<Record<string, unknown>>;
@@ -318,7 +320,7 @@ test('replayed wlt:full outside the confirm step is inert (no double debit)', as
 test('partial credit: remainder through the untouched P4 pipeline, reject refunds', async () => {
   await dispatch(messageUpdateAs(USER2, '/start', nextId()));
   const target = customerIdOf(USER2.id);
-  sqlite.prepare('UPDATE customers SET balance_irt = 100000 WHERE id = ?1').run(target);
+  sqlite.prepare('UPDATE customers SET balance_irt = 30000 WHERE id = ?1').run(target);
   await purchaseToSummary(USER2);
   stub.reset();
   await dispatch(callbackUpdateAs('wlt:part', nextId(), USER2));
@@ -327,9 +329,9 @@ test('partial credit: remainder through the untouched P4 pipeline, reject refund
   const orderId = sessionFor(USER2.id).data['order_id'] as string;
   const order = orderById(orderId)!;
   assert.equal(order.state, 'pending_payment');
-  assert.equal(order.amount, 260000); // 360000 − 100000 credit
+  assert.equal(order.amount, 65000); // 95000 − 30000 credit
   assert.equal(balanceOf(target), 0);
-  assert.ok(/۲۶۰?٬۰۰۰|260[٬,]?000|۲۶۰٬۰۰۰/.test(textsTo(USER2.id).join('\n')), `t=${textsTo(USER2.id)}`);
+  assert.ok(/۶۵٬۰۰۰|65[٬,]?000/.test(textsTo(USER2.id).join('\n')), `t=${textsTo(USER2.id)}`);
   assert.ok(
     sqlite.prepare("SELECT * FROM wallet_entries WHERE kind = 'order_payment' AND order_id = ?1").get(orderId),
     'credit claimed on the order id',
@@ -340,17 +342,17 @@ test('partial credit: remainder through the untouched P4 pipeline, reject refund
   await dispatch(callbackUpdateAs(`adm:no:${orderId}`, nextId(), ADMIN, ADMIN.id));
   await dispatch(messageUpdateAs(ADMIN, 'فیش جعلی بود', nextId()));
   assert.equal(orderById(orderId)?.state, 'rejected');
-  assert.equal(balanceOf(target), 100000);
+  assert.equal(balanceOf(target), 30000);
   const refund = sqlite
     .prepare("SELECT * FROM wallet_entries WHERE kind = 'order_refund' AND order_id = ?1")
     .get(orderId) as Record<string, unknown> | undefined;
   assert.ok(refund);
-  assert.equal(Number(refund['delta_irt']), 100000);
+  assert.equal(Number(refund['delta_irt']), 30000);
   const customerTexts = textsTo(USER2.id);
   assert.ok(customerTexts.some((x) => x.includes('بازگشت')));
   // double-reject race: second admin tap is inert
   await dispatch(callbackUpdateAs(`adm:no:${orderId}`, nextId(), ADMIN, ADMIN.id));
-  assert.equal(balanceOf(target), 100000);
+  assert.equal(balanceOf(target), 30000);
 });
 
 // ————————————————————————— referrals —————————————————————————
@@ -391,15 +393,15 @@ test('referral lifecycle: forged codes inert, first-touch fixed, capped once-per
   await dispatch(messageUpdateAs(NB3, '/start ref_AAAAAAAAAAAA', nextId()));
   assert.equal(sqlite.prepare('SELECT referred_by FROM customers WHERE id = ?1').get(nb3)['referred_by'], referrer);
 
-  // 5) first approved purchase pays 10% of 360000 = 36000 (seeded percent doc).
+  // 5) first approved purchase pays 10% of 95000 = 9500 (seeded percent doc).
   const before = balanceOf(referrer);
   await purchaseAndApprove(NB3, 'REF_RECEIPT');
-  assert.equal(balanceOf(referrer), before + 36000);
+  assert.equal(balanceOf(referrer), before + 9500);
   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM referral_rewards WHERE referred_customer_id = ?1').get(nb3)['n'], 1);
   // ... second approved purchase: no second payout
   setWalletCreditCap(10_000_000);
   await purchaseAndApprove(NB3, 'REF_RECEIPT2');
-  assert.equal(balanceOf(referrer), before + 36000);
+  assert.equal(balanceOf(referrer), before + 9500);
 
   // 6) wallet-paid (auto-approved) purchases also pay a payout exactly once
   sqlite.prepare('UPDATE customers SET balance_irt = 400000 WHERE id = ?1').run(nb3);
@@ -414,13 +416,13 @@ test('referral lifecycle: forged codes inert, first-touch fixed, capped once-per
   stub.reset();
   await dispatch(callbackUpdateAs('wlt:full', nextId(), NB4));
   await settleWaits();
-  assert.equal(balanceOf(nb4), 40000);
+  assert.equal(balanceOf(nb4), 305000);
   // payout fires via the wallet approval path too (provisioning is a no-op without panel)
   assert.equal(
     sqlite.prepare('SELECT COUNT(*) n FROM referral_rewards WHERE referred_customer_id = ?1').get(nb4)['n'],
     1,
   );
-  assert.equal(balanceOf(referrer), before + 72000); // two referees × 36000
+  assert.equal(balanceOf(referrer), before + 19000); // two referees × 9500
 
   // 7) per-referrer cap: max 1 already satisfied? set cap 2 → no further rewards
   sqlite.prepare("UPDATE settings SET value = json_set(value, '$.max_rewards_per_referrer', 2) WHERE key = 'referral'").run();
@@ -655,7 +657,7 @@ test('P3-P6 confirm-with-receipt path fully intact (zero wallet side effects)', 
   const orderId = await purchaseAndApprove(P7USER, 'PLAIN_RECEIPT');
   const order = orderById(orderId)!;
   assert.equal(order.state, 'approved');
-  assert.equal(order.amount, 360000);
+  assert.equal(order.amount, 95000);
   assert.equal(Number(sqlite.prepare('SELECT COUNT(*) n FROM wallet_entries').get()['n']), before);
   const session = sessionFor(P7USER.id);
   assert.equal(session.state, 'IDLE'); // P4 approval clears the conversation
@@ -742,7 +744,7 @@ test('W2: wallet-full purchase checkout hard-fail refunds exactly once', async (
     assert.equal(count("SELECT COUNT(*) n FROM wallet_entries WHERE kind = 'order_refund' AND order_id = ?1", token), 1);
     assert.equal(
       Number((sqlite.prepare("SELECT delta_irt v FROM wallet_entries WHERE kind = 'order_refund' AND order_id = ?1").get(token) as { v: number }).v),
-      360000,
+      95000,
     );
 
     // Retry with the failure still in place: never a second refund or debit.

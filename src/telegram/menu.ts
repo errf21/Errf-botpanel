@@ -526,3 +526,39 @@ export function walletPayKeyboard(ui: Ui, partialAvailable: boolean): TelegramIn
 export function configNameKeyboard(ui: Ui): TelegramReplyKeyboardMarkup {
   return composingKeyboard(ui, [ui.t.btnAutoPick]);
 }
+
+/* ———— Phase 12: admin pricing management ————
+ * Persian-only operational surface (same rule as the `adm:`/`tsk:` keyboards:
+ * literal `fa` labels, deliberately NOT localized via `ui`, so a mis-routed
+ * or forged tap can never re-style the admin controls). Tokens are validated
+ * by parsePricingCallback — the keyboards here only ever emit `prc:` values.
+ */
+export function pricingEditCallback(token: string): string {
+  return `prc:e_${token}`;
+}
+
+/** Field grid (two buttons per row) + refresh + cancel. */
+export function pricingMenuKeyboard(
+  fields: Array<{ label: string; token: string }>,
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [];
+  for (let i = 0; i < fields.length; i += 2) {
+    rows.push(
+      fields.slice(i, i + 2).map((field) =>
+        button(field.label, pricingEditCallback(field.token)),
+      ),
+    );
+  }
+  rows.push([button('🔄 نمایش دوباره', 'prc:menu')]);
+  rows.push([button('❌ انصراف', CB.ACT_CANCEL)]);
+  return { inline_keyboard: rows };
+}
+
+/** The staged-value confirmation (value itself NEVER rides on the wire). */
+export function pricingConfirmKeyboard(): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('✅ ثبت قیمت', 'prc:ok'), button('❌ انصراف', 'prc:no')],
+    ],
+  };
+}

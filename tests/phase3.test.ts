@@ -109,7 +109,7 @@ test('full purchase: start → buy → name → custom 12GB → 30d → devices 
   assert.equal(session().data['order_token'], token);
   assert.equal(allOrders().length, 0);
 
-  // re-choose: token identical, price 12*12000 + 1*120000 + 2*60000 = 384000
+  // re-choose: token identical, price base(45000) + 2 extra GB*4500 + users-3(50000) = 104000
   await dispatch(callbackUpdate('dev:3', 111));
   assert.equal(session().state, 'WAITING_ORDER_CONFIRMATION');
   assert.equal(session().data['order_token'], token);
@@ -120,17 +120,22 @@ test('full purchase: start → buy → name → custom 12GB → 30d → devices 
   assert.equal(typeof session().data['order_id'], 'string');
   const [order] = allOrders();
   assert.equal(order?.['state'], 'pending_payment');
-  assert.equal(order?.['amount'], 384000);
+  assert.equal(order?.['amount'], 104000);
   assert.equal(order?.['currency'], 'IRT');
   assert.equal(order?.['idempotency_key'], token);
   const snapshot = JSON.parse(String(order?.['selections'])) as Record<string, unknown>;
   assert.equal(snapshot['config_name'], 'north valley signal');
   assert.equal(snapshot['volume_gb'], 12);
   const price = snapshot['price'] as Record<string, unknown>;
-  assert.deepEqual(price['rates'], {
-    gb_rate: 12000,
-    month_rate: 120000,
-    device_rate: 60000,
+  assert.equal(price['schema'], 2);
+  assert.deepEqual(price['inputs'], {
+    base_gb: 10,
+    base_product_price: 45000,
+    price_per_gb: 4500,
+    duration_key: 'base',
+    duration_price: 45000,
+    user_count: 3,
+    user_price: 50000,
     days_per_month: 30,
   });
   const eventCount = (
@@ -152,12 +157,12 @@ test('replay of the confirm update creates nothing new; re-confirm is a no-op', 
 
 test('priced order is immutable when catalog changes afterwards', () => {
   sqlite
-    .prepare("UPDATE settings SET value = json_set(value, '$.gb_rate', 999999) WHERE key = 'pricing'")
+    .prepare("UPDATE settings SET value = json_set(value, '$.price_per_gb', 999999) WHERE key = 'pricing'")
     .run();
   const [order] = allOrders();
-  assert.equal(order?.['amount'], 384000);
-  const snapshot = JSON.parse(String(order?.['selections'])) as { price: { rates: { gb_rate: number } } };
-  assert.equal(snapshot.price.rates.gb_rate, 12000); // stored snapshot, untouched
+  assert.equal(order?.['amount'], 104000);
+  const snapshot = JSON.parse(String(order?.['selections'])) as { price: { inputs: { price_per_gb: number } } };
+  assert.equal(snapshot.price.inputs.price_per_gb, 4500); // stored snapshot, untouched
 });
 
 test('checkout is idempotent at the repository layer (same token → same row)', async () => {

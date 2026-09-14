@@ -45,6 +45,48 @@ export function isValidCallbackData(data: unknown): data is string {
   );
 }
 
+/**
+ * Phase 12: pricing-management callbacks live in the `prc:` namespace. The
+ * generic pattern above ALREADY admits their shape (short payloads), but they
+ * get their OWN strict parser so nothing unforeseen can ever reach the
+ * pricing handler — actions are a fixed vocabulary and edit tokens are plain
+ * field identifiers ('base', 'gb', 'd2', 'u10'…).
+ */
+const PRICING_EDIT_PATTERN = /^prc:e_([a-z][a-z0-9]{0,19})$/;
+
+export type PricingCallback =
+  | { action: 'menu' | 'ok' | 'no' }
+  | { action: 'edit'; token: string };
+
+export function parsePricingCallback(data: string): PricingCallback | null {
+  if (data === 'prc:menu') return { action: 'menu' };
+  if (data === 'prc:ok') return { action: 'ok' };
+  if (data === 'prc:no') return { action: 'no' };
+  const match = PRICING_EDIT_PATTERN.exec(data);
+  const token = match?.[1];
+  return token ? { action: 'edit', token } : null;
+}
+
+/**
+ * Admin pricing value entry: Persian/Arabic digits + separators are accepted
+ * (same normalization family as parsePositiveInt), but pricing must reach the
+ * 1e9 config cap, so the digit ceiling is 12 — the safe-integer bound check
+ * happens against PricingConfig's own MAX_VALUE afterwards. A minus sign
+ * never parses: duration/user entries allow 0, nothing allows negatives.
+ */
+const PERSIAN_DIGITS_ALL = /[۰-۹]/g;
+const ARABIC_DIGITS_ALL = /[٠-٩]/g;
+
+export function parsePricingAmount(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  let text = raw.trim().replace(/\s+/gu, '').replace(/[٬,]/g, '');
+  text = text.replace(PERSIAN_DIGITS_ALL, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+  text = text.replace(ARABIC_DIGITS_ALL, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  if (!/^[0-9]{1,12}$/.test(text)) return null;
+  const num = Number(text);
+  return Number.isSafeInteger(num) ? num : null;
+}
+
 export type AdminAction = 'ok' | 'no' | 'skip' | 'rt';
 
 export interface AdminCallback {

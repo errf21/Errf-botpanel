@@ -7,6 +7,7 @@ import { captureReferralOnStart, notifyReferralJoined } from './referrals.ts';
 import { handleWalletAdminCommand } from './wallet.ts';
 import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
+import { showPricing } from './pricingAdmin.ts';
 import { parseCommand } from '../lib/validate.ts';
 import { getSession } from '../db/states.ts';
 
@@ -90,6 +91,10 @@ export async function handleCommand(
       } else {
         await showAnnouncements(ctx);
       }
+      return;
+    case 'pricing':
+      // Phase 12: pricing view doubles as the entry to the edit flow.
+      await showPricing(ctx);
       return;
     default:
       await ctx.api.sendMessage(ctx.chatId, t.cmdUnknown, mainMenuKeyboard(ctx.ui));

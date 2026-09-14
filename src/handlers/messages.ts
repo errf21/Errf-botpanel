@@ -31,6 +31,7 @@ import { resumeRenewal } from './renewal.ts';
 import { deliverTicketReply, submitSupportText } from './support.ts';
 import { saveAnnounceDraft } from './announcements.ts';
 import { completeArmedWalletAction } from './wallet.ts';
+import { completeArmedPricingAction } from './pricingAdmin.ts';
 import { findLiveTicket } from '../db/support.ts';
 import { cancelToMenu } from './commands.ts';
 import { runMainMenuAction } from './menuActions.ts';
@@ -136,6 +137,13 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
         // Only a VALID amount consumes the arming; garbage keeps it alive.
         const consumed = await completeArmedWalletAction(ctx, pending, text);
         if (consumed) await clearPendingAdminAction(ctx.db, ctx.actor.id);
+        return;
+      }
+      // Phase 12: pricing value entry / re-staging. MUST be checked BEFORE
+      // the order_id-less fallback below (pricing arming never has one);
+      // the arming clears only via confirm/cancel/back, garbage never eats it.
+      if (pending.action === 'pricing') {
+        await completeArmedPricingAction(ctx, pending.target_id, text);
         return;
       }
       // action === 'reject': unchanged Phase 4 behavior.

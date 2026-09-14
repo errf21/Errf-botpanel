@@ -41,12 +41,28 @@ export interface DeviceCatalog {
   allowCustom: boolean;
   presets: DevicePreset[];
 }
+/**
+ * Phase 12 pricing model (settings doc schema 2):
+ *
+ *   total = time + volume + users
+ *     time   = months == 1 ? baseProductPrice : durationPrices[months]
+ *     volume = max(0, volume_gb - baseGb) * pricePerGb
+ *     users  = userPrices[device_count]
+ *
+ * Every duration/user entry is an EXACT admin-defined number — no multipliers,
+ * no months*rate arithmetic anywhere. dayPerMonth is purely the days<->months
+ * unit bridge for the (day-based) catalog; it has no pricing meaning.
+ */
 export interface PricingConfig {
   currency: string;
-  gbRate: number;
-  monthRate: number;
-  deviceRate: number;
   daysPerMonth: number;
+  baseGb: number;
+  baseProductPrice: number;
+  pricePerGb: number;
+  /** month count (2..12) -> exact price for that whole duration. */
+  durationPrices: Record<number, number>;
+  /** user count (1..1000) -> exact price for that count. */
+  userPrices: Record<number, number>;
 }
 
 export interface Catalog {
@@ -64,6 +80,12 @@ export type CatalogResult =
 const MAX_PRESETS = 20;
 const MAX_VALUE = 1_000_000_000;
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
+
+/** Phase 12: the pricing document lives on its own schema version. */
+export const PRICING_SCHEMA = 2;
+const MAX_DURATION_KEYS = 24;
+const MAX_USER_KEYS = 1000;
+const MAX_MONTHS = 12;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -187,30 +209,133 @@ export function parseDevices(doc: unknown):
   };
 }
 
+function parseIntKeyedTable(
+  value: unknown,
+  minKey: number,
+  maxKey: number,
+  maxEntries: number,
+): Record<number, number> | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const entries = Object.entries(record);
+  // An EMPTY table is legal (a ladder selling only the 1-month base prices
+  // nothing else); loadCatalog's coverage pass ties tables to the ladder.
+  if (entries.length > maxEntries) return null;
+  const out: Record<number, number> = {};
+  for (const [rawKey, rawValue] of entries) {
+    if (!/^[0-9]{1,4}$/.test(rawKey)) return null;
+    const key = Number(rawKey);
+    if (!Number.isSafeInteger(key) || key < minKey || key > maxKey) return null;
+    const price = asInt(rawValue, 0, MAX_VALUE);
+    if (price === null) return null;
+    out[key] = price;
+  }
+  return out;
+}
+
 export function parsePricing(doc: unknown):
   | { ok: true; value: PricingConfig }
   | { ok: false; error: string } {
-  const checked = schemaChecked(doc, 'pricing');
-  if (!checked.ok) return checked;
-  const currency = checked.record['currency'];
-  const gbRate = asInt(checked.record['gb_rate'], 0, MAX_VALUE);
-  const monthRate = asInt(checked.record['month_rate'], 0, MAX_VALUE);
-  const deviceRate = asInt(checked.record['device_rate'], 0, MAX_VALUE);
-  const daysPerMonth = asInt(checked.record['days_per_month'], 1, 365);
+  const record = asRecord(doc);
+  if (!record || record['schema'] !== PRICING_SCHEMA) {
+    return { ok: false, error: 'pricing:schema' };
+  }
+  const currency = record['currency'];
+  const daysPerMonth = asInt(record['days_per_month'], 1, 365);
+  const base = asRecord(record['base_product']);
+  const baseGb = base === null ? null : asInt(base['gb'], 1, 1_000_000_000);
+  const baseProductPrice = base === null ? null : asInt(base['price'], 1, MAX_VALUE);
+  const pricePerGb = asInt(record['price_per_gb'], 1, MAX_VALUE);
+  // base_product.users/months are DECLARATIONS: the model defines the base as
+  // "10GB + 1 user + 1 month"; the pricing rule hard-wires 1 user and 1 month
+  // to base_product.price, so any other declaration is contradictory config.
+  if (
+    base === null ||
+    asInt(base['users'], 1, MAX_VALUE) !== 1 ||
+    asInt(base['months'], 1, MAX_VALUE) !== 1
+  ) {
+    return { ok: false, error: 'pricing:base_product' };
+  }
+  const durationPrices = parseIntKeyedTable(
+    record['duration_prices'],
+    2, // months == 1 IS base_product.price — a "1" entry would be a conflict
+    MAX_MONTHS,
+    MAX_DURATION_KEYS,
+  );
+  const userPrices = parseIntKeyedTable(record['user_prices'], 1, 1000, MAX_USER_KEYS);
   if (
     typeof currency !== 'string' ||
     !CURRENCY_PATTERN.test(currency) ||
-    gbRate === null ||
-    monthRate === null ||
-    deviceRate === null ||
-    daysPerMonth === null
+    daysPerMonth === null ||
+    baseGb === null ||
+    baseProductPrice === null ||
+    pricePerGb === null ||
+    !durationPrices ||
+    !userPrices
   ) {
     return { ok: false, error: 'pricing:fields' };
   }
   return {
     ok: true,
-    value: { currency, gbRate, monthRate, deviceRate, daysPerMonth },
+    value: {
+      currency,
+      daysPerMonth,
+      baseGb,
+      baseProductPrice,
+      pricePerGb,
+      durationPrices,
+      userPrices,
+    },
   };
+}
+
+/**
+ * Cross-document coverage: every choice the LADDER can hand to the purchase
+ * or renewal flow must be priced, or the config is contradictory and the
+ * whole catalog degrades fail-closed (purchases must never die mid-ladder
+ * on an unpriced tap). Returns a descriptive error code, or null when ok.
+ */
+export function pricingCoverageError(
+  catalog: Omit<Catalog, 'pricing'>,
+  pricing: PricingConfig,
+): string | null {
+  // Volume: nothing sold BELOW what the base price already includes.
+  if (catalog.volume.minGb < pricing.baseGb) return 'pricing:base_below_min';
+
+  const pricedMonths = new Set<number>(Object.keys(pricing.durationPrices).map(Number));
+  const priceDurationDay = (days: number): string | null => {
+    if (days % pricing.daysPerMonth !== 0) return 'pricing:duration_unmapped';
+    const months = days / pricing.daysPerMonth;
+    if (months === 1) return null; // covered by base_product.price
+    if (months > MAX_MONTHS) return 'pricing:duration_unmapped';
+    return pricedMonths.has(months) ? null : 'pricing:duration_unpriced';
+  };
+  for (const preset of catalog.duration.presets) {
+    if (!preset.enabled) continue;
+    const error = priceDurationDay(preset.days);
+    if (error !== null) return error;
+  }
+  if (catalog.duration.maxDays - catalog.duration.minDays > 500) {
+    return 'pricing:coverage_range';
+  }
+  if (catalog.duration.allowCustom) {
+    for (let days = catalog.duration.minDays; days <= catalog.duration.maxDays; days += 1) {
+      const error = priceDurationDay(days);
+      if (error !== null) return error;
+    }
+  }
+
+  const pricedUsers = new Set<number>(Object.keys(pricing.userPrices).map(Number));
+  for (const preset of catalog.device.presets) {
+    if (preset.enabled && !pricedUsers.has(preset.count)) return 'pricing:user_unpriced';
+  }
+  if (catalog.device.allowCustom) {
+    if (catalog.device.maxCount - catalog.device.minCount > 50) return 'pricing:coverage_range';
+    for (let count = catalog.device.minCount; count <= catalog.device.maxCount; count += 1) {
+      if (!pricedUsers.has(count)) return 'pricing:user_unpriced';
+    }
+  }
+  return null;
 }
 
 /** Loads and validates all four config documents in one settings read. */
@@ -253,6 +378,14 @@ export async function loadCatalog(db: D1Database): Promise<CatalogResult> {
   if (!device.ok) return device;
   const pricing = parsePricing(docs['pricing']);
   if (!pricing.ok) return pricing;
+
+  // Phase 12: a priced ladder or nothing — every reachable choice must map to
+  // an admin-defined number BEFORE any customer is allowed into the flow.
+  const coverage = pricingCoverageError(
+    { volume: volume.value, duration: duration.value, device: device.value },
+    pricing.value,
+  );
+  if (coverage !== null) return { ok: false, error: coverage };
 
   return {
     ok: true,

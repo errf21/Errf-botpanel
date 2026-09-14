@@ -29,12 +29,13 @@ const VOLUME_SEED = {
 };
 
 const PRICING_SEED = {
-  schema: 1,
+  schema: 2,
   currency: 'IRT',
-  gb_rate: 12000,
-  month_rate: 120000,
-  device_rate: 60000,
   days_per_month: 30,
+  base_product: { gb: 10, users: 1, months: 1, price: 45000 },
+  price_per_gb: 4500,
+  duration_prices: { '2': 80000 },
+  user_prices: { '1': 0, '2': 25000 },
 };
 
 test('parseVolume: valid doc, disabled preset, order preserved', () => {
@@ -78,14 +79,22 @@ test('parseDuration + parsePricing: valid and hostile shapes', () => {
     false,
   );
   assert.equal(parsePricing(PRICING_SEED).ok, true);
+  // empty tables are legal documents (coverage against the ladder decides):
+  assert.equal(parsePricing({ ...PRICING_SEED, duration_prices: {}, user_prices: {} }).ok, true);
   for (const bad of [
-    { ...PRICING_SEED, currency: 'toman' }, // not ISO-like
-    { ...PRICING_SEED, gb_rate: 12.5 }, // float rates rejected
-    { ...PRICING_SEED, gb_rate: -1 },
-    { ...PRICING_SEED, days_per_month: 0 },
+    {},
+    null,
+    { ...PRICING_SEED, schema: 1 }, // the v1 rates doc is no longer accepted
     { ...PRICING_SEED, schema: 99 },
+    { ...PRICING_SEED, currency: 'toman' }, // not ISO-like
+    { ...PRICING_SEED, price_per_gb: 12.5 }, // float prices rejected
+    { ...PRICING_SEED, price_per_gb: 0 }, // per-GB must be positive
+    { ...PRICING_SEED, base_product: { gb: 10, users: 2, months: 1, price: 45000 } }, // base = 1 user
+    { ...PRICING_SEED, base_product: { gb: 10, users: 1, months: 2, price: 45000 } }, // base = 1 month
+    { ...PRICING_SEED, duration_prices: { '1': 45000 } }, // month 1 IS the base price
+    { ...PRICING_SEED, user_prices: { '0': 5000 } }, // zero key
   ]) {
-    assert.equal(parsePricing(bad).ok, false);
+    assert.equal(parsePricing(bad).ok, false, JSON.stringify(bad)?.slice(0, 48));
   }
 });
 
@@ -119,7 +128,7 @@ test('acceptVolume: min 10 enforced, presets, custom rule, disabled preset exact
 });
 
 test('loadCatalog: reads all four settings rows from D1 (real SQL via shim)', async () => {
-  const sqlite = freshDb(); // applies 0001+0002+0003 (0003 seeds real JSON docs)
+  const sqlite = freshDb(); // 0001-0010 seeded, pricing doc reseeded by 0011
   const db = makeD1Shim(sqlite) as never;
   const result = await loadCatalog(db);
   assert.equal(result.ok, true);
@@ -130,7 +139,11 @@ test('loadCatalog: reads all four settings rows from D1 (real SQL via shim)', as
   assert.equal(result.catalog.duration.allowCustom, false);
   assert.deepEqual(enabledDeviceCounts(result.catalog), [1, 3, 5]);
   assert.equal(result.catalog.pricing.currency, 'IRT');
-  assert.equal(result.catalog.pricing.gbRate, 12000);
+  assert.equal(result.catalog.pricing.baseProductPrice, 45000);
+  assert.equal(result.catalog.pricing.pricePerGb, 4500);
+  assert.deepEqual(result.catalog.pricing.durationPrices, { 2: 80000, 3: 110000 });
+  assert.equal(result.catalog.pricing.userPrices[1], 0);
+  assert.equal(result.catalog.pricing.userPrices[10], 200000);
 });
 
 test('loadCatalog: degrades safely when config is broken', async () => {

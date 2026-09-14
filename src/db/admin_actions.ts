@@ -1,14 +1,20 @@
 /**
- * Pending ADMIN actions (0004 table, extended by 0007): short-lived
+ * Pending ADMIN actions (0004 table, extended by 0007/0011): short-lived
  * "tap button → type the next message" markers. One per admin (PK = telegram
  * user id) so a second arming replaces the first — same rule as Phase 4.
  *  - reject:            order_id set
  *  - support_reply:     order_id NULL, target_id = ticket id
  *  - wallet_grant/debit: order_id NULL, target_id = target telegram user id
+ *  - pricing (P12):     order_id NULL, target_id = edit token (see db/pricing.ts)
  */
 export const ADMIN_ACTION_TTL_MS = 15 * 60 * 1000;
 
-export type AdminActionKind = 'reject' | 'support_reply' | 'wallet_grant' | 'wallet_debit';
+export type AdminActionKind =
+  | 'reject'
+  | 'support_reply'
+  | 'wallet_grant'
+  | 'wallet_debit'
+  | 'pricing';
 
 export interface AdminActionRow {
   admin_user_id: string;

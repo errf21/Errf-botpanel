@@ -385,6 +385,38 @@ const en: Texts = {
   supportBusyFirst: '🛑 Please finish the current operation first, or send /cancel.',
   ticketNotFound: '🚫 No ticket found with that ID.',
 
+  // ————— Phase 12: admin pricing management —————
+  adminPricingHeader: '💰 Pricing management',
+  adminPricingLegend:
+    'The base product = 10GB + 1 user + 1 month.\n' +
+    'Every longer duration and user count is YOUR independent number — ' +
+    'the bot never invents a multiplier.',
+  adminPricingFieldBase: (price: string) => `🧱 Base product: ${price}`,
+  adminPricingFieldGb: (price: string) => `⚖️ Per extra GB: ${price}`,
+  adminPricingFieldMonth: (months: number, price: string) =>
+    `📅 ${months}-month: ${price}`,
+  adminPricingFieldUsers: (count: number, price: string) =>
+    `👤 ${count} users: ${price}`,
+  adminPricingUserIncluded: 'in base',
+  adminPricingPrompt: (label: string, current: string) =>
+    `✏️ ${label}\nCurrent price: ${current}\n\nSend the new amount in Toman, digits only; "back to menu" cancels.`,
+  adminPricingStaged: (label: string, value: string) =>
+    `🧾 New value for "${label}": ${value}\n\nConfirm with "Save price" or cancel.`,
+  adminPricingConfirmToast: '✅ New price saved.',
+  adminPricingAppliedLine: (label: string, value: string) =>
+    `✅ Saved — ${label}: ${value}`,
+  adminPricingAmountInvalid:
+    '⚠️ Send the amount properly: digits only (Persian or English), no signs, no decimals.',
+  adminPricingAmountRejected:
+    '⚠️ That value is not allowed for this field (0 to 1,000,000,000; base price and per-GB must be above zero).',
+  adminPricingConflict:
+    '⚠️ Another admin changed the pricing just now; your edit did not apply. Re-open the list.',
+  adminPricingStale: '🔄 This pricing edit request expired or is no longer valid.',
+  adminPricingFieldGone: '⚠️ That field is no longer in the configuration; re-open the list.',
+  adminPricingUnavailable: '⚠️ The pricing configuration is invalid; a direct database fix is required.',
+  adminPricingCancelled: '↩️ Pricing edit cancelled.',
+  adminPricingHint: 'Type a number or tap a field.',
+
   // ————— Admin-only flow strings (the bot serves admins in Persian) —————
   announceIntro: '📢 Send the announcement text (max 2000 characters).',
   announceTooLong: '⚠️ That text is too long — send something shorter.',

@@ -19,6 +19,7 @@ migrations/0007_phase7.sql  wallet ledger + referrals + support tickets + announ
 migrations/0008_phase8c.sql  payment_reminders claim table (+safe backfill)
 migrations/0009_phase9.sql   service_notifications claim table (+suppress backfill)
 migrations/0010_phase10.sql  customers.language: Phase 10 explicit-choice column
+migrations/0011_pricing_model.sql  'pricing' admin arming + settings_audit + schema-2 pricing doc (placeholders again)
 src/index.ts                Fetch router: /health, /telegram/webhook + 5-min cron (scheduled)
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
 src/dispatch.ts             Update pipeline: dedupe → register (upsert carries the locale → ctx.ui) → route
@@ -32,7 +33,7 @@ src/telegram/guide.ts       Phase 11 connection guide: static registry — verif
 src/telegram/texts.ts       Persian bundle — the `Texts` contract, frozen persona copy, fa formatters
 src/telegram/texts.en.ts     Phase 10 English bundle — authored natively, type-checked against `Texts`
 src/telegram/i18n.ts          Phase 10 boundary: Locale, Fmt, uiFor() — the ONLY language branch
-src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit
+src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit /pricing
 src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + admin-review buttons + Phase 10 `lang:` + Phase 11 `gud:` taps
 src/handlers/messages.ts    Text → state machine; all-locale keyboard routing; admin intercepts (reject reason, ticket reply, wallet ops)
 src/handlers/language.ts     Phase 10 language selector: picker → explicit D1 persistence → keyboard re-render
@@ -47,9 +48,11 @@ src/handlers/support.ts     Phase 7 tickets: open/follow-up/queue/reply/close (a
 src/handlers/announcements.ts Phase 7 broadcast: draft → confirm → chunked resumable fan-out
 src/handlers/paymentReminders.ts Phase 8C cron sweep: claimed 15/30/45 nudges + one admin digest/run
 src/handlers/serviceNotifications.ts Phase 9 cron sweep: one usage90 + one expiry notice per service (+page-discovery CTAs)
+src/handlers/pricingAdmin.ts Phase 12 admin surface: /pricing view → arm → type → stage → confirm → guarded apply
 src/state/machine.ts        Pure conversation state machine (buy + renewal + support + announce ladders)
 src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
-src/catalog/pricing.ts      Pure integer price engine (rates + breakdown snapshot)
+src/catalog/pricing.ts      Pure integer price engine (exact admin entries; breakdown snapshots its inputs)
+src/catalog/pricingDoc.ts   Phase 12 admin edit layer: field tokens, per-field bounds, canonical round trip
 src/catalog/payment.ts      Load + validate payment_info JSON (degrade-safe)
 src/catalog/provisioning.ts Load + validate provisioning-policy JSON (degrade-safe)
 src/catalog/renewal.ts      Load + validate renewal-policy JSON (kill switch, degrade-safe)
@@ -62,7 +65,8 @@ src/db/wallet.ts            Wallet ledger: guarded credit/debit, exactly-once or
 src/db/referrals.ts         Referral codes, first-touch attribution, exactly-once capped payout (PK guard)
 src/db/support.ts           Support tickets: one live per customer (UNIQUE), append-only messages
 src/db/announcements.ts     Broadcast jobs: seed-once deliveries, chunk claim/book/settle, stuck sweep
-src/db/admin_actions.ts     Short-lived armed admin prompts (reject / ticket reply / grant / debit)
+src/db/admin_actions.ts     Short-lived armed admin prompts (reject / ticket reply / grant / debit / pricing edit)
+src/db/pricing.ts           Pricing arming payload (token=staged:fingerprint), CAS doc swap + settings_audit
 src/db/paymentReminders.ts  Phase 8C: one-anchor reminder schedule per order + single-statement stage claims
 src/db/serviceNotifications.ts Phase 9: one usage90 + one expiring row per service; lease claims, sent never written pre-delivery
 src/db/customers.ts         Customers: idempotent upsert, is_admin flag, first-ever probe, admin-chat lookup
@@ -119,9 +123,12 @@ leisure (the 0004 seed placeholder must simply never be relied upon).
 Non-secret configuration (panel URL, admin chat id) lives in `wrangler.jsonc`
 as `vars`. **Business data** (volume/duration/device options, prices, payment
 information) lives in the D1 `settings` table as JSON documents (schema-versioned).
-The 0003 migration seeds placeholder catalog/pricing; changing a rate, a preset,
+The 0003 migration seeds placeholder catalog/pricing (0011 reseeds the pricing
+document to the Phase-12 schema-2 shape — still placeholders); changing a preset,
 a minimum, or enabling/disabling/reordering an option is a **D1 edit only** —
-never a code change, never a redeploy.
+never a code change, never a redeploy. The four price NUMBERS the business cares
+about (base, per-GB, duration entries, user entries) are editable live by admins
+from Telegram via `/pricing` (armed, confirmed, audited — see below).
 
 ### Catalog & pricing model
 
@@ -130,19 +137,44 @@ versioned JSON document validated at load time (`src/catalog/catalog.ts`). A
 malformed/incompatible document degrades to a friendly "temporarily unavailable"
 response; it never crashes or silently invents defaults.
 
-**Price formula** (`src/catalog/pricing.ts`, integer-only — no float money):
+**Price formula** (`src/catalog/pricing.ts`, Phase 12 model, integer-only — no
+float money, no invented multipliers):
 
 ```
-months = ceil(duration_days / days_per_month)
-total  = volume_gb            × gb_rate
-       + months               × month_rate
-       + max(0, devices − 1)  × device_rate
+total = time + volume + users
+  time   = months == 1 ? base_product.price : duration_prices[months]
+  volume = max(0, volume_gb − base_product.gb) × price_per_gb
+  users  = user_prices[device_count]
 ```
 
-All inputs and rates are validated as safe integers with hard caps, so prices
-cannot overflow. The calculated **breakdown including the exact rates used** is
-snapshotted into each order, so later catalog edits can never alter a placed
-order. Presets and custom values are re-validated against the freshly loaded
+The base product is 10GB + 1 user + 1 month and costs `base_product.price`;
+every other month count and every user count is priced by its OWN exact
+admin-defined entry (2 months is deliberately not 2 × 1 month — the admin's
+numbers decide). Renewals charge only the same time table. `days_per_month` is
+purely the days↔months unit bridge (the catalog and provisioning stay day-based).
+
+`loadCatalog` cross-validates the pricing tables against the ladder documents:
+every choice a customer can actually reach (enabled presets, and the whole
+custom range where allowed) must carry a price, or the catalog fails closed
+with a "temporarily unavailable" response instead of mid-flow surprises.
+
+**Admin pricing (`/pricing`, Phase 12 — Persian operational surface):** admins
+see the live values with one button per editable entry (the field list is
+generated from the document, so new duration/user entries appear with no code
+change). Tapping a field arms the edit (`admin_actions`, one pending per admin,
+15-min TTL); the admin types the number, which is STAGED server-side (never
+embedded in a button) and only lands after an explicit ✅ confirm. Application
+is a compare-and-swap on the exact document read at staging time (fingerprint
+mismatch or lost race → "another admin changed this", zero writes), every
+successful change appends the FULL before/after documents to `settings_audit`,
+and `settings.updated_by` records the actor. Customers can never receive the
+keyboard, the `/pricing` reply, or a routed `prc:` tap — every path re-checks
+`ctx.isAdmin` server-side and foreign payloads are inert.
+
+All inputs are validated as safe integers with hard caps, so prices cannot
+overflow. The calculated **breakdown including the exact table entries used**
+is snapshotted into each order, so later pricing edits can never alter a
+placed order. Presets and custom values are re-validated against the freshly loaded
 catalog on every update — keyboard payload values are never trusted.
 
 ## Local development
@@ -388,9 +420,9 @@ established ISO-slice with Persian digits) and personality rules.
   contact read (zero extra queries) — the claim/idempotency mechanics are
   untouched; only the composed text localizes.
 - **The admin surface stays Persian** (operator decision): queues
-  (`/pending`, `/failed`, `/tickets`), review buttons/toasts, ticket relays,
-  announcement job control and the 8C admin digest are `fa` constants on
-  purpose — no English variant leaks into them.
+  (`/pending`, `/failed`, `/tickets`, `/pricing`), review buttons/toasts,
+  ticket relays, announcement job control and the 8C admin digest are `fa`
+  constants on purpose — no English variant leaks into them.
 - **Admin-authored content is NOT bot copy.** Announcement bodies and the
   `payment_info.instructions`/`holder` doc are settings content rendered
   verbatim: an English-facing operation should provide its own bilingual or
@@ -439,5 +471,6 @@ links + one-minute import steps. By design it is the dumbest flow in the bot:
 - **Phase 9**: service notifications (90% usage + single expiry) + My Services audit ✅
 - **Phase 10**: full English support — native second voice, i18n boundary, selector, D1 persistence ✅
 - **Phase 11**: connection guide — stateless «📚 راهنمای اتصال» screens, verified official links, both locales ✅
+- **Phase 12**: admin pricing model — exact per-duration/user entries, /pricing edit flow (arm→confirm), CAS + settings_audit, snapshot immutability ✅
 - Phase 12 (next): final Cloudflare deployment + webhook registration
 

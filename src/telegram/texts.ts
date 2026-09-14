@@ -41,6 +41,7 @@ export const fa = {
     '/tickets — (مدیران) تیکت‌های باز پشتیبانی',
     '/announce — (مدیران) ارسال اطلاعیه برای همه کاربران',
     '/announcements — (مدیران) وضعیت اطلاعیه‌های اخیر',
+    '/pricing — (مدیران) نمایش و ویرایش قیمت‌ها',
     '',
     '📦 در «سرویس‌های من» می‌توانید وضعیت و انقضای سرویس‌ها را ببینید و آن‌ها را تمدید کنید.',
     'برای شروع، دکمه‌های زیر را بزنید.',
@@ -376,6 +377,38 @@ export const fa = {
   adminTicketStale: 'این تیکت دیگر باز نیست یا پیدا نشد.',
   supportBusyFirst: '🛑 ابتدا فرآیند فعلی را کامل کنید یا /cancel بفرستید.',
   ticketNotFound: '🚫 تیکتی با این شناسه پیدا نشد.',
+
+  // ————— Phase 12: admin pricing management (Persian-only operational surface) —————
+  adminPricingHeader: '💰 مدیریت قیمت‌ها',
+  adminPricingLegend:
+    'محصول پایه = ۱۰ گیگ + ۱ کاربر + ۱ ماه.\n' +
+    'قیمت ماه‌های بیشتر و هر تعداد کاربر، عدد مستقلِ انتخابیِ شماست؛ ' +
+    'ربات هیچ ضریبی نمی‌سازد.',
+  adminPricingFieldBase: (price: string) => `🧱 محصول پایه: ${price}`,
+  adminPricingFieldGb: (price: string) => `⚖️ هر گیگ اضافه: ${price}`,
+  adminPricingFieldMonth: (months: number, price: string) =>
+    `📅 ${digitsFa(months)} ماهه: ${price}`,
+  adminPricingFieldUsers: (count: number, price: string) =>
+    `👤 ${digitsFa(count)} کاربر: ${price}`,
+  adminPricingUserIncluded: 'داخل پایه',
+  adminPricingPrompt: (label: string, current: string) =>
+    `✏️ ${label}\nقیمت فعلی: ${current}\n\nمبلغ تازه را به تومان و فقط با عدد صحیح بفرستید؛ «بازگشت به منو» لغو می‌کند.`,
+  adminPricingStaged: (label: string, value: string) =>
+    `🧾 مقدار تازه برای «${label}»: ${value}\n\nبا «ثبت قیمت» تأیید کنید یا انصراف بدهید.`,
+  adminPricingConfirmToast: '✅ قیمت جدید ثبت شد.',
+  adminPricingAppliedLine: (label: string, value: string) =>
+    `✅ ثبت شد — ${label}: ${value}`,
+  adminPricingAmountInvalid:
+    '⚠️ مبلغ را درست بفرستید؛ فقط رقم (فارسی یا انگلیسی)، بدون نشانه و بدون اعشار.',
+  adminPricingAmountRejected:
+    '⚠️ این مقدار برای این فیلد مجاز نیست (۰ تا ۱٬۰۰۰٬۰۰۰٬۰۰۰؛ قیمت پایه و هر گیگ باید بیش از صفر باشد).',
+  adminPricingConflict:
+    '⚠️ همین حالا مدیر دیگری قیمت را تغییر داد؛ این ویرایش بی‌اثر ماند. فهرست تازه را ببینید.',
+  adminPricingStale: '🔄 این درخواست ویرایش منقضی یا بی‌اثر شده است.',
+  adminPricingFieldGone: '⚠️ این فیلد دیگر در پیکربندی نیست؛ فهرست تازه را ببینید.',
+  adminPricingUnavailable: '⚠️ پیکربندی قیمت‌ها معتبر نیست؛ اصلاح مستقیم در دیتابیس لازم است.',
+  adminPricingCancelled: '↩️ ویرایش قیمت لغو شد.',
+  adminPricingHint: 'عدد را تایپ کنید یا روی فیلدی بزنید.',
 
   announceIntro: '📢 متن اطلاعیه را بفرستید (حداکثر ۲۰۰۰ نویسه).',
   announceTooLong: '⚠️ متن اطلاعیه بیش از حد مجاز است؛ کوتاه‌تری بفرستید.',

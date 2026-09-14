@@ -285,12 +285,12 @@ test('svc callbacks: strict format, full 28-char id, parser round-trip', () => {
   assert.equal(parseServiceCallback(`svc:det:${id.slice(0, 27)}`), null);
 });
 
-test('renewal pricing: months × month_rate, integer-only, guarded', async () => {
+test('renewal pricing: exact admin duration entries — 1m = base price, integer-only, guarded', async () => {
   const loaded = await loadCatalog(db);
   assert.equal(loaded.ok, true);
   if (!loaded.ok) return;
   const pricing = loaded.catalog.pricing;
-  for (const [days, months, total] of [[30, 1, 120000], [60, 2, 240000], [90, 3, 360000]] as const) {
+  for (const [days, months, total] of [[30, 1, 45000], [60, 2, 80000], [90, 3, 110000]] as const) {
     const r = calculateRenewalPrice(pricing, { durationDays: days });
     assert.equal(r.ok, true);
     if (!r.ok) continue;
@@ -548,12 +548,12 @@ test('UI renewal: ladder → priced renewal → receipt → approve → panel PU
   assert.ok(state === undefined || state.state === 'IDLE', 'ladder exited');
   assert.ok((textsTo(USER.id).at(-1) ?? '').includes(fa.servicesHeader));
 
-  // re-enter + choose 2 months: summary priced 2 × 120000
+  // re-enter + choose 2 months: the EXACT 2-month entry (not 2 × the base)
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   await dispatch(callbackUpdateAs('dur:60', nextId(), USER));
   const summary = textsTo(USER.id).at(-1) ?? '';
   assert.ok(summary.includes('۲ ماه'), 'month-label in summary');
-  assert.ok(summary.includes('240000') || summary.includes('۲۴۰٬۰۰۰'), 'price shown');
+  assert.ok(summary.includes('80000') || summary.includes('۸۰٬۰۰۰'), 'price shown');
   const token = JSON.parse(
     (
       sqlite.prepare('SELECT data FROM conversation_states WHERE customer_id = ?1')
@@ -577,7 +577,7 @@ test('UI renewal: ladder → priced renewal → receipt → approve → panel PU
   assert.ok(renewalRow, 'renewal order exists');
   assert.equal(renewalRow.state, 'pending_payment');
   assert.equal(renewalRow.renews_order_id, serviceId);
-  assert.equal(renewalRow.amount, 240000);
+  assert.equal(renewalRow.amount, 80000);
   assert.equal(renewalRow.provision_attempts, 0);
   const snapshot = JSON.parse(renewalRow.selections) as Record<string, unknown>;
   assert.equal(snapshot['kind'], 'renewal');
