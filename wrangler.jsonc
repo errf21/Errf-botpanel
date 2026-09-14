@@ -30,7 +30,6 @@
     }
   ],
 
-  "migrations_dir": "migrations",
 
   "observability": {
     "enabled": true
