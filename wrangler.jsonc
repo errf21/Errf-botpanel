@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "telbotv2",
+  "name": "errf-botpanel",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -26,7 +26,7 @@
       "binding": "DB",
       "database_name": "telbot-db",
       // Fill in the real id after running: npx wrangler d1 create telbot-db
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+      "database_id": "83481de7-15b1-4ba7-bc42-53d7d3b64735"
     }
   ],
 
