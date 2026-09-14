@@ -8,6 +8,7 @@ import { handleWalletAdminCommand } from './wallet.ts';
 import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { showPricing } from './pricingAdmin.ts';
+import { showSalesStatus } from './salesAdmin.ts';
 import { parseCommand } from '../lib/validate.ts';
 import { getSession } from '../db/states.ts';
 
@@ -95,6 +96,11 @@ export async function handleCommand(
     case 'pricing':
       // Phase 12: pricing view doubles as the entry to the edit flow.
       await showPricing(ctx);
+      return;
+    case 'sales':
+      // Phase 13: sales stop/resume — view doubles as the control surface
+      // (admin gate lives INSIDE showSalesStatus, same precedent as /pricing).
+      await showSalesStatus(ctx);
       return;
     default:
       await ctx.api.sendMessage(ctx.chatId, t.cmdUnknown, mainMenuKeyboard(ctx.ui));

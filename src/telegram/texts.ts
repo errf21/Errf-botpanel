@@ -19,7 +19,7 @@ import { tgCode, tgEscapeHtml } from './format.ts';
 
 export const fa = {
   notConfigured:
-    '⚠️ ربات هنوز به‌طور کامل پیکربندی نشده است.',
+    '⚠️ ربات هنوز کامل تنظیم نشده است.',
 
   // Greeting rule (Phase 8B): «درود زیبا» when the user's first name is
   // unknown; the name itself personalizes it when available. Never forced
@@ -42,6 +42,7 @@ export const fa = {
     '/announce — (مدیران) ارسال اطلاعیه برای همه کاربران',
     '/announcements — (مدیران) وضعیت اطلاعیه‌های اخیر',
     '/pricing — (مدیران) نمایش و ویرایش قیمت‌ها',
+    '/sales — (مدیران) توقف/فعال‌سازی سرویس',
     '',
     '📦 در «سرویس‌های من» می‌توانید وضعیت و انقضای سرویس‌ها را ببینید و آن‌ها را تمدید کنید.',
     'برای شروع، دکمه‌های زیر را بزنید.',
@@ -51,9 +52,9 @@ export const fa = {
   buyIntro: [
     '🛒 خرید سرویس',
     '',
-    'برای شروع، یک نام برای کانفیگ خود انتخاب کنید.',
-    'نام باید انگلیسی، حداقل سه کلمه (حروف لاتین، جدا با فاصله) و حداکثر ۶۴ نویسه باشد.',
-    'هر وقت خواستی با «بازگشت به منو» یا /cancel خارج شو.',
+    'اول یه نام برای کانفیگت انتخاب کن.',
+    'باید انگلیسی باشه، حداقل سه کلمه (حروف لاتین، جدا با فاصله) و حداکثر ۶۴ نویسه.',
+    'هر وقت خواستی با «بازگشت به منو» یا /cancel بیرون بیا.',
   ].join('\n'),
   buyWaitingConfigName:
     'زیبا لطفا یه نام انگلیسی حداقل سه کلمه‌ای انتخاب کن یا اگر میخوای من برات رندوم انتخاب کنم',
@@ -61,7 +62,7 @@ export const fa = {
     '🙈 این نام کانفیگ نامعتبره؛ باید انگلیسی و حداقل سه کلمه باشه (مثل: Silver Falcon Network).\nدوباره تلاش کن یا «انتخاب خودکار» رو بزن.',
   configNameSaved: (name: string) =>
     `✅ نام کانفیگ «${name}» ثبت شد.`,
-  buyInProgress: '🛒 فرآیند خرید جاری را ادامه دهید یا برای لغو «بازگشت به منو» را بزنید.',
+  buyInProgress: '🛒 خریدت نصفه مونده؛ ادامه بده یا با «بازگشت به منو» لغوش کن.',
 
   // Sections not yet implemented
   accountHeader: '👤 اطلاعات حساب شما',
@@ -70,12 +71,12 @@ export const fa = {
   accountLanguage: (v: string) => `زبان تلگرام: ${v}`,
   accountSince: (v: string) => `تاریخ عضویت: ${v}`,
   accountStatusIdle: 'وضعیت: آماده ✅',
-  accountStatusBusy: 'وضعیت: در میانه‌ی یک فرآیند (با /cancel قابل لغو است)',
+  accountStatusBusy: 'وضعیت: وسط یک فرآیندی؛ با /cancel می‌تونی برگردی.',
 
   cancelled: '↩️ به منوی اصلی بازگشتید.',
   sessionExpired: '⏱️ نشست قبلی منقضی شده بود؛ با منوی اصلی ادامه می‌دهیم.',
 
-  invalidChoice: '❌ گزینه نامعتبر.',
+  invalidChoice: '❌ این گزینه نامعتبره؛ از گزینه‌های همین مرحله استفاده کن.',
   backToMenu: '🔙 بازگشت به منو',
   // Phase 8B: the OFF-TOPIC global fallback — used ONLY for input/no media
   // that falls outside every defined flow context (never inside a live step,
@@ -87,14 +88,15 @@ export const fa = {
 
   // ————— Phase 3: purchase options, summary, confirmation —————
   catalogUnavailable:
-    '🔧 فعلاً امکان انتخاب گزینه‌ها وجود ندارد. کمی بعد دوباره امتحان کنید.',
+    '🔧 یه لحظه رفیق، گزینه‌ها درست بارگذاری نمی‌شن؛ کمی بعد دوباره سر بزن.',
   volumePrompt: (min: number, max: number) =>
     `📦 حجم سرویس رو انتخاب کن.\n\nحداقل ${min} و حداکثر ${max} گیگابایت.\nبرای مقدار دلخواه، عدد رو تایپ کن (یا دکمه‌ی «دلخواه»).`,
   durationPrompt: (min: number, max: number, allowCustom = true) =>
     `⏳ مدت سرویس رو انتخاب کن.\n\n${durationLabelFa(min)} تا ${durationLabelFa(max)}.` +
     (allowCustom ? '\nبرای مقدار دلخواه، عدد روز رو تایپ کن.' : ''),
-  devicePrompt: (min: number, max: number) =>
-    `📱 تعداد دستگاه‌های مجاز رو انتخاب کن:\n\nبین ${min} تا ${max}.\nبرای مقدار دلخواه، عدد رو تایپ کن.`,
+  devicePrompt: (min: number, max: number, allowCustom = true) =>
+    `📱 تعداد دستگاه‌های مجاز رو انتخاب کن:\n\nبین ${min} تا ${max}.` +
+    (allowCustom ? '\nبرای مقدار دلخواه، عدد رو تایپ کن.' : ''),
   customVolumeLabel: '✍️ مقدار دلخواه',
   customHint: '✍️ حالا عدد دلخواه را همین‌جا تایپ کن و بفرست.',
   rejectedRange: (min: number, max: number) =>
@@ -106,9 +108,9 @@ export const fa = {
     `⏳ مدت سرویس باید بین ${min} تا ${max} روز باشه.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
   rejectedDeviceRange: (min: number, max: number) =>
     `📱 تعداد دستگاه باید بین ${min} تا ${max} باشه.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
-  rejectedPresetDisabled: '⚠️ این گزینه فعلاً غیرفعال است؛ یکی دیگر را انتخاب کنید.',
+  rejectedPresetDisabled: '⚠️ این گزینه فعلاً تو فهرست نیست؛ یکی از دکمه‌های موجود رو انتخاب کن.',
   rejectedNotWhole: '✍️ این که عدد نبود رفیق! فقط یک عدد صحیح بفرست؛ یا «بازگشت» رو بزن.',
-  staleChoice: '🔄 این گزینه مربوط به مرحله‌ی دیگری است. مرحله‌ی فعلی را ادامه دهید.',
+  staleChoice: '🔄 این دکمه مال یه مرحله‌ی دیگه‌ست؛ اول همین مرحله رو ادامه بده.',
   stepBack: '↩️ بازگشت به مرحله قبل',
   confirmYes: '✅ تأیید و ثبت سفارش',
 
@@ -120,7 +122,7 @@ export const fa = {
   summaryDevices: (n: number) => `📱 دستگاه: ${n}`,
   summaryPrice: (v: string) => `💰 قیمت کل: ${v}`,
   summaryId: (id: string) => `🆔 کد سفارش: ${id}`,
-  summaryHint: 'اگر همه‌چیز درست است «تأیید» را بزنید. برای ویرایش، «بازگشت».',
+  summaryHint: 'همه‌چیز اوکیه؟ «تأیید» رو بزن؛ برای ویرایش «بازگشت».',
 
   orderCreated: (id: string) =>
     `✅ سفارش شما ثبت شد!\n\n🆔 کد: ${id}\n\n👇 اطلاعات واریز در پیام بعدی ارسال می‌شود.`,
@@ -128,9 +130,9 @@ export const fa = {
   alreadyConfirmed: '✅ این سفارش قبلاً ثبت شده است.',
 
   paymentWaitNotice:
-    '⏳ فیش پرداخت شما در انتظار بررسی است.\n\n💡 اگر فیش اشتباه است، تصویر/فایل جدیدی بفرستید تا جایگزین شود.\nبرای پیگیری، وضعیت را در «💳 سفارش‌های من» ببینید.',
+    '⏳ فیش پرداختت در انتظار بررسیشه؛ نگرانش نباش.\n\n💡 اگه فیش اشتباه اومده، تصویر/فایل جدیدی بفرست تا جاش بیاد.\nبرای پیگیری، وضعیتش رو از «💳 سفارش‌های من» ببین.',
 
-  missingDraftData: '⚠️ اطلاعات سفارش کامل نیست. از ابتدا شروع کنید.',
+  missingDraftData: '⚠️ اطلاعات سفارش کامل نیست؛ از اول شروع کن.',
 
   // ————— Phase 4: payment, receipts, admin review —————
   paymentInstructionsHeader: '💳 اطلاعات واریز وجه',
@@ -141,19 +143,19 @@ export const fa = {
   paymentIban: (v: string) => `IBAN: ${tgCode(v)}`,
   paymentAmountLine: (v: string) => `💰 مبلغ قابل واریز: ${v}`,
   paymentReceiptPrompt:
-    '🧾 پس از واریز، تصویر یا فایل فیش پرداخت را در همین گفتگو بفرستید.\n\nتوجه: بررسی فیش به‌صورت دستی انجام می‌شود و ممکن است کمی زمان ببرد.',
+    '🧾 بعد از واریز، تصویر یا فایل فیش پرداخت رو همین‌جا بفرست.\n\nبررسی فیش دستیه؛ ممکنه یکم طول بکشه.',
   paymentInfoUnavailable:
-    '⚠️ اطلاعات واریز فعلاً در دسترس نیست. برای ادامه با پشتیبانی در ارتباط باشید.',
+    '⚠️ اطلاعات واریز فعلاً در دسترس نیست؛ برای ادامه با پشتیبانی در ارتباط باش.',
   // Phase 8C: shown at most once per message, only when a <code> value is in it.
   copyHint: '(یک بار بزن روی مقدار، کپی می‌شه)',
 
   receiptAccepted:
-    '✅ فیش پرداخت ثبت شد و برای بررسی ارسال گردید.\n\nبررسی دستی است؛ پس از تأیید، ادامه‌ی کار خودکار انجام می‌شود و از شما کاری لازم نیست.\n\nنتیجه معمولاً تا چند ساعت اعلام می‌شود؛ وضعیت را از «💳 سفارش‌های من» پیگیری کنید.',
+    '✅ فیش پرداختت ثبت شد و برای بررسی ارسال شد.\n\nبررسی دستیه؛ بعد از تأیید، ادامه‌ی کار خودکار انجام می‌شه و از تو کاری ساخته نیست.\n\nنتیجه معمولاً تا چند ساعت میاد؛ وضعیت رو از «💳 سفارش‌های من» پیگیری کن.',
   receiptReplaced:
-    '✅ فیش جدید جایگزین شد و دوباره برای بررسی ارسال گردید.\n\nصف بررسی از همان فیش اول حساب می‌شود؛ لازم نیست دوباره فیش بفرستید.',
-  receiptExpectedMedia: '🧾 لطفاً فیش را به‌صورت تصویر یا فایل (برگردان فیش) ارسال کنید؛ متن به‌تنهایی فیش محسوب نمی‌شود.',
-  receiptOrderMissing: '⚠️ سفارش مرتبط با این گفتگو پیدا نشد. از منوی خرید شروع مجدد کنید.',
-  receiptOrderNotPayable: '⚠️ این سفارش دیگر در مرحله‌ی ارسال فیش نیست. وضعیت آن را از «💳 سفارش‌های من» ببینید.',
+    '✅ فیش جدید جایگزین شد و دوباره برای بررسی ارسال شد.\n\nصف بررسی از همون فیش اول حساب می‌شه؛ لازم نیست دوباره فیش بفرستی.',
+  receiptExpectedMedia: '🧾 فیش رو به‌صورت تصویر یا فایل (برگردان فیش) بفرست؛ متن به‌تنهایی فیش حساب نمی‌شه.',
+  receiptOrderMissing: '⚠️ سفارشی مرتبط با این گفتگو پیدا نشد؛ از منوی خرید دوباره شروع کن.',
+  receiptOrderNotPayable: '⚠️ این سفارش دیگه تو مرحله‌ی ارسال فیش نیست؛ وضعیتش رو از «💳 سفارش‌های من» ببین.',
 
   // ————— Phase 8C: payment review reminders (15/30/45 min, max 3) —————
   // Persona rules: three DISTINCT concise variants (never repeats itself),
@@ -179,7 +181,7 @@ export const fa = {
   statusCancelled: '🚫 لغو شده',
 
   ordersHeader: '🧾 سفارش‌های شما (جدیدترین‌ها)',
-  ordersEmpty: 'هنوز سفارشی ثبت نکرده‌اید.\nاز منوی «🛒 خرید سرویس» شروع کنید.',
+  ordersEmpty: 'هنوز سفارشی ثبت نکردی.\nاز منوی «🛒 خرید سرویس» شروع کن.',
   ordersEntry: (n: number, shortId: string, status: string, price: string, date: string) =>
     `${n}. 🆔 ${shortId} — ${status}\n   ${price} — ${date}`,
 
@@ -217,9 +219,9 @@ export const fa = {
   serviceReady: (id: string, url: string) =>
     `🎉 سرویس شما ساخته و فعال شد!\n\n🆔 سفارش: ${id}\n🔗 لینک اشتراک:\n${tgCode(url)}\n${fa.copyHint}\n\nاین لینک را در اپلیکیشن خود (v2rayNG / Nekobox / Streisand و…) وارد کنید.\n\n🌐 همین لینک، صفحه‌ی اختصاصی سرویس توئه؛ هر وقت خواستی لینک و اطلاعات سرویست رو دوباره ببینی، همین‌جاست.`,
   serviceReadyWithoutLink: (id: string) =>
-    `🎉 سرویس شما ساخته شد.\n\n🆔 سفارش: ${id}\n\nلینک اتصال فعلاً قابل دریافت نیست؛ به‌زودی از بخش «سرویس‌های من» در دسترس خواهد بود. در صورت عجله با پشتیبانی در ارتباط باشید.`,
+    `🎉 سرویس شما ساخته شد.\n\n🆔 سفارش: ${id}\n\nلینک اتصال فعلاً نمیاد؛ به‌زودی از «سرویس‌های من» در دسترس می‌شه. اگه عجله داری با پشتیبانی در ارتباط باش.`,
   provisionFailedNotice: (id: string) =>
-    `⚠️ ساخت سرویسِ سفارش پیش از حد مجاز به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nمسئولان در جریان قرار گرفتند و موضوع پیگیری می‌شود؛ نیازی به پرداخت مجدد نیست.`,
+    `⚠️ ساخت سرویسِ این سفارش چند بار به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nبچه‌ها در جریانی و دارن پیگیری می‌کنن؛ لازم نیست دوباره پرداخت کنی.`,
   provisionNameRejectedNotice: (id: string) =>
     `⚠️ متأسفانه پنل، نامِ سرویسِ این سفارش را نپذیرفت.\n\n🆔 سفارش: ${id}\n\n پرداخت شما کاملاً محفوظ است و هیچ مبلغی دوباره کسر نمی‌شود. تیم ما به‌زودی با نامی تازه تلاش می‌کند؛ اگر عجله دارید می‌توانید سفارشی نو با «انتخاب خودکار» یا یک نام انگلیسی سه‌کلمه‌ای دیگر شروع کنید.`,
   adminProvisionFailed: (id: string, reason: string) =>
@@ -239,7 +241,7 @@ export const fa = {
 
   // ————— Phase 6: My Services + status + renewals —————
   servicesHeader: '📦 سرویس‌های شما',
-  servicesEmpty: 'هنوز سرویس فعالی ندارید.\nاز منوی «🛒 خرید سرویس» شروع کنید.',
+  servicesEmpty: 'هنوز سرویس فعالی نداری؛\nاز منوی «🛒 خرید سرویس» شروع کن.',
   serviceStatusActive: '🟢 فعال',
   serviceStatusExpiring: '⏳ رو به اتمام',
   serviceStatusExpired: '‼️ منقضی‌شده',
@@ -247,7 +249,7 @@ export const fa = {
   servicesEntry: (n: number, name: string, shortId: string, status: string, expires: string) =>
     `${n}. 📦 ${name} — ${status}\n   🆔 ${shortId} — انقضا: ${expires}`,
   serviceNotFound: '🚫 سرویسی با این شناسه ندارید یا در دسترس نیست.',
-  serviceBusyFirst: '🛑 ابتدا فرآیند فعلی را کامل کنید یا /cancel بفرستید.',
+  serviceBusyFirst: '🛑 اول همین مرحله رو کامل کن یا /cancel بفرست.',
 
   svcDetailHeader: (name: string) => `📦 سرویس «${name}»`,
   svcPanelActive: '🟢 فعال',
@@ -268,15 +270,15 @@ export const fa = {
   svcLink: '🔗 لینک اشتراک:',
   // Phase 8C: the detail bubble opts into HTML so the URL is tap-to-copy.
   svcLinkCode: (url: string) => `${fa.svcLink}\n${tgCode(url)}\n${fa.copyHint}`,
-  svcSnapshotNote: '🖥 پنل در دسترس نبود؛ اطلاعات از آخرین وضعیت محلی نمایش داده می‌شود.',
+  svcSnapshotNote: '🖥 پنل در دسترس نبود؛ اطلاعات از آخرین وضعیت محلی نشون داده می‌شه.',
   svcLiveNote: '🖥 وضعیت لحظه‌ای از پنل',
 
   renewDisabledNotice: '🔧 امکان تمدید فعلاً غیرفعال است.',
   renewInProgressNotice: (id: string) =>
     `🔁 یک درخواست تمدید برای این سرویس باز است.\n\n🆔 سفارش تمدید: ${id}\n\nوضعیت آن را از «💳 سفارش‌های من» پیگیری کنید.`,
   renewIntro: (name: string, expires: string) =>
-    `🔁 تمدید سرویس «${name}»\n\n📅 انقضای فعلی: ${expires}\n\nبرای تمدید، مدت را انتخاب کنید.\nقیمت هر ماه تمدید جداگانه محاسبه می‌شود و پرداخت مانند خرید، با فیش و تأیید دستی است.`,
-  renewDurationPrompt: '⏳ مدت تمدید را انتخاب کنید:\n\n۱ ماه • ۲ ماه • ۳ ماه',
+    `🔁 تمدید سرویس «${name}»\n\n📅 انقضای فعلی: ${expires}\n\nبرای تمدید، مدت رو انتخاب کن.\nهزینه‌ی تمدید همون عددِ مشخصِ همون مدته؛ پرداخت مثل خرید، با فیش و تأیید دستی.`,
+  renewDurationPrompt: '⏳ مدت تمدید رو انتخاب کن:\n\n۱ ماه • ۲ ماه • ۳ ماه',
   renewSummaryHeader: '🧾 خلاصه‌ی تمدید',
   renewSummaryService: (name: string) => `📦 سرویس: «${name}»`,
   renewSummaryAdd: (months: number) => `➕ مدت تمدید: ${digitsFa(months)} ماه`,
@@ -287,7 +289,7 @@ export const fa = {
   renewApplied: (id: string, expiresDate: string) =>
     `🎉 سرویس شما تمدید شد!\n\n🆔 سفارش: ${id}\n📅 انقضای جدید: ${expiresDate}\n\nاز «📦 سرویس‌های من» می‌توانید وضعیت را ببینید.`,
   renewFailedNotice: (id: string) =>
-    `⚠️ تمدید سرویسِ سفارش پیش از حد مجاز به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nمسئولان در جریان قرار گرفتند و موضوع پیگیری می‌شود؛ نیازی به پرداخت مجدد نیست.`,
+    `⚠️ تمدید سرویسِ این سفارش چند بار به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nبچه‌ها در جریانی و دارن پیگیری می‌کنن؛ لازم نیست دوباره پرداخت کنی.`,
   adminRenewalFailed: (id: string, reason: string) =>
     `⚠️ تمدید سرویس ناموفق بود\n🆔 ${id}\n📝 ${reason.slice(0, 200)}\n\nبا دکمه‌ی زیر می‌توانید دوباره تلاش کنید (تا سقف مجاز).`,
   adminRenewalKind: (serviceId: string) => `🔄 تمدید سرویس ${serviceId}`,
@@ -296,7 +298,7 @@ export const fa = {
   ordersKindRenewal: '(تمدید)',
 
   // ————— Phase 7: wallet + referrals + support + announcements (IRT/Toman) —————
-  walletUnavailable: '🔧 کیف پول فعلاً در دسترس نیست. کمی بعد دوباره امتحان کنید.',
+  walletUnavailable: '🔧 کیف پول فعلاً در دسترس نیست رفیق؛ کمی بعد دوباره سر بزن.',
   walletHeader: '💰 کیف پول شما',
   walletBalance: (v: string) => `موجودی: ${v}`,
   walletEmpty: 'هنوز تراکنشی در کیف پول شما ثبت نشده است.',
@@ -352,15 +354,15 @@ export const fa = {
   supportIntro: [
     '🆘 پشتیبانی',
     '',
-    'مشکل یا پرسش خود را در یک پیام بنویسید و بفرستید.',
-    'پاسخ کارشناس معمولاً در همین گفتگو برایتان ارسال می‌شود.',
-    'برای بازگشت، «بازگشت به منو» یا /cancel.',
+    'مشکل یا پرسشت رو توی یه پیام بنویس و بفرست.',
+    'جواب کارشناس معمولاً همین‌جا برات می‌رسه.',
+    'برای برگشت، «بازگشت به منو» یا /cancel.',
   ].join('\n'),
   supportTicketCreated: (id: string) =>
-    `📨 درخواست شما ثبت شد.\n\n🎫 کد تیکت: ${id}\n\nبه‌محض پاسخ، در همین گفتگو متوجه خواهید شد.`,
+    `📨 درخواستت ثبت شد.\n\n🎫 کد تیکت: ${id}\n\nهمین‌جا باخبرت می‌کنیم وقتی جواب بیاد.`,
   supportTicketExists: (id: string) =>
     `🎫 تیکت بازِ شما (${id.slice(0, 10)}…) هنوز فعال است.`,
-  supportQueueChoice: '✍️ متن پیام جدید را بفرستید تا برای کارشناس ارسال شود.',
+  supportQueueChoice: '✍️ متن پیام جدید رو بفرست تا به کارشناس برسه.',
   supportAnswered: '💬 پاسخ پشتیبانی:\n\n',
   supportClosedNotice: '✅ تیکت بسته شد. در صورت نیاز، دوباره «پشتیبانی» را بزنید.',
   supportTicketClosedAlready: 'ℹ️ این تیکت بسته شده است.',
@@ -375,7 +377,7 @@ export const fa = {
   adminTicketPrompt: '⌨️ پاسخ خود را بنویسید و بفرستید (حداکثر ۲۰۰۰ نویسه).',
   adminTicketSent: '✅ پاسخ برای مشتری ارسال شد.',
   adminTicketStale: 'این تیکت دیگر باز نیست یا پیدا نشد.',
-  supportBusyFirst: '🛑 ابتدا فرآیند فعلی را کامل کنید یا /cancel بفرستید.',
+  supportBusyFirst: '🛑 اول همین مرحله رو کامل کن یا /cancel بفرست.',
   ticketNotFound: '🚫 تیکتی با این شناسه پیدا نشد.',
 
   // ————— Phase 12: admin pricing management (Persian-only operational surface) —————
@@ -429,6 +431,27 @@ export const fa = {
   announceStale: '🔄 این اطلاعیه تغییر کرده یا قبلاً کامل ارسال شده است.',
   announceReceived: '📢 اطلاعیه',
   userBlocked: (id: string) => `🎫 تیکت ${id} دیگر فعال نیست؛ ارسال متوقف شد.`,
+
+  // ————— Phase 13: sales stop switch (customer notice + admin surface) —————
+  // The switch is a TEMPORARY COMMERCIAL STOP: new purchases and renewals
+  // (anything that creates or extends a paid service) are refused with THIS
+  // one voice; everything about existing services keeps working.
+  salesStoppedNotice:
+    '🛑 فعلاً ارائه سرویس متوقفه رفیق 😅\n\nیه کوچولو صبر کن، به‌زودی برمی‌گردیم ❤️\nهر وقت دوباره فعال شد، از همین منو می‌تونی سرویس بگیری.',
+  adminSalesStateActive:
+    '🛡 وضعیت سرویس: 🟢 فعال\nثبت سفارش خرید و تمدید باز است.',
+  adminSalesStateStopped:
+    '🛡 وضعیت سرویس: 🔴 متوقف\nثبت سفارش خرید و تمدید موقتاً بسته است؛ سرویس‌های فعال مشتری‌ها دست‌نخورده می‌ماند و سفارش‌های ثبت‌شده قبل از توقف مثل قبل قابل پرداخت و تأییدند.',
+  adminSalesUpdated: (v: string) => `آخرین تغییر: ${v}`,
+  adminSalesMalformed:
+    '⚠️ سند تنظیمات «sales» معتبر نیست؛ فروش فعلاً باز فرض می‌شود. یک بار تغییر وضعیت، سند را اصلاح می‌کند.',
+  adminSalesHint:
+    'این کلید فروشِ سرویسِ جدید و تمدید را موقتاً می‌بندد (مثلاً وقتی ظرفیت پنل پر است). بقیه‌ی ربات، از جمله سرویس‌های فعال، پشتیبانی و اطلاعیه‌ها، کار می‌کنند.',
+  adminSalesStoppedToast: '🛑 فروش سرویس متوقف شد.',
+  adminSalesStartedToast: '🟢 فروش سرویس دوباره فعال شد.',
+  adminSalesConflict:
+    '⚠️ همین حالا مدیر دیگری وضعیت را تغییر داد؛ تازه‌ترین حالت نمایش داده می‌شود.',
+  adminSalesSaveFailed: '⚠️ تغییر ذخیره نشد؛ وضعیت فعلی همین‌جا نشان داده می‌شود.',
 
   // ————— Phase 9: service notifications + subscription-page discovery —————
   // The 8B rule for these two alerts: they open with «درود زیبا»، they are

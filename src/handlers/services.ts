@@ -19,6 +19,7 @@ import {
 import type { TelegramInlineKeyboardMarkup, TelegramParseMode, UpdateContext } from '../types.ts';
 import type { Ui } from '../telegram/i18n.ts';
 import { loadRenewalConfig, type RenewalConfig } from '../catalog/renewal.ts';
+import { isSalesStopped } from '../catalog/sales.ts';
 import { loadPanelConfig, PasarGuardClient, type PanelUser } from '../pasarguard/client.ts';
 import { backToMenuKeyboard, serviceDetailKeyboard, servicesListKeyboard } from '../telegram/menu.ts';
 import { tgEscapeHtml } from '../telegram/format.ts';
@@ -161,9 +162,12 @@ async function renderServiceDetail(
   const asHtml = service.subscription_url !== null;
   const esc = (value: string): string => (asHtml ? tgEscapeHtml(value) : value);
 
-  const [renewal, active] = await Promise.all([
+  const [renewal, active, salesStopped] = await Promise.all([
     loadRenewalViewConfig(ctx.db),
     findActiveRenewalForService(ctx.db, service.id),
+    // Phase 13: a commercial stop hides the renew affordance too — the
+    // server-side guard in renewableService stays the authority.
+    isSalesStopped(ctx.db),
   ]);
 
   const localExpiry = effectiveExpiryIso(service);
@@ -238,7 +242,7 @@ async function renderServiceDetail(
   return {
     text: lines.join('\n'),
     keyboard: serviceDetailKeyboard(ctx.ui, service.id, {
-      canRenew: renewal.enabled && active === null,
+      canRenew: renewal.enabled && !salesStopped && active === null,
       serviceUrl: service.subscription_url,
     }),
     live: panelUser !== null,

@@ -562,3 +562,19 @@ export function pricingConfirmKeyboard(): TelegramInlineKeyboardMarkup {
     ],
   };
 }
+
+/* ———— Phase 13: sales stop switch ————
+ * Persian-only operational surface (same rule as the `adm:`/`tsk:`/`prc:`
+ * keyboards). Toggle semantics: stop = close NEW commercial service creation
+ * (buy + renewal); start = reopen it. `sal:view` simply re-renders the state.
+ */
+export function salesKeyboard(stopped: boolean): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      stopped
+        ? [button('🟢 فعال‌سازی سرویس', 'sal:start')]
+        : [button('🛑 توقف سرویس', 'sal:stop')],
+      [button('🔄 نمایش دوباره', 'sal:view')],
+    ],
+  };
+}

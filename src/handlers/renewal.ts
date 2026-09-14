@@ -15,6 +15,7 @@ import type { Session } from '../db/states.ts';
 import type { UpdateContext } from '../types.ts';
 import type { Catalog } from '../catalog/catalog.ts';
 import { enabledDurationDays, loadCatalog } from '../catalog/catalog.ts';
+import { isSalesStopped } from '../catalog/sales.ts';
 import { calculateRenewalPrice } from '../catalog/pricing.ts';
 import { checkoutRenewalOrder } from '../orders/checkout.ts';
 import { newOrderId } from '../lib/security.ts';
@@ -56,6 +57,12 @@ async function renewableService(
   ctx: UpdateContext,
   serviceOrderId: string,
 ): Promise<{ ok: true; service: OrderRow } | { ok: false; toast: string; clearSession?: boolean }> {
+  // Phase 13: a renewal EXTENDS a paid service, so the commercial stop covers
+  // it too — checked first, long before any wallet debit (confirmRenewal
+  // claims credit only after this guard) or checkout (backstop below).
+  if (await isSalesStopped(ctx.db)) {
+    return { ok: false, toast: ctx.ui.t.salesStoppedNotice };
+  }
   const renewal = await loadRenewalViewConfig(ctx.db);
   if (!renewal.enabled) {
     return { ok: false, toast: ctx.ui.t.renewDisabledNotice };

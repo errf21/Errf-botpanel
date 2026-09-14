@@ -20,6 +20,8 @@ migrations/0008_phase8c.sql  payment_reminders claim table (+safe backfill)
 migrations/0009_phase9.sql   service_notifications claim table (+suppress backfill)
 migrations/0010_phase10.sql  customers.language: Phase 10 explicit-choice column
 migrations/0011_pricing_model.sql  'pricing' admin arming + settings_audit + schema-2 pricing doc (placeholders again)
+migrations/0012_device_limit.sql   device_options ladder → presets {1,2,3}, custom OFF (pricing doc untouched)
+migrations/0013_sales_switch.sql   'sales' settings doc: {"schema":1,"stopped":false} (fail-open commercial stop)
 src/index.ts                Fetch router: /health, /telegram/webhook + 5-min cron (scheduled)
 src/types.ts                Env bindings, state enums, Telegram types, UpdateContext
 src/dispatch.ts             Update pipeline: dedupe → register (upsert carries the locale → ctx.ui) → route
@@ -33,8 +35,8 @@ src/telegram/guide.ts       Phase 11 connection guide: static registry — verif
 src/telegram/texts.ts       Persian bundle — the `Texts` contract, frozen persona copy, fa formatters
 src/telegram/texts.en.ts     Phase 10 English bundle — authored natively, type-checked against `Texts`
 src/telegram/i18n.ts          Phase 10 boundary: Locale, Fmt, uiFor() — the ONLY language branch
-src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit /pricing
-src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + admin-review buttons + Phase 10 `lang:` + Phase 11 `gud:` taps
+src/handlers/commands.ts    /start /cancel /help /pending /failed /tickets /announce /announcements /credit /debit /pricing /sales
+src/handlers/callbacks.ts   Menu + flow + service + wallet-pay + ticket/announce + sales + admin-review buttons + Phase 10 `lang:` + Phase 11 `gud:` taps
 src/handlers/messages.ts    Text → state machine; all-locale keyboard routing; admin intercepts (reject reason, ticket reply, wallet ops)
 src/handlers/language.ts     Phase 10 language selector: picker → explicit D1 persistence → keyboard re-render
 src/handlers/guide.ts        Phase 11 guide screens: `gud:*` taps re-rendered statelessly in the actor's language
@@ -49,6 +51,7 @@ src/handlers/announcements.ts Phase 7 broadcast: draft → confirm → chunked r
 src/handlers/paymentReminders.ts Phase 8C cron sweep: claimed 15/30/45 nudges + one admin digest/run
 src/handlers/serviceNotifications.ts Phase 9 cron sweep: one usage90 + one expiry notice per service (+page-discovery CTAs)
 src/handlers/pricingAdmin.ts Phase 12 admin surface: /pricing view → arm → type → stage → confirm → guarded apply
+src/handlers/salesAdmin.ts   Phase 13 admin surface: /sales view + sal:stop/start (+ CAS + settings_audit toggle)
 src/state/machine.ts        Pure conversation state machine (buy + renewal + support + announce ladders)
 src/catalog/catalog.ts      Load + validate settings JSON (volumes/durations/devices/pricing)
 src/catalog/pricing.ts      Pure integer price engine (exact admin entries; breakdown snapshots its inputs)
@@ -56,6 +59,8 @@ src/catalog/pricingDoc.ts   Phase 12 admin edit layer: field tokens, per-field b
 src/catalog/payment.ts      Load + validate payment_info JSON (degrade-safe)
 src/catalog/provisioning.ts Load + validate provisioning-policy JSON (degrade-safe)
 src/catalog/renewal.ts      Load + validate renewal-policy JSON (kill switch, degrade-safe)
+src/catalog/sales.ts        Phase 13 commercial-stop loader — FAIL-OPEN (only explicit stopped:true blocks)
+src/db/sales.ts             Phase 13 sales-doc CAS toggle (raw doc = token) + append-only settings_audit
 src/catalog/wallet.ts       Load + validate wallet-policy JSON (kill switch + caps, degrade-safe)
 src/catalog/referral.ts     Load + validate referral-policy JSON (kill switch + reward/cap, degrade-safe)
 src/pasarguard/client.ts    PasarGuard REST client: X-Api-Key, timeouts, typed errors (GET/POST/PUT)
@@ -72,7 +77,7 @@ src/db/serviceNotifications.ts Phase 9: one usage90 + one expiring row per servi
 src/db/customers.ts         Customers: idempotent upsert, is_admin flag, first-ever probe, admin-chat lookup
 src/db/{states,dedupe}.ts   Conversation sessions (24h TTL) + webhook replay guard
 src/orders/checkout.ts      Draft → priced → durable order: purchase + renewal + wallet plans (full/partial)
-src/handlers/purchase.ts    Buy steps + summary (+wallet buttons) + idempotent confirm & auto-approve
+src/handlers/purchase.ts    Buy steps + summary (+wallet buttons) + idempotent confirm & auto-approve + Phase 13 stop gates
 src/lib/security.ts         ULID order IDs, constant-time secret comparison
 src/lib/validate.ts         Payload guards: callbacks (admin+service+ticket+announce+ULID), media, sanitizers
 src/lib/referralPayout.ts   Shared post-approval referral payout (manual + wallet auto-pay paths)
@@ -124,8 +129,11 @@ Non-secret configuration (panel URL, admin chat id) lives in `wrangler.jsonc`
 as `vars`. **Business data** (volume/duration/device options, prices, payment
 information) lives in the D1 `settings` table as JSON documents (schema-versioned).
 The 0003 migration seeds placeholder catalog/pricing (0011 reseeds the pricing
-document to the Phase-12 schema-2 shape — still placeholders); changing a preset,
-a minimum, or enabling/disabling/reordering an option is a **D1 edit only** —
+document to the Phase-12 schema-2 shape — still placeholders; 0012 replaces the
+device_options ladder with the purchasable range presets {1,2,3}, custom OFF —
+the pricing document is NOT touched, so `user_prices` 4..10 remain as unreachable
+compat entries); changing a preset, a minimum, or enabling/disabling/reordering an
+option is a **D1 edit only** —
 never a code change, never a redeploy. The four price NUMBERS the business cares
 about (base, per-GB, duration entries, user entries) are editable live by admins
 from Telegram via `/pricing` (armed, confirmed, audited — see below).
@@ -170,6 +178,28 @@ successful change appends the FULL before/after documents to `settings_audit`,
 and `settings.updated_by` records the actor. Customers can never receive the
 keyboard, the `/pricing` reply, or a routed `prc:` tap — every path re-checks
 `ctx.isAdmin` server-side and foreign payloads are inert.
+
+**Sales stop (`/sales`, Phase 13 — Persian operational surface):** a persistent
+D1 switch (`settings['sales']` = `{"schema":1,"stopped":bool}`, seed 0013) for a
+**temporary commercial stop**: while `stopped:true`, every path that CREATES or
+EXTENDS a paid service refuses with the same customer-facing notice — fresh buy
+entry (both transports), `ord:confirm`, wallet full/partial, and renewals
+(entry, duration step, receipt confirm and wallet confirm alike; the renew
+button is also hidden). The enforcement is layered: gates at each entry/confirm
+point plus a structurally unbypassable backstop inside `checkoutOrder`/
+`checkoutRenewalOrder` (and gates fire BEFORE any wallet debit, so a stop can
+never consume credit; a toggle racing in-flight is caught by the backstop and
+the existing no-order-means-refund path). What MUST keep working while stopped:
+`/start`, existing services (list/detail/refresh/panel page), order history,
+receipt upload and admin approval of orders created before the stop (their
+provisioning fulfillment is deliberately NOT gated — no stranded money),
+wallet/account/referral/support/guide/language, announcements, and the admin
+surfaces themselves (an admin can always resume, and may announce the resumption
+with `/announce`). The loader FAILS OPEN: a missing/malformed row means sales
+ENABLED — only an explicit `stopped:true` blocks. Toggling is CAS-protected
+(two admins, one winner) and every change appends full before/after documents
+to `settings_audit` (actor `admin:<id>`, action `stop`/`start`); the state lives
+only in D1, read fresh on every webhook, so it survives restarts by construction.
 
 All inputs are validated as safe integers with hard caps, so prices cannot
 overflow. The calculated **breakdown including the exact table entries used**
@@ -287,12 +317,16 @@ configured and rejects requests with a wrong token (401).
   the call fails** — an unconfigured panel changes no existing Phase 1–5 path.
 - **Renewal is duration-only** (the Phase-6 decision): the ladder asks for 1/2/3
   months (presets, **never custom text**) → summary → confirm → a durable
-  `kind='renewal'` order priced `ceil(days/days_per_month) × month_rate`
-  (integer, rate-snapshotted like a purchase) that reuses the SAME
+  `kind='renewal'` order priced at the EXACT admin entry for that duration
+  (1 month = the base product price, otherwise the `duration_prices` entry —
+  the same table the purchase ladder uses, table-snapshotted like a purchase)
+  that reuses the SAME
   receipt + manual admin-review pipeline. `step:back` steps out of the ladder.
-- Renewals are **always allowed** (`renewal.near_expiry_days` only lights up
-  the "soon" badge). An **expired** service renews from `now`, not from its
-  past expiry — `target = max(now, live/local expire) + days`.
+- Renewals are allowed per the `renewal` policy doc (`enabled` kill switch;
+  `renewal.near_expiry_days` only lights up the "soon" badge) — and, since
+  Phase 13, they are ALWAYS refused while the sales-stop switch is ON (a stop
+  may mean panel/template capacity is exhausted). An **expired** service renews
+  from `now`, not from its past expiry — `target = max(now, live/local expire) + days`.
 - The renewal `svc:` callbacks embed a full 28-char order id, so they get a
   strict allowlisted pattern (`svc:(det|ref|rnw):<28>`) parsed by
   `parseServiceCallback`; every action re-checks **ownership in the WHERE
@@ -472,5 +506,6 @@ links + one-minute import steps. By design it is the dumbest flow in the bot:
 - **Phase 10**: full English support — native second voice, i18n boundary, selector, D1 persistence ✅
 - **Phase 11**: connection guide — stateless «📚 راهنمای اتصال» screens, verified official links, both locales ✅
 - **Phase 12**: admin pricing model — exact per-duration/user entries, /pricing edit flow (arm→confirm), CAS + settings_audit, snapshot immutability ✅
-- Phase 12 (next): final Cloudflare deployment + webhook registration
+- **Phase 13**: device limit {1,2,3} (0012) + admin sales-stop switch `/sales` (0013, fail-open, CAS+audit, server-side gates across purchase + renewal + wallet + checkout backstop) ✅
+- Next: final Cloudflare deployment + webhook registration
 

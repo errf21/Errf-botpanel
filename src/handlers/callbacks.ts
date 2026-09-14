@@ -53,6 +53,7 @@ import {
 } from './support.ts';
 import { runAnnouncementPass, showAnnouncements } from './announcements.ts';
 import { handlePricingCallback } from './pricingAdmin.ts';
+import { handleSalesCallback } from './salesAdmin.ts';
 import { cancelToMenu } from './commands.ts';
 
 
@@ -90,6 +91,12 @@ export async function handleCallback(
   // ———— Phase 12: pricing management (strict parser + admin gate inside) ————
   if (data.startsWith('prc:')) {
     await handlePricingCallback(ctx, data, callbackQueryId);
+    return;
+  }
+
+  // ———— Phase 13: sales stop switch (strict parser + admin gate inside) ————
+  if (data.startsWith('sal:')) {
+    await handleSalesCallback(ctx, data, callbackQueryId);
     return;
   }
 

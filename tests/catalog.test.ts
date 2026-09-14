@@ -128,7 +128,7 @@ test('acceptVolume: min 10 enforced, presets, custom rule, disabled preset exact
 });
 
 test('loadCatalog: reads all four settings rows from D1 (real SQL via shim)', async () => {
-  const sqlite = freshDb(); // 0001-0010 seeded, pricing doc reseeded by 0011
+  const sqlite = freshDb(); // 0001-0010 seeded, pricing reseeded by 0011, device ladder by 0012
   const db = makeD1Shim(sqlite) as never;
   const result = await loadCatalog(db);
   assert.equal(result.ok, true);
@@ -137,12 +137,18 @@ test('loadCatalog: reads all four settings rows from D1 (real SQL via shim)', as
   // Phase 6: duration seed = whole months (30/60/90), no 180/365 anymore.
   assert.deepEqual(enabledDurationDays(result.catalog), [30, 60, 90]);
   assert.equal(result.catalog.duration.allowCustom, false);
-  assert.deepEqual(enabledDeviceCounts(result.catalog), [1, 3, 5]);
+  assert.deepEqual(enabledDeviceCounts(result.catalog), [1, 2, 3]);
+  // Phase 13 (0012): user count is presets {1,2,3}, custom typing is OFF.
+  assert.equal(result.catalog.device.minCount, 1);
+  assert.equal(result.catalog.device.maxCount, 3);
+  assert.equal(result.catalog.device.allowCustom, false);
   assert.equal(result.catalog.pricing.currency, 'IRT');
   assert.equal(result.catalog.pricing.baseProductPrice, 45000);
   assert.equal(result.catalog.pricing.pricePerGb, 4500);
   assert.deepEqual(result.catalog.pricing.durationPrices, { 2: 80000, 3: 110000 });
   assert.equal(result.catalog.pricing.userPrices[1], 0);
+  // u4..u10 entries REMAIN in the approved pricing doc (compat); they are
+  // simply unreachable from the 0012 device ladder.
   assert.equal(result.catalog.pricing.userPrices[10], 200000);
 });
 

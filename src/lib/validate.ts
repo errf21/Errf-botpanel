@@ -68,6 +68,21 @@ export function parsePricingCallback(data: string): PricingCallback | null {
 }
 
 /**
+ * Phase 13: the sales stop switch lives in the `sal:` namespace. The generic
+ * pattern already admits the shape, but the handler consumes ONLY this fixed
+ * vocabulary — nothing else can ever reach the sales surface.
+ */
+const SALES_CALLBACK_PATTERN = /^sal:(view|stop|start)$/;
+
+export type SalesAction = 'view' | 'stop' | 'start';
+
+/** Parses ONLY data that already matched SALES_CALLBACK_PATTERN. */
+export function parseSalesCallback(data: string): SalesAction | null {
+  const match = SALES_CALLBACK_PATTERN.exec(data);
+  return match ? (match[1] as SalesAction) : null;
+}
+
+/**
  * Admin pricing value entry: Persian/Arabic digits + separators are accepted
  * (same normalization family as parsePositiveInt), but pricing must reach the
  * 1e9 config cap, so the digit ceiling is 12 — the safe-integer bound check

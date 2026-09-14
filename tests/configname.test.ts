@@ -417,6 +417,8 @@ test('non-name failure keeps the generic notice (classifier is copy-only)', asyn
 
   const text = textsTo(HANZ.id).join('\n');
   assert.equal(text.includes('نپذیرفت'), false, 'generic 500 must not claim a name issue');
-  assert.ok(text.includes('پیگیری می‌شود'), `generic failure copy expected: ${text}`);
+  // stem follows the Phase 13 tone pass (generic copy: «دارن پیگیری می‌کنن»);
+  // the name-rejected variant never says «پیگیری».
+  assert.ok(text.includes('پیگیری'), `generic failure copy expected: ${text}`);
   scenario.createError = null;
 });

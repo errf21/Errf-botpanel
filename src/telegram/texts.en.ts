@@ -54,6 +54,8 @@ const en: Texts = {
     '/tickets — (admins) open support tickets',
     '/announce — (admins) send an announcement to all users',
     '/announcements — (admins) recent announcement status',
+    '/pricing — (admins) view and edit prices',
+    '/sales — (admins) stop/resume service sales',
     '',
     '📦 Under "My Services" you can check each service\'s status and expiry, and renew it.',
     'Ready? Use the buttons below.',
@@ -104,8 +106,9 @@ const en: Texts = {
   durationPrompt: (min: number, max: number, allowCustom = true) =>
     `⏳ Choose a duration.\n\n${durationEn(min)} to ${durationEn(max)}.` +
     (allowCustom ? '\nWant something else? Type the number of days.' : ''),
-  devicePrompt: (min: number, max: number) =>
-    `📱 How many devices can connect at once?\n\nBetween ${min} and ${max}.\nType a number for a custom amount.`,
+  devicePrompt: (min: number, max: number, allowCustom = true) =>
+    `📱 How many devices can connect at once?\n\nBetween ${min} and ${max}.` +
+    (allowCustom ? '\nType a number for a custom amount.' : ''),
   customVolumeLabel: '✍️ Custom',
   customHint: '✍️ Now type your number here and send it.',
   rejectedRange: (min: number, max: number) =>
@@ -282,7 +285,7 @@ const en: Texts = {
   renewInProgressNotice: (id: string) =>
     `🔁 There\'s already an open renewal for this service.\n\n🆔 Renewal order: ${id}\n\nTrack its status under "💳 My Orders".`,
   renewIntro: (name: string, expires: string) =>
-    `🔁 Renew "${name}"\n\n📅 Current expiry: ${expires}\n\nPick a duration to renew.\nEach extra month is priced separately, and payment works like a purchase: send a receipt, manual confirmation.`,
+    `🔁 Renew "${name}"\n\n📅 Current expiry: ${expires}\n\nPick a duration to renew.\nThe price is the exact number set for that duration; payment works like a purchase: send a receipt, manual confirmation.`,
   renewDurationPrompt: '⏳ Choose the renewal length:\n\n1 month • 2 months • 3 months',
   renewSummaryHeader: '🧾 Renewal summary',
   renewSummaryService: (name: string) => `📦 Service: "${name}"`,
@@ -437,6 +440,24 @@ const en: Texts = {
   announceStale: '🔄 This announcement changed or was already delivered.',
   announceReceived: '📢 Announcement',
   userBlocked: (id: string) => `🎫 Ticket ${id} is no longer active; delivery stopped.`,
+
+  // ————— Phase 13: sales stop switch (customer notice + admin surface) —————
+  salesStoppedNotice:
+    '🛑 Service sales are on a short pause right now.\n\nHang tight — we\'ll be back soon ❤️\nOnce it\'s back, you can order or renew right from this menu.',
+  adminSalesStateActive:
+    '🛡 Service status: 🟢 active\nNew orders and renewals are open.',
+  adminSalesStateStopped:
+    '🛡 Service status: 🔴 stopped\nNew orders and renewals are temporarily closed; existing services are untouched and orders placed before the stop can still be paid and approved.',
+  adminSalesUpdated: (v: string) => `Last change: ${v}`,
+  adminSalesMalformed:
+    '⚠️ The "sales" settings document is invalid; sales are assumed OPEN for now. Toggling once will rewrite it cleanly.',
+  adminSalesHint:
+    'This switch temporarily closes new service orders and renewals (e.g. when panel capacity is full). Everything else — existing services, support, announcements — keeps working.',
+  adminSalesStoppedToast: '🛑 Service sales stopped.',
+  adminSalesStartedToast: '🟢 Service sales resumed.',
+  adminSalesConflict:
+    '⚠️ Another admin just changed the state; showing the newest one.',
+  adminSalesSaveFailed: '⚠️ The change could not be saved; showing the current state.',
 
   // ————— Phase 9: service notifications + subscription-page discovery —————
   // Important standalone notices: warm opener, never a greeting on mid-flow

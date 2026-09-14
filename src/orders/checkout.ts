@@ -11,6 +11,7 @@ import {
   type OrderRow,
 } from '../db/orders.ts';
 import { catalogLimits, type PriceBreakdown, type RenewalBreakdown } from '../catalog/pricing.ts';
+import { isSalesStopped } from '../catalog/sales.ts';
 import type { Catalog } from '../catalog/catalog.ts';
 
 export interface CheckoutDraft {
@@ -75,6 +76,12 @@ export async function checkoutOrder(
   draft: CheckoutDraft,
   wallet?: WalletPlan,
 ): Promise<CheckoutResult> {
+  // Phase 13 backstop: checkout is the ONLY place pricing produces an order,
+  // so this guard makes the sales stop structurally unbypassable even if a
+  // future entry point forgets its own gate. Callers already treat a failed
+  // checkout as "no order" and refund claimed wallet credit on a confirmed
+  // miss, so a stop landing mid-race can never keep customer money.
+  if (await isSalesStopped(db)) return { ok: false, error: 'sales_stopped' };
   const preExisting = await findOrderByIdempotencyKey(db, draft.orderToken);
   if (preExisting) return { ok: true, order: preExisting, created: false };
 
@@ -155,6 +162,9 @@ export async function checkoutRenewalOrder(
   serviceConfigName: string,
   wallet?: WalletPlan,
 ): Promise<CheckoutResult> {
+  // Phase 13: renewals EXTEND a paid service, so the commercial stop covers
+  // them too — same unbypassable backstop discipline as checkoutOrder.
+  if (await isSalesStopped(db)) return { ok: false, error: 'sales_stopped' };
   const preExisting = await findOrderByIdempotencyKey(db, draft.orderToken);
   if (preExisting) return { ok: true, order: preExisting, created: false };
 

@@ -432,9 +432,9 @@ test('persona: three distinct variants, all ⏳-anchored, never any greeting, no
   assert.equal(fa.receiptReplaced.includes('درود'), false);
   // asserted stems survived the 8C copy refresh (regression guard)
   assert.ok(fa.receiptAccepted.includes('ثبت شد'), 'ثبت شد stem');
-  assert.ok(fa.receiptAccepted.includes('برای بررسی ارسال گردید'));
+  assert.ok(fa.receiptAccepted.includes('برای بررسی ارسال شد'));
   assert.ok(fa.receiptReplaced.includes('جایگزین شد'));
-  assert.ok(fa.receiptReplaced.includes('برای بررسی ارسال گردید'));
+  assert.ok(fa.receiptReplaced.includes('برای بررسی ارسال شد'));
 
   const orderId = await buyWithReceipt();
   const anchor = reminderRow(orderId)!.created_at;

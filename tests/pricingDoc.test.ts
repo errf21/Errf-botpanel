@@ -167,10 +167,12 @@ test('loadCatalog (real docs, real SQL): coherent seed passes, broken user table
   const db = makeD1Shim(sqlite) as never;
   assert.equal((await loadCatalog(db)).ok, true);
 
-  // Drop the user price for 6..10 while device allow_custom stays ON (0003/seed
-  // keeps it on): exactly the contradictory state coverage must refuse.
+  // Drop a price for a count the (0012) ladder actually sells while presets
+  // carry it: exactly the contradictory state coverage must refuse. (Since
+  // 0012 the device ladder is presets {1,2,3} with allow_custom OFF, so an
+  // unpriced key OUTSIDE 1..3 is legitimately unreachable, not contradictory.)
   sqlite
-    .prepare(`UPDATE settings SET value = json_remove(value, '$.user_prices."6"') WHERE key = 'pricing'`)
+    .prepare(`UPDATE settings SET value = json_remove(value, '$.user_prices."2"') WHERE key = 'pricing'`)
     .run();
   const broken = await loadCatalog(db);
   assert.equal(broken.ok, false);

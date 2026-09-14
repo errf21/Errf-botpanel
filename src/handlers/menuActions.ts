@@ -20,6 +20,7 @@ import { localeName } from '../telegram/i18n.ts';
 import { setSession } from '../db/states.ts';
 import { isBusy, reduce } from '../state/machine.ts';
 import { loadCatalog } from '../catalog/catalog.ts';
+import { isSalesStopped } from '../catalog/sales.ts';
 import { showMyOrders } from './payment.ts';
 import { showMyServices } from './services.ts';
 import { showMyWallet } from './wallet.ts';
@@ -74,6 +75,13 @@ async function startPurchase(ctx: UpdateContext, session: Session): Promise<void
       const view = stepView(ctx.ui, session.state, loaded.catalog);
       if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);
     }
+    return;
+  }
+  // Phase 13: the commercial stop blocks FRESH purchase entry only — an
+  // in-flight draft may still be resumed (its confirmation is gated where
+  // the order would actually be created, so nothing can slip through).
+  if (await isSalesStopped(ctx.db)) {
+    await ctx.api.sendMessage(ctx.chatId, t.salesStoppedNotice, mainMenuKeyboard(ctx.ui));
     return;
   }
   const afterBuy = reduce(session.state, 'buy'); // IDLE → BUYING

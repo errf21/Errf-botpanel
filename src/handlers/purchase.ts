@@ -12,6 +12,7 @@ import {
   loadCatalog,
 } from '../catalog/catalog.ts';
 import { calculatePrice } from '../catalog/pricing.ts';
+import { isSalesStopped } from '../catalog/sales.ts';
 import { payableWalletBalance } from './wallet.ts';
 import { payOrderWithWallet, refundOrderWalletPayment, setPaidLedgerOrder } from '../db/wallet.ts';
 import { findOrderByIdempotencyKey } from '../db/orders.ts';
@@ -69,7 +70,7 @@ export function stepView(ui: Ui, state: ConversationState, catalog: Catalog): St
       };
     case 'WAITING_DEVICE_LIMIT':
       return {
-        text: ui.t.devicePrompt(catalog.device.minCount, catalog.device.maxCount),
+        text: ui.t.devicePrompt(catalog.device.minCount, catalog.device.maxCount, catalog.device.allowCustom),
         keyboard: deviceKeyboard(ui, enabledDeviceCounts(catalog), catalog.device.allowCustom),
       };
     default:
@@ -215,6 +216,14 @@ export async function confirmPurchase(
   callbackQueryId: string,
   wallet: WalletPlan | null = null,
 ): Promise<void> {
+  // Phase 13: commercial stop — the durable exit of the purchase ladder.
+  // Checked BEFORE any state read, wallet debit or order write: a stopped
+  // state can never consume wallet credit or create an order.
+  if (await isSalesStopped(ctx.db)) {
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.salesStoppedNotice, mainMenuKeyboard(ctx.ui));
+    await ctx.api.answerCallbackQuery(callbackQueryId);
+    return;
+  }
   const token = session.data['order_token'];
   const draft = extractDraft(session);
   if (
@@ -387,6 +396,13 @@ export async function confirmPurchaseWithWallet(
   mode: 'full' | 'partial',
   callbackQueryId: string,
 ): Promise<void> {
+  // Phase 13: wallet purchase creation obeys the same commercial stop —
+  // blocked here so no debit plan is ever computed against a live balance.
+  if (await isSalesStopped(ctx.db)) {
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.salesStoppedNotice, mainMenuKeyboard(ctx.ui));
+    await ctx.api.answerCallbackQuery(callbackQueryId);
+    return;
+  }
   const balance = await payableWalletBalance(ctx.db, ctx.customerId);
   if (balance === null) {
     await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.walletUnavailable, backToMenuKeyboard(ctx.ui));

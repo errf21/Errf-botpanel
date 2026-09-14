@@ -170,8 +170,8 @@ test('exactly three buttons carry Telegram styles; the rest ship no style field'
 test('every menu label sent as text triggers its existing action from IDLE', async () => {
   const cases: Array<{ label: string; stateAfter: string; textMust: string }> = [
     { label: '🛒 خرید سرویس', stateAfter: 'WAITING_CONFIG_NAME', textMust: 'نام' },
-    { label: '📦 سرویس‌های من', stateAfter: 'IDLE', textMust: 'سرویس فعالی ندارید' },
-    { label: '💳 سفارش‌های من', stateAfter: 'IDLE', textMust: 'سفارشی ثبت نکرده‌اید' },
+    { label: '📦 سرویس‌های من', stateAfter: 'IDLE', textMust: 'سرویس فعالی ندار' },
+    { label: '💳 سفارش‌های من', stateAfter: 'IDLE', textMust: 'سفارشی ثبت نکرد' },
     { label: '👤 حساب کاربری', stateAfter: 'IDLE', textMust: '👤 اطلاعات حساب شما' },
     { label: '💰 کیف پول', stateAfter: 'IDLE', textMust: 'کیف پول' },
     { label: '🤝 دعوت از دوستان', stateAfter: 'IDLE', textMust: 'دعوت از دوستان' },

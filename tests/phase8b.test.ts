@@ -239,7 +239,7 @@ test('duration choice is never hyped: the device prompt arrives plain', async ()
   assert.equal(/(درود|عووو|😄)/.test(text), false, 'no reactions on the duration step');
 });
 
-test('device choice: 1 plain, 3 leads summary, custom 2 leads with «دوکاربره», 5 proportional', async () => {
+test('device choice: 1 plain, 3 leads summary, 2 (preset) leads with «دوکاربره», >3 rejected out of range', async () => {
   // Single → no reaction: summary opens straight on the header.
   const solo = freshUser('dev1');
   await buyToVolume(solo);
@@ -265,7 +265,8 @@ test('device choice: 1 plain, 3 leads summary, custom 2 leads with «دوکار�
   assert.ok(text.includes('🧾 خلاصه سفارش'));
   assert.equal(sessionFor(trio.id).data['device_count'], 3);
 
-  // custom 2 → corrected «دوکاربره» wording, never the banned «دوراه‌سفره».
+  // 2 is now a preset (0012 ladder): typed free text still lands, and the
+  // «دوکاربره» wording is corrected — never the banned «دوراه‌سفره».
   const duo = freshUser('dev2');
   await buyToVolume(duo);
   await toDeviceStep(duo);
@@ -275,12 +276,31 @@ test('device choice: 1 plain, 3 leads summary, custom 2 leads with «دوکار�
   assert.ok(text.includes('دوکاربره انتخاب کردی'));
   assert.equal(text.includes('دوراه‌سفره'), false, 'banned awkward phrasing must be gone');
 
-  // 5 → proportional, names the count.
+  // 5 → beyond the 0012 ladder (max 3): range rejection, reaction never rides.
   const five = freshUser('dev5');
+  stub.reset();
   await buyToVolume(five);
   await toDeviceStep(five);
   await dispatch(callbackUpdateAs('dev:5', nextId(), five));
-  assert.ok(String(lastBubble(five.id).text).includes('۵ کاربره انتخاب کردی'));
+  assert.equal(sessionFor(five.id).state, 'WAITING_DEVICE_LIMIT', 'out-of-range stays on the step');
+  const fiveText = String(lastBubble(five.id).text);
+  assert.ok(fiveText.includes('دستگاه'), `device-domain rejection expected: ${fiveText}`);
+  assert.equal(fiveText.includes('۵ کاربره'), false, 'no acceptance reaction for an unbuyable count');
+  // The device keyboard now offers 1/2/3 only — no custom button, no typing hint.
+  const devKb = sendsTo(five.id)
+    .reverse()
+    .find((s) => {
+      const kb = s.payload['reply_markup'] as { inline_keyboard?: { callback_data: string }[][] } | undefined;
+      return kb?.inline_keyboard.flat().some((b) => b.callback_data.startsWith('dev:'));
+    });
+  const devButtons = (
+    (devKb?.payload['reply_markup'] as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard
+      .flat()
+      .map((b) => b.callback_data)
+  );
+  assert.equal(devButtons.includes('dev:custom'), false, 'custom typing is off (0012)');
+  assert.ok(devButtons.includes('dev:2'), 'preset 2 is purchasable');
+  assert.equal(devButtons.includes('dev:5'), false, 'preset 5 is gone');
 });
 
 test('reaction is a one-shot prelude: a re-rendered summary never repeats it', async () => {
