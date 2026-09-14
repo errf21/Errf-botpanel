@@ -20,8 +20,11 @@ export const CB = {
   MENU_ORDERS: 'menu:orders',
   MENU_ACCOUNT: 'menu:account',
   MENU_SUPPORT: 'menu:support',
+  /** The customer's formal, trackable ticket flow (creates the ticket). */
+  MENU_TICKET: 'menu:ticket',
   MENU_WALLET: 'menu:wallet',
   MENU_INVITE: 'menu:invite',
+  /** ADMIN ticket queue — admin-only, reachable from inline buttons only. */
   MENU_TICKETS: 'menu:tickets',
   MENU_ANNOUNCE_LIST: 'menu:anncs',
   /** Phase 10: opens the language picker (stays the LAST main-menu button). */
@@ -29,7 +32,7 @@ export const CB = {
   /** Phase 10: the two explicit choices; persisted server-side, never guessed. */
   LANG_FA: 'lang:fa',
   LANG_EN: 'lang:en',
-  /** Phase 11: opens the connection guide (main menu 9th button). */
+  /** Phase 11: opens the connection guide (an unstyled main-menu button). */
   MENU_GUIDE: 'menu:guide',
   /**
    * Phase 11: stateless guide navigation. Every screen is re-derived from the
@@ -258,8 +261,9 @@ function urlButton(text: string, url: string): TelegramInlineKeyboardButton {
  * as the exact-match routing table (`menuCallbackForText`) feeding the SAME
  * callback vocabulary the inline buttons historically used. Labels must
  * stay byte-identical to the button text: Telegram echoes them verbatim.
- * Exactly three entries carry a style (primary/primary/success); the rest are
- * rendered by Telegram in the default/basic appearance.
+ * Exactly three entries carry a style — `danger`/`primary`/`success`, three
+ * DISTINCT values on the three main actions; the rest are rendered by Telegram
+ * in the default/basic appearance.
  *
  * Phase 10: LABELS ARE LOCALIZED but ROUTING IS NOT. Every keyboard label the
  * bot can ever display is indexed across ALL bundles, so a tap on a stale
@@ -277,14 +281,24 @@ interface MenuCore {
   style?: TelegramKeyboardButtonStyle;
 }
 
+/**
+ * The styled trio MUST stay adjacent, in this exact order, and FIRST (the row
+ * builder puts every styled entry in row 1 by source order):
+ * 🛒 Buy = `danger` (red) · 📦 My Services = `primary` (blue) · 💰 Wallet =
+ * `success` (green) — three DISTINCT styles, never a fourth, never split by an
+ * unstyled button. Everything below stays neutral.
+ */
 const MAIN_MENU_CORE: readonly MenuCore[] = [
-  { label: (t) => t.menuBuy, callback: CB.MENU_BUY, style: 'primary' },
+  { label: (t) => t.menuBuy, callback: CB.MENU_BUY, style: 'danger' },
   { label: (t) => t.menuServices, callback: CB.MENU_SERVICES, style: 'primary' },
   { label: (t) => t.menuOrders, callback: CB.MENU_ORDERS },
   { label: (t) => t.menuAccount, callback: CB.MENU_ACCOUNT },
   { label: (t) => t.menuWallet, callback: CB.MENU_WALLET, style: 'success' },
   { label: (t) => t.menuInvite, callback: CB.MENU_INVITE },
+  /** Direct contact with support — never opens a ticket. */
   { label: (t) => t.menuSupport, callback: CB.MENU_SUPPORT },
+  /** The formal ticket flow; deliberately unstyled, listed after support. */
+  { label: (t) => t.menuTicket, callback: CB.MENU_TICKET },
   /** Phase 11: the connection guide — deliberately unstyled, next to language. */
   { label: (t) => t.menuGuide, callback: CB.MENU_GUIDE },
   { label: () => LANG_LABEL, callback: CB.MENU_LANGUAGE },
@@ -319,20 +333,50 @@ function replyButton(text: string, style?: TelegramKeyboardButtonStyle): Telegra
   return style === undefined ? { text } : { text, style };
 }
 
+/**
+ * Non-persistent on purpose: a persistent reply keyboard is re-opened by the
+ * client every time the user dismisses a non-reply keyboard, so Android Back
+ * could never hide the menu. Non-persistent keeps the stock UX — Back collapses
+ * it to full-screen chat, Telegram's own keyboard button brings it back.
+ */
 function replyKeyboard(
   rows: TelegramReplyKeyboardButton[][],
 ): TelegramReplyKeyboardMarkup {
-  return { keyboard: rows, resize_keyboard: true, is_persistent: true };
+  return { keyboard: rows, resize_keyboard: true };
 }
 
-/** The persistent bottom main menu (four rows of two, styled trio preserved). */
+/**
+ * The bottom main menu.
+ *
+ * Row 1 is ALWAYS exactly the styled trio — `danger` 🛒 Buy, `primary` 📦 My
+ * Services, `success` 💰 Wallet — adjacent, in that order, with nothing between
+ * them and never a fourth colour: the styled partition takes every styled entry
+ * in MAIN_MENU_CORE source order, so a button can only join row 1 by gaining a
+ * style, and only those three have one.
+ *
+ * The unstyled buttons fill the rows beneath it two per row. An ODD remainder
+ * would orphan a single button in its own row, so a trailing solo button joins
+ * the previous row instead — 10 buttons therefore render [3,2,2,3], and the
+ * guide keeps sitting directly before the language selector (which stays last).
+ * Labels, callbacks and styles are untouched; only the grouping differs from the
+ * flat MAIN_MENU_CORE order.
+ */
 export function mainMenuKeyboard(ui: Ui): TelegramReplyKeyboardMarkup {
-  const buttons = mainMenuEntries(ui.t).map((entry) =>
-    replyButton(entry.label, entry.style),
-  );
-  const rows: TelegramReplyKeyboardButton[][] = [];
-  for (let i = 0; i < buttons.length; i += 2) {
-    rows.push(buttons.slice(i, i + 2));
+  const entries = mainMenuEntries(ui.t);
+  const of = (hasStyle: boolean) =>
+    entries
+      .filter((entry) => (entry.style !== undefined) === hasStyle)
+      .map((entry) => replyButton(entry.label, entry.style));
+  const styled = of(true);
+  const plain = of(false);
+  const rows: TelegramReplyKeyboardButton[][] = [styled];
+  for (let i = 0; i < plain.length; i += 2) {
+    rows.push(plain.slice(i, i + 2));
+  }
+  const tail = rows.at(-1);
+  const previous = rows.at(-2);
+  if (tail !== undefined && previous !== undefined && tail.length === 1) {
+    rows.splice(rows.length - 2, 2, [...previous, ...tail]);
   }
   return replyKeyboard(rows);
 }

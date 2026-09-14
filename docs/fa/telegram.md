@@ -82,8 +82,8 @@ curl -s "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
 انتظار: `url` = آدرس webhook ورکر شما؛ `pending_update_count` صفر یا بسیار
 کم؛ **بدون** `last_error_message`.
 
-راستی‌آزمایی زنده: ربات را باز کنید و `/start` بزنید — منوی ۹ دکمه‌ای (پیش‌فرض
-فارسی) باید بیاید. خطاها با `npx wrangler tail` دیده می‌شوند
+راستی‌آزمایی زنده: ربات را باز کنید و `/start` بزنید — منوی ۱۰ دکمه‌ای با ردیف
+اولِ سه‌تاییِ رنگی (پیش‌فرض فارسی) باید بیاید. خطاها با `npx wrangler tail` دیده می‌شوند
 (`webhook_dispatch_error ...`).
 
 برای حذف/چرخش: `deleteWebhook`، secret تازه `put` کنید و دوباره `setWebhook` —

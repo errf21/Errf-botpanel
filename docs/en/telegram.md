@@ -87,7 +87,7 @@ in-flight); **no** `last_error_message`; `has_custom_headers: true` only if you
 set them (this project relies on the standard `secret_token` mechanism).
 
 Live verification after registering: open the bot in Telegram, press `/start`
-— the main menu (9 buttons, Persian default) must appear. `npx wrangler tail`
+— the main menu (10 buttons, first row = the three colored ones, Persian default) must appear. `npx wrangler tail`
 shows error lines if anything failed (`webhook_dispatch_error ...`).
 
 To remove/rotate: `deleteWebhook`, re-set secret, re-register with the new

@@ -47,8 +47,8 @@ test('dispatcher ignores non-update payloads entirely', async () => {
 
 test('phase2 loop: start → buy → name → volume step → replay → back', async () => {
   // /start registers + presents the main menu (5 sections in P2-P6; P7
-  // added wallet + invite; Phase 10 added the language selector, Phase 11
-  // the connection guide → 9 buttons).
+  // added wallet + invite; Phase 10 added the language selector, Phase 11 the
+  // connection guide, and the support split (🆘 direct + 🎫 ticket) → 10 buttons).
   // Phase 8A: it is a REAL Reply Keyboard.
   stub.reset();
   await dispatch(messageUpdate('/start', 11));
@@ -57,7 +57,7 @@ test('phase2 loop: start → buy → name → volume step → replay → back', 
     keyboard: { text: string }[][];
     resize_keyboard?: boolean;
   };
-  assert.equal(kb.keyboard.flat().length, 9);
+  assert.equal(kb.keyboard.flat().length, 10);
   assert.equal(kb.resize_keyboard, true);
   const customerCount = () =>
     (sqlite.prepare('SELECT COUNT(*) AS n FROM customers').get() as { n: number }).n;

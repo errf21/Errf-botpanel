@@ -11,6 +11,7 @@ import { DEFAULT_LOCALE, EN_UI, FA_UI, resolveLocale, uiFor } from '../src/teleg
 import {
   CB,
   MAIN_MENU_ENTRIES,
+  mainMenuEntries,
   matchStepText,
   menuCallbackForText,
   routeCallback,
@@ -231,12 +232,12 @@ test('NO text-routed label collides across locales (one text never means two but
   for (const t of [FA_UI.t, EN_UI.t]) {
     const callbacks = [
       CB.MENU_BUY, CB.MENU_SERVICES, CB.MENU_ORDERS, CB.MENU_ACCOUNT,
-      CB.MENU_WALLET, CB.MENU_INVITE, CB.MENU_SUPPORT, CB.MENU_GUIDE,
-      CB.MENU_LANGUAGE,
+      CB.MENU_WALLET, CB.MENU_INVITE, CB.MENU_SUPPORT, CB.MENU_TICKET,
+      CB.MENU_GUIDE, CB.MENU_LANGUAGE,
     ] as const;
     const labels = [
       t.menuBuy, t.menuServices, t.menuOrders, t.menuAccount,
-      t.menuWallet, t.menuInvite, t.menuSupport, t.menuGuide, t.menuLanguage,
+      t.menuWallet, t.menuInvite, t.menuSupport, t.menuTicket, t.menuGuide, t.menuLanguage,
     ];
     labels.forEach((label, i) => put(label, callbacks[i] ?? 'menu'));
     put(t.backToMenu, 'back');
@@ -245,16 +246,43 @@ test('NO text-routed label collides across locales (one text never means two but
   }
 });
 
-test('menu keyboard carries the 9 entries: unstyled guide, then the locale-fixed selector last', () => {
-  assert.equal(MAIN_MENU_ENTRIES.length, 9);
-  // Phase 11: guide sits directly before the language button and stays unstyled.
-  assert.equal(MAIN_MENU_ENTRIES[7]?.callback, CB.MENU_GUIDE);
-  assert.equal(MAIN_MENU_ENTRIES[7]?.label, '📚 راهنمای اتصال');
+test('menu keyboard carries 10 entries: unstyled ticket+guide, locale-fixed selector last', () => {
+  assert.equal(MAIN_MENU_ENTRIES.length, 10);
+  // Support and Create-ticket are SEPARATE unstyled buttons (support never
+  // opens the ladder; the ticket button never reads as it).
+  assert.equal(MAIN_MENU_ENTRIES[6]?.callback, CB.MENU_SUPPORT);
+  assert.equal(MAIN_MENU_ENTRIES[6]?.style, undefined);
+  assert.equal(MAIN_MENU_ENTRIES[7]?.callback, CB.MENU_TICKET);
   assert.equal(MAIN_MENU_ENTRIES[7]?.style, undefined);
-  assert.equal(MAIN_MENU_ENTRIES[8]?.callback, CB.MENU_LANGUAGE);
-  assert.equal(MAIN_MENU_ENTRIES[8]?.label, '🌐 زبان / Language');
+  // guide sits directly before the language button and stays unstyled.
+  assert.equal(MAIN_MENU_ENTRIES[8]?.callback, CB.MENU_GUIDE);
+  assert.equal(MAIN_MENU_ENTRIES[8]?.label, '📚 راهنمای اتصال');
   assert.equal(MAIN_MENU_ENTRIES[8]?.style, undefined);
+  assert.equal(MAIN_MENU_ENTRIES[9]?.callback, CB.MENU_LANGUAGE);
+  assert.equal(MAIN_MENU_ENTRIES[9]?.label, '🌐 زبان / Language');
+  assert.equal(MAIN_MENU_ENTRIES[9]?.style, undefined);
   assert.equal(MAIN_MENU_ENTRIES.filter((e) => e.style !== undefined).length, 3);
+});
+
+/* ———— styled trio: locale can never move a colour ———— */
+
+test('styled trio danger/primary/success is identical in fa and en', () => {
+  const map = (t: Texts) => new Map(mainMenuEntries(t).map((e) => [e.callback, e.style]));
+  const faStyles = map(FA_UI.t);
+  const enStyles = map(EN_UI.t);
+  assert.equal(faStyles.get(CB.MENU_BUY), 'danger');
+  assert.equal(faStyles.get(CB.MENU_SERVICES), 'primary');
+  assert.equal(faStyles.get(CB.MENU_WALLET), 'success');
+  assert.deepEqual([...faStyles.entries()], [...enStyles.entries()], 'no per-locale style drift');
+  assert.equal(
+    new Set([faStyles.get(CB.MENU_BUY), faStyles.get(CB.MENU_SERVICES), faStyles.get(CB.MENU_WALLET)]).size,
+    3,
+    'three DISTINCT styles, no duplicate',
+  );
+  for (const [callback, style] of faStyles) {
+    const styled = callback === CB.MENU_BUY || callback === CB.MENU_SERVICES || callback === CB.MENU_WALLET;
+    assert.equal(style !== undefined, styled, `${callback} styling is exactly the trio`);
+  }
 });
 
 test('lang callbacks pass the wire validator and the static allowlist', () => {

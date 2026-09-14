@@ -12,6 +12,11 @@ export interface Env {
   PASARGUARD_API_KEY?: string;
   PASARGUARD_PANEL_URL?: string;
   ADMIN_CHAT_ID?: string;
+  /** Official DIRECT-support Telegram handle (plain var, never a secret), shown
+   *  by «🆘 پشتیبانی». The bot builds `https://t.me/<handle>` from it and NEVER
+   *  invents a destination: unset/invalid → the support button fails closed to
+   *  «🎫 ثبت تیکت». */
+  SUPPORT_CONTACT?: string;
   /**
    * Phase 8C: the SELLER CARD NUMBER lives here and nowhere else — never in
    * source, migrations, README, tests or Git. `wrangler secret put

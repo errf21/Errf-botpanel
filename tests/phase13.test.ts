@@ -724,8 +724,9 @@ test('while stopped: account, wallet, guide, language and /start all keep workin
     'en',
   );
   await dispatch(callbackUpdateAs('lang:fa', nextId(), u));
+  // Direct support must never touch the session (no ticket state entered).
   await dispatch(callbackUpdateAs('menu:support', nextId(), u));
-  assert.ok(['IDLE', 'WAITING_SUPPORT_MESSAGE'].includes(sessionState(u.id).state));
+  assert.equal(sessionState(u.id).state, 'IDLE');
 
   // admin announces WHILE STOPPED and the fan-out still delivers
   await dispatch(messageUpdateAs(ADMIN, '/announce 🎉 اطلاعیه تست توقف', nextId()));

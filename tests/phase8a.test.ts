@@ -78,6 +78,8 @@ const MAIN_LABELS = [
   '💰 کیف پول',
   '🤝 دعوت از دوستان',
   '🆘 پشتیبانی',
+  // The formal ticket button — separate from direct support.
+  '🎫 ثبت تیکت',
   // Phase 11: the connection guide — before the language button.
   '📚 راهنمای اتصال',
   // Phase 10: the language selector — one locale-FIXED bilingual button.
@@ -118,51 +120,82 @@ function hasMainLabel(kb: ReplyKeyboard | undefined, label: string): boolean {
 
 // ————————————————————— keyboard shape —————————————————————
 
-test('/start presents a Reply Keyboard: 9 labels in 5 rows (2/2/2/2/1), RTL pairing', async () => {
+test('/start presents a Reply Keyboard: 10 labels in 4 rows (3/2/2/3) — styled trio first', async () => {
   const hero = { ...USER, id: 810000001, username: 'p8a_shape' };
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
   const kb = replyKbOf(sends()[0]!.payload);
   assert.ok(kb, 'reply keyboard expected on the welcome message');
   assert.equal(kb!.resize_keyboard, true);
-  assert.equal(kb!.is_persistent, true);
+  // Non-persistent on purpose: is_persistent lets the client re-open the
+  // keyboard after every Android Back press, so Back could never dismiss it.
+  assert.equal(kb!.is_persistent, undefined);
   assert.deepEqual(
     kb!.keyboard.map((r) => r.length),
-    [2, 2, 2, 2, 1],
+    [3, 2, 2, 3],
   );
+  assert.deepEqual(kb!.keyboard, [
+    [
+      { text: '🛒 خرید سرویس', style: 'danger' },
+      { text: '📦 سرویس‌های من', style: 'primary' },
+      { text: '💰 کیف پول', style: 'success' },
+    ],
+    [{ text: '💳 سفارش‌های من' }, { text: '👤 حساب کاربری' }],
+    [{ text: '🤝 دعوت از دوستان' }, { text: '🆘 پشتیبانی' }],
+    [{ text: '🎫 ثبت تیکت' }, { text: '📚 راهنمای اتصال' }, { text: '🌐 زبان / Language' }],
+  ]);
+  // Same ten labels as the routing table — grouping changed, membership didn't.
   assert.deepEqual(
-    kb!.keyboard.flat().map((b) => b.text),
-    MAIN_LABELS,
+    kb!.keyboard.flat().map((b) => b.text).sort(),
+    [...MAIN_LABELS].sort(),
   );
 });
 
-test('exactly three buttons carry Telegram styles; the rest ship no style field', async () => {
+test('the styled trio sits alone in row 1 with three DISTINCT styles (danger/primary/success)', async () => {
   const styled = MAIN_MENU_ENTRIES.filter((e) => e.style !== undefined);
   assert.equal(styled.length, 3);
   assert.deepEqual(
     styled.map((e) => [e.label, e.style]),
     [
-      ['🛒 خرید سرویس', 'primary'],
+      ['🛒 خرید سرویس', 'danger'],
       ['📦 سرویس‌های من', 'primary'],
       ['💰 کیف پول', 'success'],
     ],
   );
+  assert.equal(new Set(styled.map((e) => e.style)).size, 3, 'no duplicate style in the trio');
 
-  // Wire-level proof: emitted buttons have NO `style` key except the three.
+  // Wire-level proof: row 0 IS the trio, adjacent and in order; and exactly
+  // three buttons on the whole keyboard carry a `style` key.
   const hero = { ...USER, id: 810000002, username: 'p8a_shape2' };
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
-  const buttons = (replyKbOf(sends()[0]!.payload)?.keyboard ?? []).flat();
-  const withStyle = buttons.filter((b) => Object.prototype.hasOwnProperty.call(b, 'style'));
+  const kb = replyKbOf(sends()[0]!.payload)!;
+  assert.deepEqual(
+    kb.keyboard[0]!.map((b) => [b.text, b.style]),
+    [
+      ['🛒 خرید سرویس', 'danger'],
+      ['📦 سرویس‌های من', 'primary'],
+      ['💰 کیف پول', 'success'],
+    ],
+  );
+  const withStyle = kb.keyboard.flat().filter((b) => Object.prototype.hasOwnProperty.call(b, 'style'));
   assert.equal(withStyle.length, 3);
   assert.deepEqual(
     Object.fromEntries(withStyle.map((b) => [b.text, b.style])),
     {
-      '🛒 خرید سرویس': 'primary',
+      '🛒 خرید سرویس': 'danger',
       '📦 سرویس‌های من': 'primary',
       '💰 کیف پول': 'success',
     },
   );
+  // Localization must not move a style: the English keyboard keeps the same
+  // danger/primary/success order in row 0.
+  const enHero = { ...USER, id: 810000003, username: 'p8a_shape_en', language_code: 'en' };
+  await dispatch(messageUpdateAs(enHero, '/start', nextId()));
+  await dispatch(callbackUpdateAs('lang:en', nextId(), enHero));
+  const enKb = replyKbOf(sendsTo(enHero.id).filter((s) => s.method === 'sendMessage').at(-1)!.payload)!;
+  assert.deepEqual(enKb.keyboard[0]!.map((b) => b.style), ['danger', 'primary', 'success']);
+  assert.equal(new Set(enKb.keyboard.flat().map((b) => b.style)).size, 4, 'three styles + undefined');
 });
 
 // ————————————————————— text→action routing —————————————————————
@@ -175,7 +208,10 @@ test('every menu label sent as text triggers its existing action from IDLE', asy
     { label: '👤 حساب کاربری', stateAfter: 'IDLE', textMust: '👤 اطلاعات حساب شما' },
     { label: '💰 کیف پول', stateAfter: 'IDLE', textMust: 'کیف پول' },
     { label: '🤝 دعوت از دوستان', stateAfter: 'IDLE', textMust: 'دعوت از دوستان' },
-    { label: '🆘 پشتیبانی', stateAfter: 'WAITING_SUPPORT_MESSAGE', textMust: 'پشتیبانی' },
+    // Direct support = contact info only; it NEVER touches the session.
+    { label: '🆘 پشتیبانی', stateAfter: 'IDLE', textMust: 'مستقیم' },
+    // The ticket ladder is its own button and its own state.
+    { label: '🎫 ثبت تیکت', stateAfter: 'WAITING_SUPPORT_MESSAGE', textMust: 'تیکت' },
     // Phase 11: the guide runs WITHOUT session involvement — IDLE stays IDLE.
     { label: '📚 راهنمای اتصال', stateAfter: 'IDLE', textMust: 'سه قدم کوتاه' },
   ];
@@ -256,10 +292,10 @@ test('auto-pick text advances ONLY from the name step; numeric steps reject it a
   assert.ok(textsTo(hero.id).some((t) => t.includes('صحیح')), 'numeric rejection shown');
 });
 
-test('support composing hides the menu; submit restores it; back aborts instead of posting', async () => {
+test('ticket composing hides the menu; submit restores it; back aborts instead of posting', async () => {
   const hero = { ...USER, id: 813000004, username: 'p8a_support' };
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
-  await dispatch(messageUpdateAs(hero, '🆘 پشتیبانی', nextId()));
+  await dispatch(messageUpdateAs(hero, '🎫 ثبت تیکت', nextId()));
   assert.equal(sessionFor(hero.id), 'WAITING_SUPPORT_MESSAGE');
   assert.deepEqual(
     replyKbOf(sendsTo(hero.id).at(-1)!.payload)!.keyboard.flat().map((b) => b.text),
@@ -278,7 +314,7 @@ test('support composing hides the menu; submit restores it; back aborts instead 
   const fresh = { ...USER, id: 813000006, username: 'p8a_support_abort' };
   const before = ticketMessageCount();
   await dispatch(messageUpdateAs(fresh, '/start', nextId()));
-  await dispatch(messageUpdateAs(fresh, '🆘 پشتیبانی', nextId()));
+  await dispatch(messageUpdateAs(fresh, '🎫 ثبت تیکت', nextId()));
   stub.reset();
   await dispatch(messageUpdateAs(fresh, STEP_BACK_TEXT, nextId()));
   assert.equal(sessionFor(fresh.id), 'IDLE');
@@ -307,7 +343,7 @@ test('back text from IDLE re-presents the menu without touching state', async ()
 test('admin ticket-reply arming hides the menu; a menu label is not the reply', async () => {
   const customer = { ...USER, id: 814000001, username: 'p8a_cust' };
   await dispatch(messageUpdateAs(customer, '/start', nextId()));
-  await dispatch(messageUpdateAs(customer, '🆘 پشتیبانی', nextId()));
+  await dispatch(messageUpdateAs(customer, '🎫 ثبت تیکت', nextId()));
   await dispatch(messageUpdateAs(customer, 'درخواست بررسی قطع سرویس', nextId()));
   const ticket = sqlite.prepare('SELECT id FROM support_tickets LIMIT 1').get() as
     | { id: string }

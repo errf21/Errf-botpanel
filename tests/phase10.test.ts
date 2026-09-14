@@ -323,7 +323,10 @@ test('empty services/orders, wallet, invite, support and the off-topic hint all 
   await dispatch(messageUpdateAs(hero, en.menuInvite, nextId()));
   assert.ok(String(lastBubble(hero.id).text).includes(en.inviteHeader));
   await dispatch(messageUpdateAs(hero, en.menuSupport, nextId()));
-  assert.ok(String(lastBubble(hero.id).text).includes('Support'));
+  assert.ok(String(lastBubble(hero.id).text).toLowerCase().includes('support'), 'direct-support copy');
+  assert.equal(sessionFor(hero.id).state, 'IDLE', 'direct support opens no ticket');
+  // The ticket button is what enters the composing state.
+  await dispatch(messageUpdateAs(hero, en.menuTicket, nextId()));
   assert.equal(sessionFor(hero.id).state, 'WAITING_SUPPORT_MESSAGE');
   stub.reset();
   await dispatch(messageUpdateAs(hero, en.backToMenu, nextId()));
@@ -337,7 +340,7 @@ test('empty services/orders, wallet, invite, support and the off-topic hint all 
 test('an English ticket reply wrapper reads English while admin relays stay Persian', async () => {
   const hero = freshUser('support');
   await toEnglish(hero);
-  await dispatch(messageUpdateAs(hero, en.menuSupport, nextId()));
+  await dispatch(messageUpdateAs(hero, en.menuTicket, nextId()));
   await dispatch(messageUpdateAs(hero, 'My connection drops every morning.', nextId()));
   assert.ok(textsTo(hero.id).some((x) => x.includes('Ticket ID')), 'English creation ack');
   const ticket = sqlite

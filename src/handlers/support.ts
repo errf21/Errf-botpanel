@@ -2,8 +2,9 @@
  * Phase 7 support tickets: the customer's one live ticket (open/answered)
  * with append-on-follow-up semantics, admin relay buttons and the /tickets
  * queue. Bodies are sanitized, never echoed back unfiltered; relays are
- * best-effort (delivered flag + /tickets re-push), and the DB is the truth —
- * a failed Telegram send never rolls the ticket back.
+ * best-effort (a missed relay is logged as `ticket_admin_notify_failed`, never
+ * told to the customer), and the DB is the truth — a failed Telegram send never
+ * rolls the ticket back, and `/tickets` is the recovery path.
  */
 import type { UpdateContext } from '../types.ts';
 import type { Session } from '../db/states.ts';
@@ -35,14 +36,27 @@ import { FA_UI, uiFor } from '../telegram/i18n.ts';
 import { reduce } from '../state/machine.ts';
 
 const TICKET_QUEUE_LIMIT = 10;
+/**
+ * Display-only short code. Tail-sliced ON PURPOSE: the leading 12 chars of a
+ * ULID are the creation timestamp, so a `slice(0, 8)` "code" is really an
+ * ~17-minute bucket and two tickets minted close together render identically.
+ * The tail carries the random 80 bits. Every lookup/callback still uses the
+ * FULL 28-char id — this value is never addressed by anything.
+ */
 const TICKET_CODE_LEN = 8;
 
 function ticketCode(ticketId: string): string {
-  return ticketId.slice(0, TICKET_CODE_LEN);
+  return ticketId.slice(-TICKET_CODE_LEN);
 }
 
+/**
+ * Best-effort admin relay. The ticket is already committed, so a missed relay
+ * is ONLY logged (names + ticket id — never admin configuration, which must
+ * not leak into the customer's chat); `/tickets` stays the recovery path.
+ */
 async function notifyAdmins(
   ctx: UpdateContext,
+  ticketId: string,
   text: string,
   buttons?: Parameters<UpdateContext['api']['sendMessage']>[2],
 ): Promise<boolean> {
@@ -51,10 +65,38 @@ async function notifyAdmins(
   for (const chatId of chatIds) {
     if (await ctx.api.sendMessage(chatId, text, buttons)) delivered = true;
   }
+  if (!delivered) console.error(`ticket_admin_notify_failed ticket=${ticketId}`);
   return delivered;
 }
 
-/** `menu:support` — intro (or reminder of the live ticket). */
+/**
+ * `menu:support` — DIRECT contact with a human, deliberately NOT the ticket
+ * flow: no ticket row, no state write, no session touched (the customer stays
+ * IDLE, and free text after this message behaves exactly as ordinary IDLE
+ * text). The destination comes ONLY from `env.SUPPORT_CONTACT` (a plain,
+ * non-secret Worker var). Nothing is ever invented or guessed: an unset or
+ * malformed value fails closed to copy that points at «🎫 ثبت تیکت».
+ */
+export async function showDirectSupport(ctx: UpdateContext): Promise<void> {
+  const t = ctx.ui.t;
+  const configured = ctx.env.SUPPORT_CONTACT?.trim() ?? '';
+  const handle = /^@?([A-Za-z0-9_]{4,32})$/.exec(configured)?.[1];
+  if (handle === undefined) {
+    await ctx.api.sendMessage(
+      ctx.chatId,
+      t.supportDirectNone(t.menuTicket),
+      mainMenuKeyboard(ctx.ui),
+    );
+    return;
+  }
+  await ctx.api.sendMessage(
+    ctx.chatId,
+    t.supportDirect(`https://t.me/${handle}`, t.menuTicket),
+    mainMenuKeyboard(ctx.ui),
+  );
+}
+
+/** `menu:ticket` — intro (or reminder of the live ticket). */
 export async function openSupportEntry(ctx: UpdateContext, session: Session): Promise<void> {
   const t = ctx.ui.t;
   if (session.state === 'WAITING_SUPPORT_MESSAGE') {
@@ -103,6 +145,7 @@ export async function submitSupportText(
     await setTicketState(ctx.db, { ticketId: live.id, from: ['answered'], to: 'open' });
     await notifyAdmins(
       ctx,
+      live.id,
       fa.adminTicketFollowup(
         ctx.actor.username ? `@${ctx.actor.username}` : String(ctx.actor.id),
         clipped.slice(0, 120),
@@ -127,6 +170,7 @@ export async function submitSupportText(
       await appendTicketMessage(ctx.db, { ticketId: existing.id, sender: 'customer', body: clipped });
       await notifyAdmins(
         ctx,
+        existing.id,
         fa.adminTicketFollowup(
           ctx.actor.username ? `@${ctx.actor.username}` : String(ctx.actor.id),
           clipped.slice(0, 120),
@@ -148,6 +192,7 @@ export async function submitSupportText(
   if (session) await clearSession(ctx.db, ctx.customerId);
   await notifyAdmins(
     ctx,
+    outcome.ticket.id,
     `${fa.adminTicketNew(
       ctx.actor.username ? `@${ctx.actor.username}` : String(ctx.actor.id),
       ticketSubject(clipped),

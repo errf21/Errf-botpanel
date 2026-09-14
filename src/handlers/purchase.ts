@@ -78,12 +78,22 @@ export function stepView(ui: Ui, state: ConversationState, catalog: Catalog): St
   }
 }
 
-function rejectionMessage(ui: Ui, catalog: Catalog, kind: StepKind, reason: string): string {
+/**
+ * Out-of-range answers stay in the step's own domain (Phase 8B) and always
+ * quote the number the customer actually typed (`value`) — the point of the
+ * reply is «which value did I reject», not a generic range lecture.
+ */
+function rejectionMessage(
+  ui: Ui,
+  catalog: Catalog,
+  kind: StepKind,
+  reason: string,
+  value: number,
+): string {
   const t = ui.t;
   if (reason === 'range') {
-    // Phase 8B: flow-specific wording — every step answers in its own domain.
     if (kind === 'volume') {
-      return t.rejectedVolumeRange(catalog.volume.minGb, catalog.volume.maxGb);
+      return t.rejectedVolumeRange(value, catalog.volume.minGb, catalog.volume.maxGb);
     }
     if (kind === 'duration') {
       return t.rejectedDurationRange(catalog.duration.minDays, catalog.duration.maxDays);
@@ -120,7 +130,7 @@ export async function applyStepChoice(
         ? acceptDuration(catalog, value)
         : acceptDevice(catalog, value);
   if (!result.ok) {
-    await ctx.api.sendMessage(ctx.chatId, rejectionMessage(ui, catalog, kind, result.reason));
+    await ctx.api.sendMessage(ctx.chatId, rejectionMessage(ui, catalog, kind, result.reason, value));
     return;
   }
 

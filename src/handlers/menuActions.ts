@@ -25,13 +25,14 @@ import { showMyOrders } from './payment.ts';
 import { showMyServices } from './services.ts';
 import { showMyWallet } from './wallet.ts';
 import { showInvite } from './referrals.ts';
-import { openSupportEntry } from './support.ts';
+import { openSupportEntry, showDirectSupport } from './support.ts';
 import { openGuide } from './guide.ts';
 import { resumeRenewal } from './renewal.ts';
 import { sendSummary, stepView } from './purchase.ts';
 
-/** The eight main-menu shortcuts (all keyboard buttons except the language
- *  picker, which the callers own) — Phase 11 adds the guide. */
+/** The nine main-menu shortcuts (every keyboard button except the language
+ *  picker, which the callers own) — Phase 11 added the guide, and the support
+ *  desk is now split into direct contact + the ticket ladder. */
 const MENU_SHORTCUTS: readonly string[] = [
   CB.MENU_BUY,
   CB.MENU_SERVICES,
@@ -40,6 +41,7 @@ const MENU_SHORTCUTS: readonly string[] = [
   CB.MENU_WALLET,
   CB.MENU_INVITE,
   CB.MENU_SUPPORT,
+  CB.MENU_TICKET,
   /** Phase 11: stateless read-only screens — safe from IDLE and from busy. */
   CB.MENU_GUIDE,
 ];
@@ -95,7 +97,7 @@ async function startPurchase(ctx: UpdateContext, session: Session): Promise<void
 /**
  * Runs one main-menu shortcut against the CURRENT session (the code the
  * callback switch used to hold inline). Returns false for anything other
- * than the eight shortcuts — the caller keeps owning the rest of the
+ * than the nine shortcuts — the caller keeps owning the rest of the
  * callback vocabulary (`menu:lang` and `gud:*` included).
  */
 export async function runMainMenuAction(
@@ -121,6 +123,11 @@ export async function runMainMenuAction(
       await showInvite(ctx);
       return true;
     case CB.MENU_SUPPORT:
+      // Direct contact: never a ticket write, never a state change.
+      await showDirectSupport(ctx);
+      return true;
+    case CB.MENU_TICKET:
+      // The formal, trackable ladder (session + support_tickets + admin relay).
       await openSupportEntry(ctx, session);
       return true;
     case CB.MENU_GUIDE:

@@ -39,6 +39,7 @@ in `src/`.
 | --- | --- | --- |
 | `ADMIN_CHAT_ID` | `""` (set your numeric Telegram id) | Primary admin. Code trims it; a positive integer string that `=== String(actorId)` grants admin (`src/admin.ts:33-34`). It is **one id**, not a list. |
 | `PASARGUARD_PANEL_URL` | `https://<panel-host>` | Panel base URL. Validated **HTTPS, origin only** (root path, no embedded credentials/extra path) or provisioning fails closed `panel_url_rejected` (`src/pasarguard/client.ts:138-163`). |
+| `SUPPORT_CONTACT` | `""` (set the official handle) | What «🆘 پشتیبانی» shows the customer: the bot turns a bare/`@` handle into `https://t.me/<handle>` and **invents nothing** — empty or malformed fails the button closed onto «🎫 ثبت تикت» (copy names the ticket button, no ticket is created). Validate like `ADMIN_CHAT_ID`: `/^@?[A-Za-z0-9_]{4,32}$/` (`src/handlers/support.ts:showDirectSupport`). Declare it in **this file**: a `vars` entry is re-applied on every `wrangler deploy`, so a dashboard-only value gets overwritten.
 
 ### Binding
 

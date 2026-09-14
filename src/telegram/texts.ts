@@ -102,8 +102,8 @@ export const fa = {
   rejectedRange: (min: number, max: number) =>
     `⚠️ عدد باید بین ${min} تا ${max} باشد. دوباره تلاش کنید یا «بازگشت» را بزنید.`,
   // Phase 8B: flow-specific rejections — each step answers in its own domain.
-  rejectedVolumeRange: (min: number, max: number) =>
-    `📦 این حجم قابل قبول نیست؛ حداقل ${min} و حداکثر ${max} گیگابایت.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
+  rejectedVolumeRange: (got: number, min: number, max: number) =>
+    `📦 دِ آخه مشتی ${digitsFa(got)} گیگ؟ 😐 حجم مجاز بین ${digitsFa(min)} تا ${digitsFa(max)} گیگابایته؛\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن ❤️`,
   rejectedDurationRange: (min: number, max: number) =>
     `⏳ مدت سرویس باید بین ${min} تا ${max} روز باشه.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
   rejectedDeviceRange: (min: number, max: number) =>
@@ -351,8 +351,14 @@ export const fa = {
     `🎉 دوستی که دعوت کرده‌اید خرید اولش انجام شد — جایزه ${amount} به او داده شد.`,
   referralUnavailable: '🔗 فعلاً امکان ساخت لینک دعوت وجود ندارد.',
 
+  /** Direct contact with a human — creates no ticket, tracks nothing. */
+  supportDirect: (url: string, ticketLabel: string) =>
+    `🆘 پشتیبانی مستقیم\n\nبرای حرف زدن با پشتیبانی، این حساب رو توی تلگرام باز کن و پیامت رو بفرست:\n${url}\n\nهر وقت کارت به پیگیری نیاز داشت «${ticketLabel}» رو بزن تا تیکت ثبت بشه.`,
+  /** Fail-closed twin: the operator has not set SUPPORT_CONTACT yet. */
+  supportDirectNone: (ticketLabel: string) =>
+    `🆘 فعلاً راه تماس مستقیم پشتیبانی توی تنظیمات ربات ثبت نشده.\n\nبرای پیگیری، «${ticketLabel}» رو بزن — همین‌جا جوابت رو میدیم.`,
   supportIntro: [
-    '🆘 پشتیبانی',
+    '🎫 تیکت پشتیبانی',
     '',
     'مشکل یا پرسشت رو توی یه پیام بنویس و بفرست.',
     'جواب کارشناس معمولاً همین‌جا برات می‌رسه.',
@@ -485,6 +491,7 @@ export const fa = {
   menuWallet: '💰 کیف پول',
   menuInvite: '🤝 دعوت از دوستان',
   menuSupport: '🆘 پشتیبانی',
+  menuTicket: '🎫 ثبت تیکت',
   // The selector button is deliberately BILINGUAL and locale-fixed: its label
   // is identical in both bundles and survives a switch at any moment.
   menuLanguage: '🌐 زبان / Language',

@@ -12,8 +12,10 @@ page's mirror explains the same screens natively: [fa customer guide](../fa/cust
 
 ## Main menu
 
-Press `/start` once — from then on a persistent keyboard sits below the chat
-(9 buttons). `/help` explains it again. `/cancel` returns to the menu from any
+Press `/start` once — from then on a reply keyboard sits below the chat
+(10 buttons; the three coloured ones — red buy, blue services, green wallet — share the first row).
+Android Back hides it, and Telegram's own keyboard button brings it back whenever you want.
+`/help` explains it again. `/cancel` returns to the menu from any
 step (never deletes your orders or services).
 
 | Button | Purpose |
@@ -24,7 +26,8 @@ step (never deletes your orders or services).
 | 👤 Account / حساب کاربری | ID, username, wallet balance summary, language display. |
 | 💰 Wallet / کیف پول | Balance + ledger of movements. |
 | 🤝 Invite friends / دعوت از دوستان | Your referral link. |
-| 🆘 Support / پشتیبانی | Open a ticket, continue a conversation. |
+| 🆘 Support / پشتیبانی | Direct contact with the support account (creates **no** ticket). |
+| 🎫 Create ticket / ثبت تیکت | Open a tracked support ticket; continues an open one. |
 | 📚 Connection guide / راهنمای اتصال | How to install an app and import your config. |
 | 🌐 زبان / Language | Switch Persian ⇄ English (permanent choice). |
 
@@ -84,9 +87,13 @@ per friend).
 
 ## Support
 
-🆘 → write your message (ticket opens; one live ticket per customer) → keep
-writing to add details → admins answer here; ✅/ «بستن» close button
-appears after admin answers. Attach a screenshot/photo when relevant.
+**🆘 Support** opens the direct-contact screen — the official support handle (from
+`SUPPORT_CONTACT`); it creates **no** ticket and changes no state.
+
+**🎫 Create ticket** is the tracked flow: write your message (ticket opens; one live
+ticket per customer) → keep writing to add details → admins answer here; ✅/ «بستن»
+close button appears after admin answers. Attach a screenshot/photo when relevant.
+If `SUPPORT_CONTACT` is unset, 🆘 points you at 🎫 instead of inventing a destination.
 
 ## Announcements
 

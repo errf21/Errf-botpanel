@@ -34,6 +34,8 @@ const { processTelegramUpdate } = await import('../src/dispatch.ts');
 const { payOrderWithWallet, applyWalletMutation } = await import('../src/db/wallet.ts');
 const { payReferrerIfDue, referralRewardIrt } = await import('../src/lib/referralPayout.ts');
 const { parseReferralConfig } = await import('../src/catalog/referral.ts');
+const { ensureReferralCode, isReferralCode, newReferralCode } = await import('../src/db/referrals.ts');
+const { newOrderId } = await import('../src/lib/security.ts');
 
 const sqlite = freshDb();
 const shim = makeD1Shim(sqlite);
@@ -363,6 +365,13 @@ test('invite screen mints the code + deep link', async () => {
   const link = textsTo(USER.id).find((t) => t.includes('t.me/'));
   assert.ok(link, 'invite link shown');
   assert.match(link, /t\.me\/telbotv2_test\?start=ref_[0-9A-HJKMNP-TV-Z]{12}/);
+  // inviteLinkNone is a FORMATTER: interpolating it raw used to ship the
+  // function SOURCE («(link) => …») to the user. Pin the rendered copy instead.
+  assert.ok(
+    link.includes('🔗 لینک دعوت شما:\nhttps://t.me/'),
+    'rendered label + URL on one block',
+  );
+  assert.doesNotMatch(link, /=>|\$\{|inviteLinkNone/, 'no source text leaks into the chat');
 });
 
 test('referral lifecycle: forged codes inert, first-touch fixed, capped once-per-referee payout', async () => {
@@ -456,10 +465,10 @@ function settleWaits(): Promise<void> {
 
 let ticketId = '';
 
-test('menu:support → first message opens ONE ticket, admins get buttons', async () => {
+test('menu:ticket → first message opens ONE ticket, admins get buttons', async () => {
   await dispatch(messageUpdateAs(USER2, '/start', nextId())); // free any stale session
   stub.reset();
-  await dispatch(callbackUpdateAs('menu:support', nextId(), USER2));
+  await dispatch(callbackUpdateAs('menu:ticket', nextId(), USER2));
   assert.equal(sessionFor(USER2.id).state, 'WAITING_SUPPORT_MESSAGE');
   await dispatch(messageUpdateAs(USER2, 'سلام، لینک اشتراک من باز نمی‌شود.', nextId()));
   assert.equal(sessionFor(USER2.id).state, 'IDLE');
@@ -522,7 +531,7 @@ test('closing notifies the customer; stale closed-ticket buttons inert', async (
   const beforeClose = sqlite.prepare('SELECT state FROM support_tickets WHERE id = ?1').get(ticketId);
   if (!beforeClose || beforeClose.state === 'closed') {
     stub.reset();
-    await dispatch(callbackUpdateAs('menu:support', nextId(), USER2));
+    await dispatch(callbackUpdateAs('menu:ticket', nextId(), USER2));
     await dispatch(messageUpdateAs(USER2, 'دوباره نیاز به کمک دارم', nextId()));
     const row = sqlite.prepare("SELECT id FROM support_tickets WHERE customer_id = ?1 AND state IN ('open','answered') ORDER BY updated_at DESC LIMIT 1").get(customerIdOf(USER2.id));
     assert.ok(row, 're-opened');
@@ -628,11 +637,11 @@ test('two drafts in flight cannot interleave sends (seed-once per job)', async (
 });
 
 test('/tickets queue is admin-only and buttons address live tickets', async () => {
-  await dispatch(callbackUpdateAs('menu:support', nextId(), USER));
+  await dispatch(callbackUpdateAs('menu:ticket', nextId(), USER));
   await dispatch(messageUpdateAs(USER, 'سوال قبل از خرید', nextId()));
   const NB7 = { id: 999000117, first_name: 'Sep', username: 'sep_new', language_code: 'fa' };
   await dispatch(messageUpdateAs(NB7, '/start', nextId()));
-  await dispatch(callbackUpdateAs('menu:support', nextId(), NB7));
+  await dispatch(callbackUpdateAs('menu:ticket', nextId(), NB7));
   await dispatch(messageUpdateAs(NB7, 'قیمت‌ها چنده؟', nextId()));
   stub.reset();
   await dispatch(messageUpdateAs(USER, '/tickets', nextId()));
@@ -879,4 +888,288 @@ test('W5: live payout is percent of amount+credit, zero floors to no-op, renewal
   } finally {
     sqlite.prepare("UPDATE settings SET value = ?1 WHERE key = 'referral'").run(doc);
   }
+});
+
+// ————————————————————————— admin relay failure visibility —————————————————————————
+
+test('no admin configured: ticket still opens + customer keeps the confirmation, relay failure is LOGGED only', async () => {
+  const NOADMIN_USER = {
+    id: 999000777,
+    first_name: 'Nima',
+    username: 'relay_silent',
+    language_code: 'fa',
+  };
+  const prevEnv = env as unknown as Record<string, unknown>;
+  const realError = console.error;
+  const logged: string[] = [];
+  console.error = (...args: unknown[]) => {
+    logged.push(args.map(String).join(' '));
+  };
+  try {
+    delete prevEnv['ADMIN_CHAT_ID']; // no env admin, and no is_admin rows in this DB
+    stub.reset();
+    await dispatch(messageUpdateAs(NOADMIN_USER, '/start', nextId()));
+    await dispatch(callbackUpdateAs('menu:ticket', nextId(), NOADMIN_USER));
+    await dispatch(messageUpdateAs(NOADMIN_USER, 'لینک من باز نمی‌شود', nextId()));
+
+    const row = sqlite
+      .prepare('SELECT id, state FROM support_tickets WHERE customer_id = ?1')
+      .get(String(customerIdOf(NOADMIN_USER.id))) as { id: string; state: string } | undefined;
+    assert.ok(row, 'ticket row committed even though nothing could be relayed');
+    assert.equal(row?.state, 'open');
+    assert.equal(
+      sqlite
+        .prepare('SELECT COUNT(*) n FROM support_messages WHERE ticket_id = ?1')
+        .get(String(row?.id))['n'],
+      1,
+    );
+    // The customer-facing copy is unchanged: presence/absence of admins is
+    // operator configuration and must never leak into their chat.
+    assert.ok(
+      textsTo(NOADMIN_USER.id).some((x) => x.includes('درخواستت ثبت شد')),
+      'customer still told the ticket was registered',
+    );
+    assert.ok(
+      !textToBlob(NOADMIN_USER.id).includes(String(ADMIN.id)),
+      'admin id never appears in customer messages',
+    );
+    assert.deepEqual(sentTo(ADMIN.id), [], 'nothing reached any admin chat');
+    const failures = logged.filter((l) => l.includes('ticket_admin_notify_failed'));
+    assert.equal(failures.length, 1);
+    assert.ok(failures[0]?.includes(String(row?.id)), 'log carries the ticket id');
+    assert.ok(
+      !failures[0]?.includes('ADMIN_CHAT_ID') && !failures[0]?.includes(String(ADMIN.id)),
+      'log names the failure without exposing admin configuration',
+    );
+
+    // Follow-up on the live ticket hits the SAME relay gate (second site).
+    logged.length = 0;
+    await dispatch(messageUpdateAs(NOADMIN_USER, 'همچنان درست نشد', nextId()));
+    assert.equal(
+      logged.filter((l) => l.includes('ticket_admin_notify_failed')).length,
+      1,
+      'follow-up relay failure logged once as well',
+    );
+    assert.equal(
+      sqlite
+        .prepare('SELECT COUNT(*) n FROM support_messages WHERE ticket_id = ?1')
+        .get(String(row?.id))['n'],
+      2,
+      'follow-up appended (DB stays the truth)',
+    );
+  } finally {
+    console.error = realError;
+    prevEnv['ADMIN_CHAT_ID'] = String(ADMIN.id);
+  }
+});
+
+function textToBlob(chatId: number): string {
+  return textsTo(chatId).join('\n');
+}
+
+// ————————————————————————— ticket display code uniqueness —————————————————————————
+
+test('T-DUP: two tickets minted side by side get DISTINCT 8-char display codes, ids still full-size', async () => {
+  const A = { id: 999000801, first_name: 'Nilou', username: 'code_dup_a', language_code: 'fa' };
+  const B = { id: 999000802, first_name: 'Kaveh', username: 'code_dup_b', language_code: 'fa' };
+  const ticketOf = (user: typeof A): string => {
+    const row = sqlite
+      .prepare('SELECT id FROM support_tickets WHERE customer_id = ?1')
+      .get(String(customerIdOf(user.id))) as { id: string } | undefined;
+    assert.ok(row, `ticket row for ${user.username}`);
+    return row.id;
+  };
+
+  stub.reset();
+  for (const user of [A, B]) {
+    await dispatch(messageUpdateAs(user, '/start', nextId()));
+    await dispatch(callbackUpdateAs('menu:ticket', nextId(), user));
+    await dispatch(messageUpdateAs(user, 'سلام، میخوام لینکم باز بشه', nextId()));
+  }
+  const aId = ticketOf(A);
+  const bId = ticketOf(B);
+  // Customer copy is captured BEFORE any stub.reset(): full id on creation.
+  const aCreation = textsTo(A.id);
+  assert.notEqual(aId, bId, 'two distinct tickets exist');
+  for (const id of [aId, bId]) {
+    assert.match(id, /^[0-9A-HJKMNP-TV-Z]{28}$/, 'primary keys stay full ULIDs');
+  }
+
+  // The display path is what changed: tsk:vw renders the ticket-view header.
+  const codeOfView = async (orderId: string): Promise<string> => {
+    stub.reset();
+    await dispatch(callbackUpdateAs(`tsk:vw:${orderId}`, nextId(), ADMIN, ADMIN.id));
+    const text = textsTo(ADMIN.id).at(-1) ?? '';
+    const match = /🎫 ([0-9A-HJKMNP-TV-Z]{8}) —/.exec(text);
+    assert.ok(match, `ticket view carries an 8-char code (got: ${JSON.stringify(text.slice(0, 40))})`);
+    return String(match?.[1]);
+  };
+  const aCode = await codeOfView(aId);
+  const bCode = await codeOfView(bId);
+  assert.notEqual(aCode, bCode, 'displayed codes differ even for tickets minted in the same instant');
+  assert.ok(aId.endsWith(aCode) && bId.endsWith(bCode), 'code is the id TAIL — the 80-bit random end, not the timestamp head the old slice(0,8) printed (that is what made same-bucket tickets collide)');
+  assert.notEqual(aCode, aId.slice(0, 8), 'the old head-slice value is gone from the display');
+
+  // Identity on the wire is untouched: the code just rendered is NOT an
+  // actionable reference — a ticket is addressed by its full 28-char id only
+  // (which is exactly what the two successful `tsk:vw:<full id>` views above
+  // proved). A short-code callback stays inert.
+  for (const code of [aCode, bCode]) {
+    stub.reset();
+    await dispatch(callbackUpdateAs(`tsk:vw:${code}`, nextId(), ADMIN, ADMIN.id));
+    assert.equal(
+      textsTo(ADMIN.id).filter((x) => x.includes('🎫')).length,
+      0,
+      `display code ${code} addresses no ticket`,
+    );
+  }
+  stub.reset();
+  await dispatch(callbackUpdateAs(`tsk:vw:${aId}`, nextId(), ADMIN, ADMIN.id));
+  const viewButtons = stub.sent
+    .flatMap((s) => {
+      const kb = s.payload['reply_markup'] as
+        | { inline_keyboard?: { callback_data: string }[][] }
+        | undefined;
+      return kb?.inline_keyboard.flat().map((b) => b.callback_data) ?? [];
+    });
+  assert.deepEqual(
+    viewButtons.sort(),
+    [`tsk:cl:${aId}`, `tsk:rp:${aId}`, `tsk:vw:${aId}`].sort(),
+    'ticket actions still carry the FULL id (`adm:`/`tsk:` ULID discipline unchanged)',
+  );
+
+  // Customer copy: FULL id on creation, unchanged short form on the
+  // existing-ticket reminder (`supportTicketExists` keeps its own copy — this
+  // fix touched only the admin display code, per the agreed scope).
+  assert.ok(aCreation.some((x) => x.includes(aId)), 'customer sees the FULL ticket id');
+  stub.reset();
+  await dispatch(callbackUpdateAs('menu:ticket', nextId(), A));
+  assert.ok(
+    (textsTo(A.id).at(-1) ?? '').includes(`(${aId.slice(0, 10)}…)`),
+    'existing-ticket notice copy is byte-identical to before the fix',
+  );
+});
+
+// ————————————————————————— referral code entropy / unpredictability —————————————————————————
+
+test('R1: referral codes are CSPRNG-minted, never a timestamp slice', () => {
+  const codes = Array.from({ length: 400 }, () => newReferralCode());
+  // Storage contract unchanged: every mint satisfies the existing validator…
+  for (const code of codes) {
+    assert.equal(isReferralCode(code), true, `stored format intact (${code})`);
+    assert.match(code, /^[0-9A-HJKMNP-TV-Z]{12}$/, 'same length + alphabet as before');
+  }
+  // …and two codes minted microseconds apart are never identical.
+  assert.equal(new Set(codes).size, codes.length, 'no collisions in one burst');
+  // The old generator leaked Date.now() into EVERY character position above ms
+  // resolution, so a whole burst shared its leading 4 chars. Randomness must
+  // not collapse to one bucket.
+  assert.ok(
+    new Set(codes.map((c) => c.slice(0, 4))).size > 50,
+    'leading characters spread across the alphabet, not one time bucket',
+  );
+  const timeHead = newOrderId().slice(0, 4); // the timestamp prefix, e.g. '0001'
+  const headMatches = codes.filter((c) => c.startsWith(timeHead)).length;
+  assert.ok(headMatches <= 1, `only chance puts ${timeHead} at the head (got ${headMatches})`);
+  assert.notEqual(newOrderId().slice(0, 12), codes[0], 'code is not the order-id time prefix');
+});
+
+test('R2: a minted code stores, idles idempotently, appears in the invite link, and still attributes', async () => {
+  const REFERRER = { id: 999000871, first_name: 'Mina', username: 'entropy_ref', language_code: 'fa' };
+  const REFEREE = { id: 999000872, first_name: 'Kian', username: 'entropy_referee', language_code: 'fa' };
+  const db = shim as unknown as Parameters<typeof ensureReferralCode>[0];
+
+  stub.reset();
+  await dispatch(messageUpdateAs(REFERRER, '/start', nextId()));
+  const referrerId = customerIdOf(REFERRER.id);
+  const code = await ensureReferralCode(db, referrerId);
+  assert.ok(code && isReferralCode(code), 'lazy mint produces a valid code');
+  await ensureReferralCode(db, referrerId);
+  assert.equal(
+    sqlite.prepare('SELECT referral_code FROM customers WHERE id = ?1').get(String(referrerId))['referral_code'],
+    code,
+    'second call is idempotent — the stored code never rotates',
+  );
+
+  // The invite screen shows exactly the stored code (formatter behavior kept).
+  await inviteWithGetMe(REFERRER);
+  assert.ok(
+    textsTo(REFERRER.id).some((x) => x.includes(`?start=ref_${code}`)),
+    'invite deep link carries the minted code',
+  );
+  assert.ok(
+    textsTo(REFERRER.id).some((x) => x.includes('🔗 لینک دعوت شما:')),
+    'invite copy still renders through the formatter',
+  );
+
+  // Attribution over the new-format code: the deep link must be the referee's
+  // FIRST-EVER /start (first-touch by design — no prior plain /start).
+  await dispatch(messageUpdateAs(REFEREE, `/start ref_${code}`, nextId()));
+  assert.equal(
+    sqlite.prepare('SELECT referred_by FROM customers WHERE id = ?1').get(String(customerIdOf(REFEREE.id)))['referred_by'],
+    referrerId,
+    'first-touch attribution works with a CSPRNG code',
+  );
+  // A forged/truncated code of the same shape stays inert.
+  const OTHER = { id: 999000873, first_name: 'Roya', username: 'entropy_forged', language_code: 'fa' };
+  const last = String(code).slice(-1);
+  const nearMiss = String(code).slice(0, 11) + (last === 'B' ? 'A' : 'B');
+  assert.notEqual(nearMiss, code, 'the forged code really differs');
+  await dispatch(messageUpdateAs(OTHER, `/start ref_${nearMiss}`, nextId()));
+  assert.equal(
+    sqlite.prepare('SELECT referred_by FROM customers WHERE id = ?1').get(String(customerIdOf(OTHER.id)))['referred_by'],
+    null,
+    'a near-miss code attributes nothing',
+  );
+});
+
+// ————————————————————————— direct support vs ticket —————————————————————————
+
+test('menu:support opens NO ticket (fails closed when SUPPORT_CONTACT is unset)', async () => {
+  const hero = { ...USER, id: 222333999, username: 'support_direct', language_code: 'fa' };
+  await dispatch(messageUpdateAs(hero, '/start', nextId()));
+  const ticketsBefore = Number(sqlite.prepare('SELECT COUNT(*) n FROM support_tickets').get()['n']);
+  stub.reset();
+  await dispatch(callbackUpdateAs('menu:support', nextId(), hero));   // direct support
+  const ticketsAfter = Number(sqlite.prepare('SELECT COUNT(*) n FROM support_tickets').get()['n']);
+  assert.equal(ticketsAfter, ticketsBefore, 'support button creates no ticket row');
+  assert.equal(sessionFor(hero.id).state, 'IDLE', 'support button never changes session state');
+  // No admin relay fires for a mere support tap.
+  assert.ok(!sentTo(ADMIN.id).some((s) => String(s.text).includes('تیکت')), 'no admin ticket push');
+  const copy = textsTo(hero.id).join(' | ');
+  assert.ok(/مستقیم/.test(copy), 'the direct-support surface is named');
+  assert.ok(!/ثبت شد/.test(copy), 'no false "ticket submitted" confirmation');
+});
+
+test('menu:ticket is the ladder: composing state then a real tracked ticket', async () => {
+  const hero = { ...USER, id: 222333998, username: 'ticket_ladder', language_code: 'fa' };
+  await dispatch(messageUpdateAs(hero, '/start', nextId()));
+  const ticketsBefore = Number(sqlite.prepare('SELECT COUNT(*) n FROM support_tickets').get()['n']);
+  stub.reset();
+  await dispatch(callbackUpdateAs('menu:ticket', nextId(), hero));
+  assert.equal(sessionFor(hero.id).state, 'WAITING_SUPPORT_MESSAGE', 'ticket button enters composing');
+  // composing keyboard hides the main labels
+  const kb = (sentTo(hero.id).at(-1)!.payload['reply_markup'] as { keyboard?: { text: string }[][] });
+  assert.ok(kb.keyboard.flat().every((b) => !['\U0001f6d2 خرید سرویس'].includes(b.text)), 'menu hidden while composing');
+  await dispatch(messageUpdateAs(hero, 'لینک من باز نمی‌شود', nextId()));
+  const ticketsAfter = Number(sqlite.prepare('SELECT COUNT(*) n FROM support_tickets').get()['n']);
+  assert.equal(ticketsAfter, ticketsBefore + 1, 'ticket ladder reached -> exactly one ticket created');
+  assert.ok(
+    sentTo(ADMIN.id).some((s) => {
+      const k = s.payload['reply_markup'] as { inline_keyboard?: { callback_data: string }[][] } | undefined;
+      return k?.inline_keyboard.flat().some((b) => /^tsk:rp:/.test(b.callback_data));
+    }),
+    'admin queue got a replyable ticket',
+  );
+});
+
+test('support and ticket are two DISTINCT buttons with two distinct callbacks', async () => {
+  const { menuCallbackForText, CB: Callbacks } = await import('../src/telegram/menu.ts');
+  const { FA_UI, EN_UI } = await import('../src/telegram/i18n.ts');
+  assert.equal(menuCallbackForText(FA_UI.t.menuSupport), Callbacks.MENU_SUPPORT);
+  assert.equal(menuCallbackForText(FA_UI.t.menuTicket), Callbacks.MENU_TICKET);
+  assert.equal(menuCallbackForText(EN_UI.t.menuSupport), Callbacks.MENU_SUPPORT);
+  assert.equal(menuCallbackForText(EN_UI.t.menuTicket), Callbacks.MENU_TICKET);
+  assert.notEqual(Callbacks.MENU_SUPPORT, Callbacks.MENU_TICKET);
+  assert.notEqual(Callbacks.MENU_TICKET, Callbacks.MENU_TICKETS, 'customer ticket never collides with the admin queue');
 });

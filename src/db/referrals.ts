@@ -11,19 +11,30 @@
 import { newOrderId } from '../lib/security.ts';
 import type { ReferralConfig } from '../catalog/referral.ts';
 
-/** Referral codes: 12 Crockford base32 chars (ULID alphabet). */
-const CODE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{12}$/;
+/** Referral codes: 12 Crockford base32 chars (ULID alphabet), CSPRNG-minted. */
+const CODE_LENGTH = 12;
+const CODE_PATTERN = new RegExp(`^[0-9A-HJKMNP-TV-Z]{${CODE_LENGTH}}$`);
+
+const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 export function isReferralCode(value: unknown): value is string {
   return typeof value === 'string' && CODE_PATTERN.test(value);
 }
 
-/** Deterministic-enough random code; collisions land on retry at call site. */
+/**
+ * A fresh referral code, drawn straight from the CSPRNG.
+ *
+ * Deliberately NOT a slice of `newOrderId()`: that id leads with the
+ * `Date.now()` timestamp, so a sliced code is predictable — everyone minting
+ * in the same window shares its leading characters, which makes invites and
+ * attributions enumerable. The 32-symbol alphabet consumes exactly five low
+ * bits per random byte, so no symbol is biased. 60 bits of entropy land well
+ * inside the UNIQUE-index collision budget retried by `ensureReferralCode`.
+ */
 export function newReferralCode(): string {
-  return newOrderId().slice(0, 12);
+  const bytes = crypto.getRandomValues(new Uint8Array(CODE_LENGTH));
+  return Array.from(bytes, (byte) => ALPHABET[byte & 31] ?? '0').join('');
 }
-
-const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 /** Mint a fresh code and attach it when absent (idempotent lazy backfill). */
 export async function ensureReferralCode(db: D1Database, customerId: number): Promise<string | null> {
@@ -33,8 +44,7 @@ export async function ensureReferralCode(db: D1Database, customerId: number): Pr
     .first<{ referral_code: string | null }>();
   if (current?.referral_code) return current.referral_code;
   for (let tries = 0; tries < 3; tries++) {
-    const bytes = crypto.getRandomValues(new Uint8Array(12));
-    const code = Array.from(bytes, (b) => ALPHABET[b & 31] ?? '0').join('');
+    const code = newReferralCode();
     try {
       const updated = await db
         .prepare('UPDATE customers SET referral_code = ?2 WHERE id = ?1 AND referral_code IS NULL')

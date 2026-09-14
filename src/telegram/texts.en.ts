@@ -114,8 +114,8 @@ const en: Texts = {
   rejectedRange: (min: number, max: number) =>
     `⚠️ The number must be between ${min} and ${max}. Try again, or press "Back".`,
   // Flow-specific rejections — each step answers in its own domain.
-  rejectedVolumeRange: (min: number, max: number) =>
-    `📦 That volume is out of range — allowed is ${min} to ${max} GB.\nTry another number, or press "Back".`,
+  rejectedVolumeRange: (got: number, min: number, max: number) =>
+    `📦 ${got} GB doesn't fit here — volume runs from ${min} to ${max} GB.\nPick another number, or press "Back".`,
   rejectedDurationRange: (min: number, max: number) =>
     `⏳ Duration must be between ${min} and ${max} days.\nTry another number, or press "Back".`,
   rejectedDeviceRange: (min: number, max: number) =>
@@ -359,8 +359,12 @@ const en: Texts = {
     `🎉 Someone you invited made their first purchase — they received ${amount} as a bonus.`,
   referralUnavailable: '🔗 Invite links aren\'t available at the moment.',
 
+  supportDirect: (url: string, ticketLabel: string) =>
+    `🆘 Direct support\n\nOpen this account on Telegram and send your message there:\n${url}\n\nIf you need something tracked in writing, press "${ticketLabel}" instead.`,
+  supportDirectNone: (ticketLabel: string) =>
+    `🆘 A direct support contact isn't configured on this bot yet.\n\nFor anything that needs following up, press "${ticketLabel}" and we\'ll answer right here.`,
   supportIntro: [
-    '🆘 Support',
+    '🎫 Support ticket',
     '',
     'Describe your issue or question in one message and send it.',
     'A specialist usually replies right here in this chat.',
@@ -486,6 +490,7 @@ const en: Texts = {
   menuWallet: '💰 Wallet',
   menuInvite: '🤝 Invite friends',
   menuSupport: '🆘 Support',
+  menuTicket: '🎫 Create ticket',
   menuLanguage: '🌐 زبان / Language',
   langOptionFa: '🇮🇷 فارسی',
   langOptionEn: '🇬🇧 English',

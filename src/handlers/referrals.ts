@@ -25,7 +25,7 @@ export async function showInvite(ctx: UpdateContext): Promise<void> {
   const stats = await referralStats(ctx.db, ctx.customerId);
   const lines: string[] = [t.inviteHeader];
   if (username !== null) {
-    lines.push(`${t.inviteLinkNone}\nhttps://t.me/${username}?start=${REFERRAL_CODE_PREFIX}${code}`);
+    lines.push(t.inviteLinkNone(`https://t.me/${username}?start=${REFERRAL_CODE_PREFIX}${code}`));
   }
   lines.push(t.inviteHowTo);
   lines.push(t.inviteCount(stats.referees));

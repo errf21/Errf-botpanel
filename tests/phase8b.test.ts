@@ -206,6 +206,50 @@ test('device range rejection says «دستگاه»', async () => {
   assert.equal(sessionFor(hero.id).state, 'WAITING_DEVICE_LIMIT');
 });
 
+// ————————————————————————————— ITEM 1: below-min volume echoes the value —————————————————————————————
+
+test('fa below-min volume rejection names the ENTERED number (5/8/3), never a fixed value', async () => {
+  const faDigits = (v: number | string) =>
+    String(v).replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d);
+  for (const [entered, expected] of [
+    ['5', '۵'],
+    ['8', '۸'],
+    ['3', '۳'],
+  ] as const) {
+    const hero = freshUser(`vol_echo_${entered}`);
+    await buyToVolume(hero);
+    stub.reset();
+    await dispatch(messageUpdateAs(hero, entered, nextId()));
+    const text = String(lastBubble(hero.id).text);
+    assert.ok(text.includes(expected), `typed ${entered} must appear as ${expected}: ${text}`);
+    // domain tokens stay, so the reply is still «volume» not a generic range
+    assert.ok(text.includes('حجم') && text.includes('گیگ'), `volume-domain copy for ${entered}: ${text}`);
+    // the minimum rule is untouched: below 10 is still refused, state kept
+    assert.ok(text.includes(faDigits(10)), 'the 10 GB floor is still named');
+    assert.equal(sessionFor(hero.id).state, 'WAITING_VOLUME', 'rejecting keeps you on the volume step');
+  }
+});
+
+test('fa below-min volume rejection is casual, and differs per value (a real interpolation, not canned text)', async () => {
+  const render = (n: number) => fa.rejectedVolumeRange(n, 10, 500);
+  const [a5, a8, a3] = [render(5), render(8), render(3)];
+  assert.notEqual(a5, a8, 'different numbers, different messages');
+  assert.notEqual(a8, a3);
+  assert.ok(a5.includes('۵') && !a5.includes('۸'), 'each message carries only its own value');
+  assert.match(a5, /[😐❤️]/u, 'friendly tone (emoji) is present');
+  assert.ok(!/قابل قبول نیست|تلاش کنید/.test(a5), 'stiff formal phrasing is gone');
+});
+
+test('en below-min volume rejection is natively worded and names the entered number', async () => {
+  const { en } = await import('../src/telegram/texts.en.ts');
+  const e5 = en.rejectedVolumeRange(5, 10, 500);
+  const e8 = en.rejectedVolumeRange(8, 10, 500);
+  assert.ok(e5.includes('5 GB') && e5.includes('10') && e5.includes('500'), e5);
+  assert.notEqual(e5, e8);
+  assert.ok(!/[\u0600-\u06FF]/.test(e5), 'English bundle stays Persian-free');
+  assert.ok(!/^\d+ GB is a bit thin/.test(e5), 'not a literal translation of the Persian joke');
+});
+
 // ————————————————————————————— reactions ride the next bubble —————————————————————————————
 
 test('volume above 20 rides the «عووو» line onto the duration prompt only', async () => {

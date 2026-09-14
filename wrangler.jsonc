@@ -10,8 +10,15 @@
   // Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, PASARGUARD_API_KEY,
   // PAYMENT_CARD_NUMBER) are managed with `wrangler secret put <NAME>` and
   // live in `.dev.vars` locally.
+  // Declare a var HERE to make it stick: a var named in this file is re-applied
+  // on every deploy, so one set only in the dashboard gets wiped by the next
+  // `wrangler deploy`.
   "vars": {
     "ADMIN_CHAT_ID": "",
+    // Official direct-support Telegram handle shown by «🆘 پشتیبانی» (bare
+    // username or @handle). Leave "" to fail that button closed onto the
+    // ticket flow. Never a secret, never a full URL.
+    "SUPPORT_CONTACT": "",
     "PASARGUARD_PANEL_URL": "https://zerofee.ok-exor.ir"
   },
 
