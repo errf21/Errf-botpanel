@@ -24,6 +24,7 @@ const PERSIAN = /[\u0600-\u06FF\u200C\u200D]/;
 
 /** The exact official URL set, pinned literal (live-verified at build time). */
 const PINNED_URLS = [
+  'https://play.google.com/store/apps/details?id=llc.itdev.incy',
   'https://play.google.com/store/apps/details?id=com.v2raytun.android',
   'https://github.com/v2RayTun',
   'https://github.com/2dust/v2rayNG',
@@ -40,7 +41,7 @@ test('platforms and app picks follow the agreed official order', () => {
   ]);
   assert.deepEqual(GUIDE_PLATFORMS.map((p) => p.label), ['🤖 Android', '🍎 iOS', '🪟 Windows']);
   assert.deepEqual(GUIDE_PLATFORMS.map((p) => p.apps.map((a) => a.name)), [
-    ['v2RayTun', 'v2rayNG'],
+    ['incy', 'v2RayTun', 'v2rayNG'],
     ['V2Box', 'Streisand'],
     ['Throne'],
   ]);
@@ -49,7 +50,7 @@ test('platforms and app picks follow the agreed official order', () => {
 test('every guide callback is wired into the closed allowlist and passes the wire validator', () => {
   const values = guideCallbackValues();
   const unique = new Set(values);
-  assert.equal(unique.size, 3 + 5, 'three platforms + five apps, no duplicates');
+  assert.equal(unique.size, 3 + 6, 'three platforms + six apps, no duplicates');
   for (const value of values) {
     assert.equal(isValidCallbackData(value), true, `pattern: ${value}`);
     assert.equal(isKnownCallback(value), true, `allowlist: ${value}`);
@@ -84,6 +85,19 @@ test('v2rayNG carries NO Google Play button (Play link failed live verification)
   assert.deepEqual(ng.app.links.map((l) => l.url), [
     'https://github.com/2dust/v2rayNG/releases',
     'https://github.com/2dust/v2rayNG',
+  ]);
+});
+
+test('incy is the FIRST Android app and carries ONLY its verified Google Play link', () => {
+  assert.deepEqual(GUIDE_PLATFORMS[0]!.apps.map((a) => a.name), ['incy', 'v2RayTun', 'v2rayNG']);
+  const incy = findGuideApp(CB.GUIDE_AND_INCY);
+  assert.ok(incy, 'incy is registered');
+  assert.deepEqual(incy.app.links.map((l) => l.url), [
+    'https://play.google.com/store/apps/details?id=llc.itdev.incy',
+  ]);
+  const incyKb = guideAppKeyboard(incy, fa).inline_keyboard;
+  assert.deepEqual(incyKb[0]?.map((b) => [b.text, b.url]), [
+    ['📥 Google Play', 'https://play.google.com/store/apps/details?id=llc.itdev.incy'],
   ]);
 });
 
@@ -131,8 +145,9 @@ test('keyboard shapes: picker rows, per-platform 📖 order, single-app nav rule
 
   const android = GUIDE_PLATFORMS[0]!;
   const platformKb = guidePlatformKeyboard(android, fa).inline_keyboard;
-  assert.equal(platformKb[0]?.[0]?.text, '📖 راهنمای اتصال — v2RayTun');
-  assert.equal(platformKb[1]?.[0]?.text, '📖 راهنمای اتصال — v2rayNG');
+  assert.equal(platformKb[0]?.[0]?.text, '📖 راهنمای اتصال — incy', 'app order: incy first');
+  assert.equal(platformKb[1]?.[0]?.text, '📖 راهنمای اتصال — v2RayTun');
+  assert.equal(platformKb[2]?.[0]?.text, '📖 راهنمای اتصال — v2rayNG');
   assert.deepEqual(platformKb.at(-2)?.map((b) => b.callback_data), [CB.GUIDE_IOS, CB.GUIDE_WINDOWS]);
   assert.deepEqual(platformKb.at(-1)?.map((b) => b.callback_data ?? b.url), [CB.ACT_BACK_MENU]);
 

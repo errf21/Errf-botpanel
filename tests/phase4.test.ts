@@ -113,11 +113,15 @@ test('payment instructions arrive right after confirmation', async () => {
   assert.equal(instructions.payload['parse_mode'], 'HTML');
   assert.ok(String(instructions.text).includes(`<code>${TEST_CARD}</code>`));
   assert.equal(String(instructions.text).includes('6037997100000000'), false);
-  assert.ok(String(instructions.text).includes('(یک بار بزن روی مقدار، کپی می‌شه)')); // hint once
+  assert.ok(String(instructions.text).includes('📋 برای کپی کردن شماره کارت، فقط یک بار روی شماره کارت بزن.')); // card-copy hint once
   assert.equal(
-    String(instructions.text).split('(یک بار بزن روی مقدار، کپی می‌شه)').length - 1,
+    String(instructions.text).split('📋 برای کپی کردن شماره کارت، فقط یک بار روی شماره کارت بزن.').length - 1,
     1,
   );
+  // duplicate-instruction regression: stale admin-doc wording + generic value
+  // hint must never appear in the customer payment bubble.
+  assert.equal(String(instructions.text).includes('کارت زیر'), false);
+  assert.equal(String(instructions.text).includes('(یک بار بزن روی مقدار، کپی می‌شه)'), false);
   assert.ok(String(instructions.text).includes('تومان')); // formatted amount
   assert.ok(String(instructions.text).includes('فیش'));
 });

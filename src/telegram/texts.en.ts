@@ -154,7 +154,8 @@ const en: Texts = {
   paymentIban: (v: string) => `IBAN: ${tgCode(v)}`,
   paymentAmountLine: (v: string) => `💰 Amount due: ${v}`,
   paymentReceiptPrompt:
-    '🧾 After transferring, send a photo or file of the receipt right here in this chat.\n\nPlease note: receipts are verified manually, so it may take a little while.',
+    '🧾 Transfer the exact order amount to the card number above.\nAfter paying, send a photo or file of the payment receipt right here in this chat.\n\n🔎 Receipt review is done manually; it may take a little while.',
+  paymentCopyHint: '📋 To copy the card number, tap the card number once.',
   paymentInfoUnavailable:
     '⚠️ Payment details aren\'t available right now. Please contact support to continue.',
   // Shown at most once per message, only when a <code> value is in it.
@@ -544,7 +545,7 @@ const en: Texts = {
   guideIntro:
     '📚 Connection guide\n\nConnecting takes three quick steps:\n\n1) Copy the subscription link from 📦 My Services\n2) Install an app that fits your device\n3) Import the link into the app — and connect\n\nFirst — what are you connecting with? 👇',
   guidePlatformAndroid:
-    '🤖 Connecting on Android\n\nPick one of the two apps below — both handle your subscription link, and each comes with its own step-by-step guide. For most phones, v2RayTun is the simpler pick.',
+    '🤖 Connecting on Android\n\nPick one of the apps below — all three handle your subscription link, and each comes with its own step-by-step guide. For most phones, v2RayTun is the simpler pick.',
   guidePlatformIos:
     '🍎 Connecting on iPhone (iOS)\n\nInstall one of these two apps from the App Store — both import your subscription link. V2Box is the simpler pick.',
   guidePlatformWindows:
@@ -573,6 +574,15 @@ Once traffic starts counting, you're online. Leave the rest of the settings alon
 5. Pick a server and press the ▶ Connect button. Tap Allow on the VPN request.
 
 Defaults are fine — nothing else needs changing.`,
+  guideStepsIncy: `📚 incy — connect in a minute
+
+1. Copy your subscription link: 📦 My Services → pick your service → tap the Subscription link.
+2. Install incy from Google Play using the button below.
+3. Open incy, tap add/import and choose import from link — paste the copied link (or scan a QR code).
+4. Name the configuration anything you like — "My service" is fine.
+5. Select the configuration and press Connect. When Android asks to allow the VPN connection, tap Allow.
+
+Once traffic starts counting, you're online. Leave the rest of the settings alone — your link already does the work.`,
   guideStepsV2box: `📚 V2Box — connect in a minute
 
 1. On your iPhone: copy your subscription link from 📦 My Services → pick your service → tap the Subscription link.

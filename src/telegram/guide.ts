@@ -17,6 +17,8 @@
  *  - V2Box / Streisand — App Store IDs confirmed via Apple's lookup API;
  *                both proprietary, so no GitHub button exists.
  *  - Throne    — official GitHub org repo (throneproj/Throne) + Releases.
+ *  - incy      — Google Play listing (dev Incy, LLC, pkg llc.itdev.incy),
+ *                live-verified from the store page (2026-09-15).
  * Never add a URL that was not verified against the project's own page.
  */
 import type {
@@ -66,6 +68,10 @@ export interface GuidePlatform {
 
 /* ———— verified official links ———— */
 
+const LINK_PLAY_INCY: GuideLink = {
+  label: (t) => t.guideBtnPlay,
+  url: 'https://play.google.com/store/apps/details?id=llc.itdev.incy',
+};
 const LINK_PLAY_V2RAYTUN: GuideLink = {
   label: (t) => t.guideBtnPlay,
   url: 'https://play.google.com/store/apps/details?id=com.v2raytun.android',
@@ -105,6 +111,12 @@ export const GUIDE_PLATFORMS: readonly GuidePlatform[] = [
     label: '🤖 Android',
     intro: (t) => t.guidePlatformAndroid,
     apps: [
+      {
+        callback: CB.GUIDE_AND_INCY,
+        name: 'incy',
+        steps: (t) => t.guideStepsIncy,
+        links: [LINK_PLAY_INCY],
+      },
       {
         callback: CB.GUIDE_AND_TUN,
         name: 'v2RayTun',

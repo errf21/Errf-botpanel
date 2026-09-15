@@ -88,8 +88,9 @@ test('Persian default: text-tap walk through all screens, official links, zero s
   let texts = textsTo(hero.id);
   assert.ok(texts.some((x) => x.includes('اتصال با اندروید')), 'android screen');
   const rows = lastBubbleInline(hero.id);
-  assert.equal(rows[0]?.[0]?.text, '📖 راهنمای اتصال — v2RayTun', 'app order: v2RayTun first');
-  assert.equal(rows[1]?.[0]?.text, '📖 راهنمای اتصال — v2rayNG');
+  assert.equal(rows[0]?.[0]?.text, '📖 راهنمای اتصال — incy', 'app order: incy first');
+  assert.equal(rows[1]?.[0]?.text, '📖 راهنمای اتصال — v2RayTun');
+  assert.equal(rows[2]?.[0]?.text, '📖 راهنمای اتصال — v2rayNG');
 
   await dispatch(callbackUpdateAs(CB.GUIDE_AND_TUN, nextId(), hero));
   texts = textsTo(hero.id);
@@ -110,6 +111,12 @@ test('Persian default: text-tap walk through all screens, official links, zero s
     'https://github.com/2dust/v2rayNG',
   ], 'no Play button on unverified v2rayNG listing');
   assert.ok(textsTo(hero.id).at(-1)?.includes('2dust/v2rayNG'));
+
+  await dispatch(callbackUpdateAs(CB.GUIDE_AND_INCY, nextId(), hero));
+  assert.ok(textsTo(hero.id).at(-1)?.includes('incy — اتصال در یک دقیقه'), 'incy steps bubble');
+  assert.deepEqual(lastBubbleInline(hero.id)[0]?.map((b) => [b.text, b.url]), [
+    ['📥 Google Play', 'https://play.google.com/store/apps/details?id=llc.itdev.incy'],
+  ], 'incy Play link exact');
 
   await dispatch(callbackUpdateAs(CB.GUIDE_WINDOWS, nextId(), hero));
   const winRows = lastBubbleInline(hero.id);
@@ -151,6 +158,9 @@ test('explicit English choice drives every guide screen (safety sentences verbat
 
   await dispatch(callbackUpdateAs(CB.GUIDE_ANDROID, nextId(), hero));
   assert.ok(textsTo(hero.id).at(-1)?.includes('Connecting on Android'));
+
+  await dispatch(callbackUpdateAs(CB.GUIDE_AND_INCY, nextId(), hero));
+  assert.ok(textsTo(hero.id).at(-1)?.includes('incy — connect in a minute'), 'en incy steps bubble');
 
   await dispatch(callbackUpdateAs(CB.GUIDE_AND_NG, nextId(), hero));
   assert.ok(

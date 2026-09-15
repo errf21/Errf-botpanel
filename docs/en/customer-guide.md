@@ -121,7 +121,7 @@ implemented; the bot only sends to customers who have interacted with it.
 
 ## Connection guide
 
-📚 → pick Android / iOS / Windows → pick the app (Android: v2RayTun or v2rayNG;
+📚 → pick Android / iOS / Windows → pick the app (Android: incy, v2RayTun or v2rayNG;
 iOS: V2Box or Streisand; Windows: Throne) → official store/GitHub links +
 60-second import steps (copy subscription link → share/import into the app).
 The safety notes (e.g. verify the official installer; SmartScreen advice) are

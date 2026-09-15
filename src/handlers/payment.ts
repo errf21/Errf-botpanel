@@ -22,7 +22,6 @@ import { forwardReceiptToAdmins } from '../admin.ts';
 import { adminQueueKeyboard, backToMenuKeyboard } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 import { FA_UI } from '../telegram/i18n.ts';
-import { tgEscapeHtml } from '../telegram/format.ts';
 
 const MY_ORDERS_LIMIT = 8;
 const PENDING_QUEUE_LIMIT = 10;
@@ -60,17 +59,18 @@ export async function sendPaymentInstructions(
   // Phase 7: an order may carry a wallet credit; the payable line below the
   // header is the ORDER AMOUNT column (the checkout already stored the
   // remainder there), so instructions can never quote the pre-credit price.
-  // NOTE: `info.instructions` is admin-authored settings content — sent as
-  // escaped raw text in every locale (see README: bilingual instructions).
+  // Payment-copy fix (2026-09): `info.instructions` (admin-authored settings
+  // content) is no longer rendered in the customer bubble — the fixed localized
+  // wording below is the single source of instruction copy. The stored D1
+  // value remains untouched and still validated at parse time.
   const lines = [
     t.paymentInstructionsHeader,
     t.paymentHolder(info.holder),
     t.paymentCard(card),
     ...(info.iban !== null ? [t.paymentIban(info.iban)] : []),
     t.paymentAmountLine(f.price(order.amount, order.currency)),
-    tgEscapeHtml(info.instructions),
     t.paymentReceiptPrompt,
-    t.copyHint,
+    t.paymentCopyHint,
   ];
   await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard(ctx.ui), 'HTML');
 }

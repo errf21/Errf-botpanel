@@ -72,7 +72,7 @@ test('English leaves used in HTML bubbles carry no raw markup specials', () => {
   // the (en) static text itself must never introduce < > (Telegram HTML).
   const htmlKeys = [
     'paymentInstructionsHeader', 'paymentHolder', 'paymentCard', 'paymentIban',
-    'paymentAmountLine', 'paymentReceiptPrompt', 'copyHint',
+    'paymentAmountLine', 'paymentReceiptPrompt', 'paymentCopyHint', 'copyHint',
     'svcLink', 'svcOpenPage', 'svcPageNote', 'svcRemaining',
   ] as const;
   for (const key of htmlKeys) {
