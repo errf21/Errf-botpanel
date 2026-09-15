@@ -60,6 +60,7 @@ interface ReplyKeyboard {
   keyboard: Array<Array<{ text: string; style?: string }>>;
   resize_keyboard?: boolean;
   is_persistent?: boolean;
+  one_time_keyboard?: boolean;
 }
 
 function replyKbOf(payload: Record<string, unknown>): ReplyKeyboard | undefined {
@@ -127,9 +128,12 @@ test('/start presents a Reply Keyboard: 10 labels in 4 rows (3/2/2/3) — styled
   const kb = replyKbOf(sends()[0]!.payload);
   assert.ok(kb, 'reply keyboard expected on the welcome message');
   assert.equal(kb!.resize_keyboard, true);
-  // Non-persistent on purpose: is_persistent lets the client re-open the
-  // keyboard after every Android Back press, so Back could never dismiss it.
+  // Task 1 lifecycle contract: NON-persistent (`is_persistent` unset) so a
+  // presented panel never forces itself back over the letter keyboard, ONE-TIME
+  // so every tap collapses it back to the full chat, and NOT delivered by
+  // generic hint replies (only explicit menu sends re-present it).
   assert.equal(kb!.is_persistent, undefined);
+  assert.equal(kb!.one_time_keyboard, true);
   assert.deepEqual(
     kb!.keyboard.map((r) => r.length),
     [3, 2, 2, 3],
@@ -257,6 +261,7 @@ test('buy from keyboard hides the main menu behind [auto-pick][back]', async () 
   const kb = replyKbOf(sendsTo(hero.id).at(-1)!.payload);
   assert.ok(kb, 'composing keyboard on the intro');
   assert.deepEqual(kb!.keyboard.flat().map((b) => b.text), [STEP_AUTO_TEXT, STEP_BACK_TEXT]);
+  assert.equal(kb!.one_time_keyboard, undefined, 'composing boards are NOT one-time');
   assert.equal(
     kb!.keyboard.flat().some((b) => MAIN_LABELS.includes(b.text)),
     false,
@@ -476,7 +481,7 @@ test('legacy inline act:back_menu tap edits the bubble and clears its buttons', 
   assert.deepEqual(markup.inline_keyboard, [], 'old inline buttons removed on the menu switch');
 });
 
-test('unknown free text stays unknown and re-presents the keyboard', async () => {
+test('unknown free text stays unknown; the hint never re-presents the keyboard', async () => {
   const hero = { ...USER, id: 815000002, username: 'p8a_junk' };
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
   stub.reset();
@@ -484,5 +489,8 @@ test('unknown free text stays unknown and re-presents the keyboard', async () =>
   assert.equal(sessionFor(hero.id), 'IDLE');
   const hint = sendsTo(hero.id).at(-1)!;
   assert.ok(String(hint.text).includes('منو'));
-  assert.ok(hasMainLabel(replyKbOf(hint.payload), '🛒 خرید سرویس'));
+  // Task 1: catch-all hints carry NO reply markup — a keyboard send is a
+  // client re-presentation and must stay reserved for explicit menu moments.
+  assert.equal(replyKbOf(hint.payload), undefined);
+  assert.equal(hint.payload['reply_markup'], undefined, 'hint must not re-present the panel');
 });

@@ -15,7 +15,7 @@ described as available.
 | Feature | How it works (code truth) |
 | --- | --- |
 | **Registration** | First webhook silently upserts the customer (profile fields; never touches `language`). |
-| **Main menu (reply keyboard)** | 10 buttons in rows **3/2/2/3**: row 1 = the **three distinct styles** 🔴🛒 buy `danger`, 🔵📦 my services `primary`, 🟢💰 wallet `success` (always adjacent, never split); then 💳 orders, 👤 account, 🤝 invite, **🆘 support (direct contact, no ticket)**, **🎫 create ticket (the tracked flow)**, 📚 guide, 🌐 language. Locale-labeled, cross-locale routing, **non-persistent** (`src/telegram/menu.ts`). |
+| **Main menu (reply keyboard)** | 10 buttons in rows **3/2/2/3**: row 1 = the **three distinct styles** 🔴🛒 buy `danger`, 🔵📦 my services `primary`, 🟢💰 wallet `success` (always adjacent, never split); then 💳 orders, 👤 account, 🤝 invite, **🆘 support (direct contact, no ticket)**, **🎫 create ticket (the tracked flow)**, 📚 guide, 🌐 language. Locale-labeled, cross-locale routing, **non-persistent + one-time** — every tap collapses the panel back to the full chat, the input-bar keyboard icon summons it; catch-all hint replies carry no markup so nothing else re-presents it (`src/telegram/menu.ts`). |
 | **Buy a service** | config-name step (free text, sanitized, or `cfg:auto` auto-pick name generator) → volume → duration → devices → summary → confirm. Presets + custom values re-validated against the freshly loaded catalog; keyboard payload values never trusted. |
 | **Pricing** | Final total shown only (integer IRT); instant quote; snapshot stored with the order. |
 | **Order idempotency** | Confirmation mints a ULID token; replay/double-tap can never create two orders (3 layers). |

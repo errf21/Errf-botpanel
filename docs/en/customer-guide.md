@@ -12,9 +12,11 @@ page's mirror explains the same screens natively: [fa customer guide](../fa/cust
 
 ## Main menu
 
-Press `/start` once — from then on a reply keyboard sits below the chat
+Press `/start` once — the menu opens as a reply keyboard below the chat
 (10 buttons; the three coloured ones — red buy, blue services, green wallet — share the first row).
-Android Back hides it, and Telegram's own keyboard button brings it back whenever you want.
+It folds itself away after every button press, so the chat stays full-screen
+while you read or type; Telegram's own keyboard button (in the input bar)
+re-summons it any time — it never forces itself back over the typing keyboard.
 `/help` explains it again. `/cancel` returns to the menu from any
 step (never deletes your orders or services).
 

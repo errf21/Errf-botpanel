@@ -160,6 +160,9 @@ export interface TelegramReplyKeyboardMarkup {
   keyboard: TelegramReplyKeyboardButton[][];
   resize_keyboard?: boolean;
   is_persistent?: boolean;
+  /** Hides the keyboard as soon as it is used; it stays summonable via the
+   *  input-field keyboard icon (Bot API docs, ReplyKeyboardMarkup). */
+  one_time_keyboard?: boolean;
   selective?: boolean;
 }
 

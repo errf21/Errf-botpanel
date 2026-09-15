@@ -336,15 +336,30 @@ function replyButton(text: string, style?: TelegramKeyboardButtonStyle): Telegra
 }
 
 /**
- * Non-persistent on purpose: a persistent reply keyboard is re-opened by the
- * client every time the user dismisses a non-reply keyboard, so Android Back
- * could never hide the menu. Non-persistent keeps the stock UX — Back collapses
- * it to full-screen chat, Telegram's own keyboard button brings it back.
+ * Keyboard lifecycle, per the Bot API docs + on-device behaviour:
+ * - NON-persistent (`is_persistent` never sent): a presented panel does NOT
+ *   force itself back over the regular keyboard (that is exactly what
+ *   is_persistent would do) and it stays summonable with the input-field
+ *   keyboard icon.
+ * - Android Back does NOT dismiss a presented non-persistent keyboard
+ *   (verified on device); the bot-side levers are the two below.
+ * - The main menu is therefore ONE-TIME (`one_time_keyboard: true`): clients
+ *   hide it immediately after any button press, so the chat returns to the
+ *   full-screen letter keyboard after every single menu interaction, and the
+ *   icon (or any explicit menu send) brings it back.
+ * - A reply keyboard is re-presented whenever a bot SENDS one, so catch-all
+ *   hint replies carry NO reply markup at all: only explicit menu/flow
+ *   transitions are allowed to re-present the panel.
  */
 function replyKeyboard(
   rows: TelegramReplyKeyboardButton[][],
+  opts?: { oneTime?: boolean },
 ): TelegramReplyKeyboardMarkup {
-  return { keyboard: rows, resize_keyboard: true };
+  return {
+    keyboard: rows,
+    resize_keyboard: true,
+    ...(opts?.oneTime === true ? { one_time_keyboard: true } : {}),
+  };
 }
 
 /**
@@ -362,6 +377,9 @@ function replyKeyboard(
  * guide keeps sitting directly before the language selector (which stays last).
  * Labels, callbacks and styles are untouched; only the grouping differs from the
  * flat MAIN_MENU_CORE order.
+ *
+ * One-time on purpose (see `replyKeyboard`): every tap collapses the panel back
+ * to the full chat screen; the input-field keyboard icon re-summons it.
  */
 export function mainMenuKeyboard(ui: Ui): TelegramReplyKeyboardMarkup {
   const entries = mainMenuEntries(ui.t);
@@ -380,7 +398,7 @@ export function mainMenuKeyboard(ui: Ui): TelegramReplyKeyboardMarkup {
   if (tail !== undefined && previous !== undefined && tail.length === 1) {
     rows.splice(rows.length - 2, 2, [...previous, ...tail]);
   }
-  return replyKeyboard(rows);
+  return replyKeyboard(rows, { oneTime: true });
 }
 
 /** Exact-match routing of a reply-button press to the callback vocabulary —

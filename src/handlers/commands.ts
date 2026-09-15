@@ -111,7 +111,9 @@ export async function handleCommand(
       await showSalesStatus(ctx);
       return;
     default:
-      await ctx.api.sendMessage(ctx.chatId, t.cmdUnknown, mainMenuKeyboard(ctx.ui));
+      // Task 1: an unknown command never re-presents the Reply Keyboard —
+      // per Bot API docs a keyboard send makes clients display the panel again.
+      await ctx.api.sendMessage(ctx.chatId, t.cmdUnknown);
   }
 }
 

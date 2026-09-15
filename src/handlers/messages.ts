@@ -232,7 +232,10 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
         }
       }
     }
-    await ctx.api.sendMessage(ctx.chatId, t.idleInputHint, mainMenuKeyboard(ctx.ui));
+    // Phase 8A: catch-all hints carry NO reply markup — re-sending the keyboard
+    // on generic chatter is what re-presented the panel after every Android
+    // Back press and made it feel undismissable (Task 1 lifecycle fix).
+    await ctx.api.sendMessage(ctx.chatId, t.idleInputHint);
     return;
   }
 
@@ -326,7 +329,9 @@ export async function handleMedia(
     return;
   }
   if (session.state === 'IDLE') {
-    await ctx.api.sendMessage(ctx.chatId, t.idleInputHint, mainMenuKeyboard(ctx.ui));
+    // No reply markup on the catch-all hint (Task 1): a keyboard send is a
+    // client re-presentation; generic replies must never summon the panel.
+    await ctx.api.sendMessage(ctx.chatId, t.idleInputHint);
     return;
   }
   await ctx.api.sendMessage(ctx.chatId, t.receiptExpectedMedia, backToMenuKeyboard(ctx.ui));

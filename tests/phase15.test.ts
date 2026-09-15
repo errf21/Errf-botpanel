@@ -296,6 +296,7 @@ test('P15-03 first-ever /start carries the offer bubble; the menu contract is un
     keyboard: { text: string; style?: string }[][];
     resize_keyboard: boolean;
     is_persistent?: boolean;
+    one_time_keyboard?: boolean;
   };
   assert.deepEqual(menu.keyboard.map((r) => r.length), [3, 2, 2, 3], 'pinned shape preserved');
   assert.deepEqual(
@@ -308,6 +309,8 @@ test('P15-03 first-ever /start carries the offer bubble; the menu contract is un
     'styled trio intact as row 1',
   );
   assert.equal(menu.is_persistent, undefined);
+  // Task 1: the pinned menu shape carries the one-time hide semantics too.
+  assert.equal(menu.one_time_keyboard, true);
   const offer = bubbles[1]!;
   assert.ok(String(offer.text).includes('۱۰۰'), 'Persian digits for the seeded volume');
   assert.ok(String(offer.text).includes('تست'), 'fa copy names the free test');

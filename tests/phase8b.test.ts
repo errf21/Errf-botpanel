@@ -122,7 +122,7 @@ test('welcome + approval greetings follow «درود زیبا» (and never سل�
 
 // ————————————————————————————— fallback routing —————————————————————————————
 
-test('off-topic free text at IDLE → exact fallback + persistent menu restored', async () => {
+test('off-topic free text at IDLE → exact fallback, panel NOT re-presented', async () => {
   const hero = freshUser('idle_junk');
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
@@ -130,9 +130,12 @@ test('off-topic free text at IDLE → exact fallback + persistent menu restored'
   await dispatch(messageUpdateAs(hero, 'asdkj qwe rty', nextId()));
   assert.equal(sessionFor(hero.id).state, 'IDLE', 'personality never mutates state');
   assert.equal(String(lastBubble(hero.id).text), fa.idleInputHint);
-  assert.ok(
-    (replyKbOf(lastBubble(hero.id).payload)?.keyboard ?? []).flat().some((b) => b.text === '🛒 خرید سرویس'),
-    'main keyboard restored on the fallback',
+  // Task 1: the catch-all fallback must NOT carry reply markup — a keyboard
+  // send re-presents the panel on clients; hints must leave it collapsed.
+  assert.equal(
+    replyKbOf(lastBubble(hero.id).payload),
+    undefined,
+    'no keyboard on the off-topic hint',
   );
 });
 
