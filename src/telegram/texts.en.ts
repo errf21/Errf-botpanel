@@ -66,13 +66,13 @@ const en: Texts = {
     '🛒 Buy a service',
     '',
     'First, choose a name for your config.',
-    'It must be English, at least three words (Latin letters, single spaces), up to 64 characters.',
+    'It must be English (Latin letters, up to 20 letters per word, single spaces), 6 to 64 characters.',
     'Change your mind? Press "Back to menu" or /cancel at any time.',
   ].join('\n'),
   buyWaitingConfigName:
-    'Pick an English name with at least three words — or let me choose one for you.',
+    'Pick an English name with at least 6 characters — or let me choose one for you.',
   configNameInvalid:
-    '🙈 That name doesn\'t work — it has to be English with at least three words (like "Silver Falcon Network").\nTry again, or press "Auto-pick".',
+    '🙈 That name doesn\'t work — it has to be English with at least 6 characters (like "Silver"). Try again, or press "Auto-pick".',
   configNameSaved: (name: string) =>
     `✅ Config name set: "${name}".`,
   buyInProgress: '🛒 Your purchase is still in progress — keep going, or press "Back to menu" to cancel.',
@@ -232,7 +232,7 @@ const en: Texts = {
   provisionFailedNotice: (id: string) =>
     `⚠️ Setting up this order ran into repeated problems.\n\n🆔 Order: ${id}\n\nThe team has been alerted and is on it — you do NOT need to pay again.`,
   provisionNameRejectedNotice: (id: string) =>
-    `⚠️ The panel didn\'t accept this order's service name.\n\n🆔 Order: ${id}\n\nYour payment is completely safe and nothing extra will be charged. Our team will retry with a fresh name shortly; if you\'re in a hurry, start a new order using "Auto-pick" or a different three-word English name.`,
+    `⚠️ The panel didn\'t accept this order's service name.\n\n🆔 Order: ${id}\n\nYour payment is completely safe and nothing extra will be charged. Our team will retry with a fresh name shortly; if you\'re in a hurry, start a new order using "Auto-pick" or a different English name of at least 6 characters.`,
   adminProvisionFailed: (id: string, reason: string) =>
     `⚠️ Service creation failed\n🆔 ${id}\n📝 ${reason.slice(0, 200)}\n\nYou can retry with the button below (within the allowed cap).`,
   failedQueueHeader: '🧯 Setup/renewal failures',

@@ -1,9 +1,10 @@
 /**
  * Config naming (approved Phase 7 rules):
  *
- *  - validateConfigName: the customer's display name — strictly ENGLISH
- *    words: >= 3 words separated by single plain spaces, each word letters
- *    only (3–20 chars), <= 64 visible chars overall. The name is DISPLAY
+ *  - validateConfigName: the customer's display name — strictly ENGLISH:
+ *    6–64 total chars, Latin-letter words (1–20 chars each) separated by
+ *    single plain spaces. NO word-count minimum ("Silver" is valid).
+ *    The name is DISPLAY
  *    ONLY: it is never sent to PasarGuard — the panel username remains the
  *    deterministic prefix+order-id derivation from Phases 5/6. panelSafeName
  *    therefore stays a SEPARATE, documented shape, not a display gate.
@@ -32,14 +33,15 @@ export function panelSafeName(value: unknown): value is string {
   );
 }
 
-/** Strict English display-name rule; returns the name trimmed, or null. */
+/** English display-name rule: 6–64 chars, 1–20-letter Latin words, single
+ *  spaces; returns the name trimmed, or null. */
 export function validateConfigName(raw: unknown): string | null {
   const name = sanitizeConfigName(raw); // 1–64 visible, no control chars, no leading '/'
   if (name === null) return null;
+  if (name.length < 6) return null; // "at least 6 characters"
   const words = name.split(' ');
-  if (words.length < 3) return null; // "at least 3 words"
   for (const word of words) {
-    if (!/^[A-Za-z]{3,20}$/.test(word)) return null; // letters only, natural length
+    if (!/^[A-Za-z]{1,20}$/.test(word)) return null; // letters only, natural length
   }
   return name;
 }

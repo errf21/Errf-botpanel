@@ -256,7 +256,7 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
     return;
   }
 
-  // WAITING_CONFIG_NAME — strict English (>=3 words) display name; the
+  // WAITING_CONFIG_NAME — strict English (>=6 chars) display name; the
   // auto-pick button stays available on refusals. The name rule is locale-
   // independent BY DESIGN (panel-safe English names in both languages).
   const name = validateConfigName(text);
