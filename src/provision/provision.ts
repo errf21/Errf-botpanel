@@ -26,6 +26,7 @@ import type { CreateUserPayload, PanelUser } from '../pasarguard/client.ts';
 import { loadPanelConfig, PasarGuardClient, resolveSubscriptionUrl } from '../pasarguard/client.ts';
 import { loadProvisioningConfig } from '../catalog/provisioning.ts';
 import type { ProvisioningConfig } from '../catalog/provisioning.ts';
+import { MB_BYTES } from '../catalog/freeTest.ts';
 import { loadRenewalConfig } from '../catalog/renewal.ts';
 import {
   bookRenewalOnService,
@@ -52,6 +53,8 @@ export const DAY_SECONDS = 86_400;
 const MAX_GB = 4_194_304; // 2^32 bytes / 10^9 sanity cap
 const MAX_DAYS = 36_600; // ~100 years
 const MAX_DEVICES = 10_000;
+/** Free-test volume cap: snapshot `volume_mb` must stay inside this range. */
+const MAX_MB = 100_000;
 
 export type ProvisionSkipReason =
   | 'unconfigured'
@@ -91,6 +94,8 @@ function panelReason(result: { kind: string; status: number; detail: string }): 
 
 function parseSelections(order: OrderRow): {
   volumeGb: number;
+  /** Traffic cap in bytes on the panel wire (SI). */
+  dataLimitBytes: number;
   durationDays: number;
   deviceCount: number;
 } | null {
@@ -102,16 +107,12 @@ function parseSelections(order: OrderRow): {
   } catch {
     return null;
   }
-  const { volume_gb: gb, duration_days: days, device_count: devices } = snapshot;
+  const { duration_days: days, device_count: devices } = snapshot;
   if (
-    typeof gb !== 'number' ||
     typeof days !== 'number' ||
     typeof devices !== 'number' ||
-    !Number.isSafeInteger(gb) ||
     !Number.isSafeInteger(days) ||
     !Number.isSafeInteger(devices) ||
-    gb < 1 ||
-    gb > MAX_GB ||
     days < 1 ||
     days > MAX_DAYS ||
     devices < 1 ||
@@ -119,7 +120,42 @@ function parseSelections(order: OrderRow): {
   ) {
     return null;
   }
-  return { volumeGb: gb, durationDays: days, deviceCount: devices };
+  // Free-test orders carry a strict byte-based volume (`volume_mb`, marked by
+  // the immutable `free_test: true` snapshot flag): 100 MB is below the GB
+  // ladder's integer floor of 1, so it can NEVER flow through volume_gb.
+  // Anything not explicitly marked takes the identical legacy path below.
+  if (snapshot['free_test'] === true) {
+    const mb = snapshot['volume_mb'];
+    if (
+      typeof mb !== 'number' ||
+      !Number.isSafeInteger(mb) ||
+      mb < 1 ||
+      mb > MAX_MB
+    ) {
+      return null;
+    }
+    return {
+      volumeGb: 0, // unused on the test path; the byte cap is authoritative
+      dataLimitBytes: mb * MB_BYTES,
+      durationDays: days,
+      deviceCount: devices,
+    };
+  }
+  const gb = snapshot['volume_gb'];
+  if (
+    typeof gb !== 'number' ||
+    !Number.isSafeInteger(gb) ||
+    gb < 1 ||
+    gb > MAX_GB
+  ) {
+    return null;
+  }
+  return {
+    volumeGb: gb,
+    dataLimitBytes: gb * GB_BYTES,
+    durationDays: days,
+    deviceCount: devices,
+  };
 }
 
 /** Fire-and-forget notices must never take down a provisioning result. */
@@ -520,14 +556,14 @@ export async function provisionOrder(
 
 function buildCreatePayload(
   orderId: string,
-  selections: { volumeGb: number; durationDays: number; deviceCount: number },
+  selections: { dataLimitBytes: number; durationDays: number; deviceCount: number },
   config: ProvisioningConfig,
   username: string,
 ): CreateUserPayload {
   return {
     username,
     status: config.defaultStatus,
-    data_limit: selections.volumeGb * GB_BYTES,
+    data_limit: selections.dataLimitBytes,
     expire_duration: selections.durationDays * DAY_SECONDS,
     hwid_limit: selections.deviceCount,
     group_ids: [...config.groupIds],

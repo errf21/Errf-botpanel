@@ -4,7 +4,7 @@
 
 دیتابیس: **Cloudflare D1** (`telbot-db`، سازگار با SQLite) با بایندینگ `DB`.
 مهاجرت‌ها: پوشهٔ `migrations/` (تنظیم `"migrations_dir"` در `wrangler.jsonc`)،
-اعمال دقیقاً به ترتیب نام فایل `0001 → 0013`.
+اعمال دقیقاً به ترتیب نام فایل `0001 → 0014`.
 
 **سازنده / Creator:** [Espierz](https://t.me/Espierz) · تلگرام / Telegram: [@Espierz](https://t.me/Espierz)
 
@@ -27,16 +27,17 @@
 | ۱۱ | `0011_pricing_model.sql` | بازسازی `admin_actions` (+اکشن `pricing`)؛ جدول **`settings_audit`** (مستند کامل قبل/بعد با json_valid)؛ سند `pricing` به **schema 2** | هدر فایل صراحتاً می‌گوید پیش‌نویس منسوخِ `0011_pricing_admin.sql` هرگز اعمال نشده و حذف شده است. |
 | ۱۲ | `0012_device_limit.sql` | سند `device_options` → {1,2,3}، custom خاموش | سند قیمت دست‌نخورده؛ `user_prices` کلیدهای ۴..۱۰ غیرقابل‌دسترس ولی سازگار می‌مانند. |
 | ۱۳ | `0013_sales_switch.sql` | سند `sales` = `{"schema":1,"stopped":false}` + بک‌فیلِ فقط-provenance | کلید توقف تجاری. |
+| ۱۴ | `0014_free_test.sql` | **`free_test_claims`** (PK `customer_id`، UNIQUE `order_id`)؛ سند `free_test` `{"schema":1,"enabled":true,"volume_mb":100,"duration_days":1,"device_count":1}`؛ **بازسازی `service_notifications`** (+kind `free_test_expiring`، سطرها کلمه‌به‌کلمه حفظ می‌شوند) | بازسازی برگِ CHECK (FK ورودی ندارد)؛ seed با `INSERT OR IGNORE`؛ orders/customers تغییری نمی‌کنند. |
 
 ### قاعده‌های ترتیبی که کد به آن‌ها تکیه می‌کند
 
 - اسنادی که با `UPDATE ... WHERE key=...` نوشته می‌شوند (0003،0004،0006،0011،0012)
   **نیازمند** سطرهای ظرف 0001 هستند — دلیل دیگر برای هرگز-ویرایش-نکردن تاریخچه.
-- بازسازی‌های دوبارهٔ جدول‌های CHECK یعنی 0006/0007/0011 باید دقیقاً به ترتیب اجرا شوند.
+- بازسازی‌های جدول‌های CHECK یعنی 0006/0007/0011/0014 باید دقیقاً به ترتیب اجرا شوند.
 - seed‌های بعدی `INSERT OR IGNORE` هستند (provisioning, renewal, wallet, referral,
-  sales) و ویرایش ادمین را پاک نمی‌کنند؛ 0013 حتی `updated_by` را شرطی می‌زند.
+  sales, free_test) و ویرایش ادمین را پاک نمی‌کنند؛ 0013 حتی `updated_by` را شرطی می‌زند.
 
-## ۲. نمای اسکیما (وضعیت نهایی پس از 0013)
+## ۲. نمای اسکیما (وضعیت نهایی پس از 0014)
 
 ### `customers`
 ستون‌های کلیدی: `id` (PK)؛ `telegram_user_id` **UNIQUE NOT NULL**؛ `is_admin`
@@ -70,7 +71,8 @@ customers؛ `state` (۸ مقدارِ CHECK)؛ `selections` jsonِ **غییرنا
 | `support_tickets` / `support_messages` | یکتای «یک تیکت باز»؛ FK cascade | پشتیبانی (متن/فایل + تحویل). |
 | `announcements` / `announcement_deliveries` | PK مرکب (announcement_id, customer_id) | پخش انبوهِ قابل‌ازسرگیری. |
 | `payment_reminders` | PK order_id | مراحل یادآور 8C با ادعای تک‌UPDATE. |
-| `service_notifications` | PK (order_id, kind) | تعهد «یک‌بار در عمر سرویس» + lease ۳۰دقیقه. |
+| `service_notifications` | PK (order_id, kind) | تعهد «یک‌بار در عمر سرویس» + lease ۳۰دقیقه. سطوح *فقط-تجاری* (`expiring`,`usage90`) با NOT EXISTS روی `free_test_claims` تست‌ها را کنار می‌گذارند؛ سطح `free_test_expiring` دقیقاً برعکس (EXISTS) — پنجرهٔ ۲ ساعتهٔ منحصربه‌فردِ تست. |
+| `free_test_claims` | **PK customer_id**؛ UNIQUE order_id | دیوار «یک‌بار در عمر» تست رایگان (فاز ۱۵)؛ `order_id` پیش از ساخت سفارش کشته می‌شود (mint) و لنگرِ بازیابی کرش است. |
 
 ## ۳. روش امن مهاجرت
 
@@ -92,8 +94,8 @@ npx wrangler d1 migrations apply telbot-db --remote
 
 **قاعده‌های طلایی**
 
-1. مهاجرت‌ها **فقط-افزودنی‌اند**: `0001…0013` را ویرایش/جابه‌جا نکنید؛ تغییر
-   تازه فایل `0014_*.sql` است.
+1. مهاجرت‌ها **فقط-افزودنی‌اند**: `0001…0014` را ویرایش/جابه‌جا نکنید؛ تغییر
+   تازه فایل `0015_*.sql` است.
 2. سند جدید: seed با `INSERT OR IGNORE` + مقدار json_valid + فیلد `"schema"` +
    کامنت provenance (سبک 0013).
 3. گسترش لیست CHECK؟ همان الگوی بازسازی 0006/0007/0011 (جدول جدید ← کپی ←

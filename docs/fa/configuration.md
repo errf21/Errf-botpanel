@@ -65,6 +65,7 @@
 | `wallet` | 1 | `wallet.ts` | `enabled,max_credit_irt,max_debit_irt` | کلید توقف + سقف هر عملیات پولی ادمین. |
 | `referral` | 1 | `referral.ts` | `enabled,reward_percent,max_rewards_per_referrer` | سیاست پاداش دعوت. |
 | `sales` | 1 (`0013`) | `sales.ts` | `stopped` | کلید توقف تجاری — **fail-open**. [قیمت‌گذاری](pricing.md). |
+| `free_test` | 1 (`0014`) | `freeTest.ts` | `enabled,volume_mb,duration_days,device_count` | مشخصهٔ تستِ یک‌بارمصرف — **fail-CLOSED** (مفقود/خراب = غیرفعال). دیوارِ «یک‌بار در عمر» واقعی PK جدول `free_test_claims` است، نه این سند؛ توقف فروش ادعا را هم می‌بندد. [امکانات](features.md). |
 | `business_settings` | 1 | *(هیچ کدی نمی‌خواند)* | `{"schema":1}` | راکت/رزرو — در حال حاضر بی‌مصرف. |
 
 ### ویرایش اسناد تنظیمات

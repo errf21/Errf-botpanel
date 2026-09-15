@@ -14,7 +14,7 @@ npm install                      # wrangler + typescript only (3 devDeps)
 cp .dev.vars.example .dev.vars   # fill LOCAL values (gitignored)
 npx wrangler login               # only needed the first time / for real DB
 npx wrangler d1 create telbot-db # paste database_id into wrangler.jsonc
-npm run db:migrate:local         # applies 0001..0013 to .wrangler local DB
+npm run db:migrate:local         # applies 0001..0014 to .wrangler local DB
 ```
 
 ## 2. Commands (exact `package.json` scripts — nothing else exists)

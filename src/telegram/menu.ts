@@ -57,6 +57,8 @@ export const CB = {
   /** Phase 7: wallet-paid order buttons on the purchase/renewal summary. */
   PAY_WALLET_FULL: 'wlt:full',
   PAY_WALLET_PART: 'wlt:part',
+  /** Phase 15: claim the one-time free test (offer / services empty state). */
+  TEST_CLAIM: 'tst:claim',
 } as const;
 
 /**
@@ -421,6 +423,22 @@ export function composingKeyboard(ui: Ui, extras: string[] = []): TelegramReplyK
 /** Inline single back button — kept for mid-flow messages (not the main menu). */
 export function backToMenuKeyboard(ui: Ui): TelegramInlineKeyboardMarkup {
   return { inline_keyboard: [[button(ui.t.backToMenu, CB.ACT_BACK_MENU)]] };
+}
+
+/**
+ * Phase 15: the free-test offer — the one-time claim CTA plus the standard
+ * back-to-menu row. INLINE only, by contract: the main Reply Keyboard keeps
+ * its pinned ten buttons in rows [3,2,2,3] (MAIN_MENU_CORE + phase8a.test.ts)
+ * and Telegram allows exactly ONE markup per message — a "persistent menu"
+ * and this CTA can never share a bubble, so the offer is its own bubble.
+ */
+export function freeTestKeyboard(ui: Ui): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button(ui.t.freeTestBtnClaim, CB.TEST_CLAIM)],
+      [button(ui.t.backToMenu, CB.ACT_BACK_MENU)],
+    ],
+  };
 }
 
 /** Phase 10: the language picker — labels in their OWN script, always. */

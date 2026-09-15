@@ -55,6 +55,7 @@ import { runAnnouncementPass, showAnnouncements } from './announcements.ts';
 import { handlePricingCallback } from './pricingAdmin.ts';
 import { handleSalesCallback } from './salesAdmin.ts';
 import { cancelToMenu } from './commands.ts';
+import { claimFreeTestTap } from './freeTest.ts';
 
 
 /**
@@ -172,6 +173,14 @@ export async function handleCallback(
   // never written — handled before the session read on purpose) ————
   if (data.startsWith('gud:')) {
     await handleGuideCallback(ctx, data, callbackQueryId);
+    return;
+  }
+
+  // ———— Phase 15: the free-test claim. Session-state agnostic on purpose:
+  // the once-ever wall is the D1 claim row, never a draft, so the tap from
+  // ANY state is safe (handled before the session read like the guide). ————
+  if (data === CB.TEST_CLAIM) {
+    await claimFreeTestTap(ctx, callbackQueryId);
     return;
   }
 

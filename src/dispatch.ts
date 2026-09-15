@@ -42,12 +42,19 @@ export async function processTelegramUpdate(
 
     // Phase 7: FIRST-EVER /start with a referral arg only — the pre-probe
     // (one indexed SELECT) happens exclusively for those payloads.
+    // Phase 15: the free-test offer needs the same "first /start ever" fact
+    // for EVERY start (with or without a referral arg). The probe is still
+    // gated to /start messages only — the hot path never pays for it.
     let pendingReferralCode: string | undefined;
+    let firstEverStart = false;
     const startText = message?.text ?? message?.caption;
     const arg = referralArg(startText);
-    if (arg) {
+    if (arg || isStartCommand(startText)) {
       const neverSeen = message !== undefined && !(await customerExists(env.DB, actor.id));
-      if (neverSeen) pendingReferralCode = arg;
+      if (arg) {
+        if (neverSeen) pendingReferralCode = arg;
+      }
+      if (isStartCommand(startText)) firstEverStart = neverSeen;
     }
 
     // Phase 10: the upsert's own row read carries the explicit language
@@ -64,6 +71,7 @@ export async function processTelegramUpdate(
       ui: uiFor(language),
       waitUntil: options?.waitUntil,
       ...(pendingReferralCode ? { pendingReferralCode } : {}),
+      ...(firstEverStart ? { firstEverStart: true } : {}),
     };
 
     if (callback) {
@@ -103,4 +111,11 @@ function referralArg(text: string | undefined): string | null {
   const arg = parts[1] ?? '';
   if (!arg.startsWith(REFERRAL_CODE_PREFIX)) return null;
   return arg.slice(REFERRAL_CODE_PREFIX.length) || null;
+}
+
+/** True when a message/caption text is a /start command (any @BotName form). */
+function isStartCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  const head = (text.trim().split(/\s+/)[0] ?? '').slice(1).split('@')[0] ?? '';
+  return head.toLowerCase() === 'start';
 }

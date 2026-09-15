@@ -110,10 +110,12 @@ approved, provisioning, completed, rejected, failed, cancelled`. تمدیدها 
 
 ## ۶. جاروب‌های زمان‌بندی‌شده (cron)
 
-`src/index.ts:scheduled` — کرون `*/5`، دو جاروب مستقل با `try/catch` جدا، با
+`src/index.ts:scheduled` — کرون `*/5`، جاروب‌های مستقل با `try/catch` جدا، با
 ادعاهای at-most-once داخل D1 (`db/paymentReminders.ts` مراحل ۱،۲،۳ =
-≥۱۵/۳۰/۴۵ دقیقه از اولین فیش؛ `db/serviceNotifications.ts` یک `usage90` و یک
-`expiring` به ازای هر سرویس با PK مرکب + lease ۳۰ دقیقه‌ای). دقت کرون تشریفاتی
+≥۱۵/۳۰/۴۵ دقیقه از اولین فیش؛ `db/serviceNotifications.ts` برای سرویس پولی یک
+`usage90` و یک `expiring`، و برای تست رایگان یک `free_test_expiring` منحصربه‌فرد
+~۲ ساعت پیش از پایان — هر سه با PK مرکب + lease ۳۰ دقیقه‌ای؛ SQL دو سطح پولی با
+NOT EXISTS سفارش‌های ادعاشدهٔ تست را کنار می‌گذارند). دقت کرون تشریفاتی
 است — همهٔ تضمین‌ها در دیتابیس زنده.
 
 ## ۷. مرزهای احراز هویت و مجوز
@@ -173,7 +175,7 @@ D1 تنها منبع حقیقت: هویت (`customers`)، اسناد کسب‌و
 | اعتبارسنجی/اصول امنیتی | `src/lib/validate.ts`, `src/lib/security.ts`, `src/lib/configName.ts` |
 | health | `src/routes/health.ts` |
 | کرون | `src/index.ts:scheduled`, `wrangler.jsonc → triggers.crons` |
-| مهاجرت‌ها | `migrations/0001…0013.sql` |
+| مهاجرت‌ها | `migrations/0001…0014.sql` |
 | هارنس تست | `tests/helpers.ts` (shim D1 با `node:sqlite` + جعل تلگرام) |
 
 سازنده / Creator: **[Espierz](https://t.me/Espierz)** · تلگرام / Telegram:

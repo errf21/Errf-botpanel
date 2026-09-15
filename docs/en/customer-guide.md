@@ -31,6 +31,22 @@ step (never deletes your orders or services).
 | 📚 Connection guide / راهنمای اتصال | How to install an app and import your config. |
 | 🌐 زبان / Language | Switch Persian ⇄ English (permanent choice). |
 
+## Free test (once, ever) 🎁
+
+When you open the bot for the very first time, alongside the menu you get a
+separate gift bubble: a **free 100 MB / 1-day test service** — one per user for
+lifetime, on the house. Tap «🎁 Activate free test»; the service is created on
+the panel right away and the connection link arrives here. If you don't claim
+then, the offer is still shown while your «📦 My Services» list is empty —
+disappearing forever once you've claimed.
+
+The test behaves like any service (status, traffic, link in My Services) with
+two honest differences: **it cannot be renewed** (when the day ends, the test
+is over — full services are bought via 🛒), and it gets its **own expiry
+reminder ~2 hours before the end** instead of the regular 3-day one. Repeating
+the tap changes nothing — the wall is in the database, not the buttons. During
+a sales stop («🛑») new tests are paused along with purchases.
+
 ## Buy a service
 
 1. 🛒 → name your configuration (type any friendly name — display-only, not

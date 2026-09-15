@@ -482,6 +482,35 @@ const en: Texts = {
     '🌐 Same link, your personal service page — connection info and live status all in one place.',
   svcOpenPage: '🌐 Open service page',
 
+  // ————— Phase 15: the one-time free test (100 MB / 1 day by default) —————
+  // Native English mirror of the Persian program copy: same slots (volume and
+  // duration arrive pre-formatted), same warm-opener rule (the expiry notice
+  // opens with a greeting; flow prompts and toasts never do).
+  freeTestOffer: (mb: string, days: string) =>
+    `🎁 A welcome gift!\n\nFree test service: ${mb} MB of traffic for ${days} — once per user, completely on the house.\n\nWant to try it? Tap the button below 👇`,
+  freeTestCta: (mb: string, days: string) =>
+    `🎁 Haven't claimed your free test yet? ${mb} MB for ${days} — one time, on the house. Claim it with the button below.`,
+  freeTestBtnClaim: '🎁 Activate free test',
+  freeTestQueuedToast: '🎁 Preparing your test…',
+  freeTestCreated: (orderId: string) =>
+    `🎁 Your free test request is in!\nOrder id: ${orderId}\n\nThe connection link arrives as soon as it's ready — you can follow it under "📦 My Services".`,
+  freeTestAlready:
+    '🎁 Everyone gets exactly one free test — ever. Yours has been used.\n\nIf you liked it, grab a full service from "🛒 Buy a service"; the test details are available below.',
+  freeTestWait:
+    '⏳ Your free test request is recorded but not finalized yet — please give it a moment and check "📦 My Services".',
+  freeTestUnavailable:
+    '🙏 The free test can\'t be activated right now. Please try again later.',
+  renewNotForFreeTest:
+    '🎁 The free test can\'t be renewed — when it ends, pick a full service from "🛒 Buy a service".',
+  // Volume lines for sub-GB (test-class) services — unit-honest display.
+  summaryVolumeMb: (mb: number) => `📦 Volume: ${mb} MB`,
+  svcUsageMb: (used: string, total: string) => `📊 Traffic: ${used} of ${total} MB used`,
+  svcRemainingMb: (v: string) => `📥 Data left: ${v} MB`,
+  // The dedicated free-test expiry notice (once-only, ~2h before the end —
+  // the PAID 3-day usage/expiry set is never sent for a test service).
+  freeTestExpiryNotice: (name: string, remaining: string, expiresAt: string) =>
+    `Hello there, ⏳ your free test "${name}" has only ${remaining} left — it ends at ${expiresAt}.\n\n🎁 This one-time test can't be renewed; if it worked well for you, pick a full service from "🛒 Buy a service" ❤️`,
+
   // ————— Phase 10: keyboards, the selector, Account rows —————
   menuBuy: '🛒 Buy a service',
   menuServices: '📦 My Services',

@@ -121,8 +121,10 @@ refund claim (`refundOrderWalletPayment`) that cannot double- or lost-refund.
 `src/index.ts:scheduled` — Cloudflare Cron `*/5 * * * *`, two sweeps, isolated
 `try/catch`, at-most-once claims in D1 (`db/paymentReminders.ts` stages 1,2,3 =
 ≥15/30/45 min anchored on first receipt; `db/serviceNotifications.ts` one
-`usage90` + one `expiring` notice per service via composite-PK table + 30-min
-lease). Precision of the cron is cosmetic — every guarantee lives in the DB.
+`usage90` + one `expiring` notice per **paid** service, plus the one
+`free_test_expiring` notice (~2h window, claimed orders only — the paid legs'
+candidate SQL excludes them) via composite-PK table + 30-min lease).
+Precision of the cron is cosmetic — every guarantee lives in the DB.
 
 ## 7. Authentication & authorization boundaries
 
@@ -186,7 +188,7 @@ exposes presence booleans only).
 | Input validation/security primitives | `src/lib/validate.ts`, `src/lib/security.ts`, `src/lib/configName.ts` |
 | Health endpoint | `src/routes/health.ts` |
 | Cron wiring | `src/index.ts:scheduled`, `wrangler.jsonc → triggers.crons` |
-| DB migrations | `migrations/0001…0013.sql` |
+| DB migrations | `migrations/0001…0014.sql` |
 | Test harness | `tests/helpers.ts` (in-memory `node:sqlite` D1 shim + Telegram fetch stub) + `phase*.test.ts` |
 
 Creator / سازنده: **[Espierz](https://t.me/Espierz)** · Telegram / تلگرام:

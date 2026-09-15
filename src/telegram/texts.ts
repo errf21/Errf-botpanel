@@ -481,6 +481,37 @@ export const fa = {
     '🌐 همین لینک، صفحه‌ی اختصاصی سرویسه — اطلاعات اتصال و وضعیت سرویس همین‌جا هست.',
   svcOpenPage: '🌐 باز کردن صفحه سرویس',
 
+  // ————— Phase 15: the one-time free test (100 MB / 1 day by default) —————
+  // The offer targets ONE user who has NEVER claimed (DB claim row). The copy
+  // quotes the volume/duration only through the pre-formatted slot strings —
+  // numbers in the config can change without a byte of copy moving. Warm
+  // opener rule: this is a standalone notice-like bubble → «درود» is allowed
+  // on the expiry notice only, never on flow prompts or toasts.
+  freeTestOffer: (mb: string, days: string) =>
+    `🎁 یه هدیه برای تازه‌واردیا!\n\nسرویسِ تستِ رایگان: ${mb} مگابایت ترافیک، ${days} — فقط یک‌بار برای هر کاربر، کاملاً مجانی.\n\nاگه می‌خوای امتحانش کنی، دکمه‌ی زیر رو بزن 👇`,
+  freeTestCta: (mb: string, days: string) =>
+    `🎁 هنوز تستِ رایگان نگرفتی؟ ${mb} مگابایت، ${days} — یک‌بار، مجانی. با دکمه‌ی زیر فعالش کن.`,
+  freeTestBtnClaim: '🎁 فعال کردن تست رایگان',
+  freeTestQueuedToast: '🎁 تستت داره آماده می‌شه…',
+  freeTestCreated: (orderId: string) =>
+    `🎁 درخواستِ تستِ رایگان ثبت شد!\nشناسه سفارش: ${orderId}\n\nبه‌محض آماده شدن، لینک اتصالش برات میاد؛ از «📦 سرویس‌های من» دنبالشی کن.`,
+  freeTestAlready:
+    '🎁 هر نفر فقط یک تستِ رایگان داره (همیشه) — سهم خودت مصرف شده.\n\nبرای ادامه می‌تونی از «🛒 خرید سرویس» یه سرویس اصلی بگیری؛ جزئیات همون تست پایین در دسترسه.',
+  freeTestWait:
+    '⏳ درخواستِ تستِ رایگان‌ت ثبت شده و هنوز نهایی نشده؛ کمی دیگه صبر کن و از «📦 سرویس‌های من» چکش کن.',
+  freeTestUnavailable:
+    '🙏 فعلاً امکان فعال‌سازی تستِ رایگان نیست؛ بعداً دوباره امتحان کن.',
+  renewNotForFreeTest:
+    '🎁 سرویسِ تستِ رایگان قابل تمدید نیست؛ وقتی تموم شد از «🛒 خرید سرویس» یک سرویس اصلی بگیر.',
+  // Volume lines for sub-GB (test-class) services — unit-honest display.
+  summaryVolumeMb: (mb: number) => `📦 حجم: ${mb} مگابایت`,
+  svcUsageMb: (used: string, total: string) => `📊 مصرف ترافیک: ${used} از ${total} مگابایت`,
+  svcRemainingMb: (v: string) => `📥 باقی‌مانده حجم: ${v} مگابایت`,
+  // The dedicated free-test expiry notice (once-only, ~2h before the end —
+  // the PAID 3-day usage/expiry set is never sent for a test service).
+  freeTestExpiryNotice: (name: string, remaining: string, expiresAt: string) =>
+    `درود زیبا، ⏳ تستِ رایگانِ «${name}» فقط ${remaining} دیگه وقت داره — پایان: ${expiresAt}.\n\n🎁 این تست یک‌باره و قابل تمدید نیست؛ اگه راضی بودی، از «🛒 خرید سرویس» سرویس اصلی‌ات رو بردار ❤️`,
+
   // ————— Phase 10: i18n — keyboard labels, the Account row, the selector —————
   // Main-menu labels moved here VERBATIM from menu.ts so the (en) bundle can
   // mirror them; the strings themselves are byte-frozen Phase 8A labels.

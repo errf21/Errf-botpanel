@@ -40,11 +40,13 @@ export const ORDER_STATES = [
 export type OrderState = (typeof ORDER_STATES)[number];
 
 /**
- * Phase 9: the two — and only two — once-per-service notices. The
- * (order_id, kind) composite PK in service_notifications makes a THIRD kind
- * the only way to ever notify a service again.
+ * Phase 9: the two once-per-service PAID notices. Phase 15 adds the
+ * test-service-only third kind: a paid service never receives
+ * 'free_test_expiring' and a free test never receives 'usage90'/'expiring'
+ * — the classes are separated in the candidate/eligibility SQL, so the
+ * (order_id, kind) PK keeps every notice exactly-once per (service, kind).
  */
-export const NOTICE_KINDS = ['usage90', 'expiring'] as const;
+export const NOTICE_KINDS = ['usage90', 'expiring', 'free_test_expiring'] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 
@@ -245,6 +247,12 @@ export interface UpdateContext {
    * when the sender has no customer row yet (set by the dispatcher).
    */
   pendingReferralCode?: string;
+  /**
+   * Phase 15: true ONLY on the sender's first-ever `/start` (no prior
+   * customer row). Set by the dispatcher; the free-test offer is the only
+   * consumer. Every other update leaves it undefined (falsy).
+   */
+  firstEverStart?: boolean;
 }
 
 export interface TelegramUser {

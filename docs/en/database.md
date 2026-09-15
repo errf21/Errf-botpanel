@@ -4,7 +4,7 @@
 
 Database: **Cloudflare D1** (`telbot-db`, SQLite-compatible), bound as `DB`.
 Migrations: `migrations/` (configured via `"migrations_dir": "migrations"` in
-`wrangler.jsonc`), applied strictly in filename order `0001 → 0013`.
+`wrangler.jsonc`), applied strictly in filename order `0001 → 0014`.
 
 **Creator / سازنده:** [Espierz](https://t.me/Espierz) · Telegram / تلگرام: [@Espierz](https://t.me/Espierz)
 
@@ -27,16 +27,17 @@ Migrations: `migrations/` (configured via `"migrations_dir": "migrations"` in
 | 11 | `0011_pricing_model.sql` | `admin_actions` rebuild (+`pricing` action, 5 total); **`settings_audit`** table (full json_valid before/after docs); `pricing` doc → **schema 2** (exact-entries model) | Header documents that an earlier draft `0011_pricing_admin.sql` was **never applied** and was deleted — this is the real 0011. |
 | 12 | `0012_device_limit.sql` | `device_options` doc → {1,2,3}, custom OFF, max 3 | Pricing doc untouched; `user_prices` 4..10 become unreachable compat entries (still valid coverage). |
 | 13 | `0013_sales_switch.sql` | `sales` doc `{"schema":1,"stopped":false}` + provenance-only backfill | The commercial stop switch. |
+| 14 | `0014_free_test.sql` | **`free_test_claims`** (PK `customer_id`, UNIQUE `order_id`); `free_test` doc `{"schema":1,"enabled":true,"volume_mb":100,"duration_days":1,"device_count":1}`; **`service_notifications` rebuild** (+kind `free_test_expiring`, rows preserved verbatim) | Leaf-table CHECK-list rebuild (no incoming FKs); re-runnable via `INSERT OR IGNORE`; orders/customers untouched. |
 
 ### Ordering rules the code depends on
 
 - Docs updated via `UPDATE ... WHERE key=...` (0003,0004,0006,0011,0012) **require**
   the 0001 container rows to exist — another reason never to skip/rewrite history.
-- The twice-rebuilt CHECK tables mean 0006/0007/0011 must run exactly in order.
+- The CHECK-list rebuild files mean 0006/0007/0011/0014 must run exactly in order.
 - Later seeds (`INSERT OR IGNORE`: provisioning, renewal, wallet, referral, sales)
   never clobber operator edits; `0013` even stamps `updated_by` **only when NULL**.
 
-## 2. Schema overview (final state after 0013)
+## 2. Schema overview (final state after 0014)
 
 ### `customers`
 | Column | Constraints | Purpose |
@@ -81,7 +82,8 @@ claimed extension target) (0006). Indexes: customer, state, renews.
 | `support_tickets` / `support_messages` | one-live ticket partial UNIQUE (`open|answered`); ticket FK cascade | Support; messages `sender`/`body`/`file_id`+`file_kind` CHECK/`delivered`. |
 | `announcements` / `announcement_deliveries` | delivery **composite PK (announcement_id, customer_id)** | Broadcast jobs; statuses `pending→sending→sent|failed|skipped`, resumable. |
 | `payment_reminders` | PK order_id | 8C ladder: `reminded_stage` 0..3 claimed by single guarded UPDATE with `awaiting_review` fused subquery. |
-| `service_notifications` | PK (order_id, kind) | Phase 9 once-per-service promise (`usage90`,`expiring`), lease claim (`sending`, stale 30 min), attempts ≤64 bound. |
+| `service_notifications` | PK (order_id, kind) | Once-per-service promise: `usage90`,`expiring` for paid services; `free_test_expiring` (0014 rebuild, same shape) only for free tests. Lease claim (`sending`, stale 30 min), attempts ≤64 bound. Paid candidate SQL excludes `free_test_claims` orders; the test leg EXISTS-matches them. |
+| `free_test_claims` | PK customer_id; UNIQUE order_id | Phase 15 once-ever test wall: one customer can never hold two claims; `order_id` (minted ULID) is also the recovery anchor for a claim whose order insert failed. |
 
 ## 3. Safe migration procedure
 
@@ -103,10 +105,10 @@ npx wrangler d1 migrations apply telbot-db --remote
 
 **Golden rules**
 
-1. Migrations are **append-only**: never edit or re-number `0001…0013`; a new
-   change is a new file `0014_*.sql`.
+1. Migrations are **append-only**: never edit or re-number `0001…0014`; a new
+   change is a new file `0015_*.sql`.
 2. New config docs seed with `INSERT OR IGNORE` + `json_valid` value, schema
-   version field, and a provenance comment (follow `0013`'s style, and its
+   version field, and a provenance comment (follow `0013`/`0014`'s style, and its
    conditional-`updated_by` etiquette).
 3. Extending a CHECK list? Use the rebuild pattern (new table → copy → drop →
    rename) exactly as 0006/0007/0011 — and remember it's once-only, ordered.
@@ -128,6 +130,7 @@ npx wrangler d1 migrations apply telbot-db --remote
 | `provisioning` | `0005` | `group_ids` to real panel groups; `username_prefix`; `enabled` |
 | `renewal` / `wallet` / `referral` | `0006`/`0007` | policy numbers, or flip `enabled` |
 | `sales` | `0013` | nothing — operate via `/sales` (CAS+audit) |
+| `free_test` | `0014` | flip `enabled` (fail-CLOSED: malformed/missing = unavailable); volume_mb/duration_days/device_count are the test spec |
 
 ---
 

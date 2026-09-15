@@ -7,6 +7,13 @@
  * leave the candidate set forever — no notification loops for expired,
  * deleted or unrecoverable services.
  *
+ * Phase 15 splits the audience WITHOUT touching the paid mechanics: paid
+ * services keep the 'usage90' + 'expiring' set (both candidate queries and
+ * both fused claims exclude claimed test orders via NOT EXISTS on
+ * free_test_claims — the claims table is the authority, never the JSON
+ * snapshot); a free-test service gets instead exactly one
+ * 'free_test_expiring' notice inside the 2-hour window before expiry.
+ *
  * Claim uses a LEASE (30 min) instead of 8C's fire-and-forget stage bump:
  * a notice that never gets sent is worse than the (self-healing, one-shot)
  * worst-case duplicate, so `sent` is only ever written AFTER Telegram
@@ -18,6 +25,8 @@ import type { NoticeKind } from '../types.ts';
 
 export const USAGE_THRESHOLD_RATIO = 0.9;
 export const EXPIRY_NOTICE_DAYS = 3;
+/** Phase 15: the free test's single, dedicated expiry notice window. */
+export const FREE_TEST_NOTICE_HOURS = 2;
 /** Expiry candidates per run (pure D1 gating — no panel reads). */
 export const EXPIRY_SWEEP_LIMIT = 25;
 /** Panel reads per run: bounds wall-clock/panel load hard. */
@@ -46,11 +55,16 @@ export interface NoticeCandidate {
  * pre-filter: a renewal that lands between listing and claiming can make the
  * service ineligible and the claim then simply loses (0 changes) — it can
  * never notice a service out of its window or a non-completed one.
- * `clock`/`days` are the trailing placeholders used by the fused EXISTS.
+ * `?6` is the clock, `?7` the window length in days; a trailing +1 minute
+ * keeps julianday float noise from delaying a due notice.
+ *
+ * PAID legs (usage90/expiring) carry NOT EXISTS free_test_claims: the test
+ * audience is structurally removed from them, both at list AND at claim.
+ * The test leg carries the mirrored EXISTS and its own 2-hour window.
  */
 function eligibilitySql(kind: NoticeKind): string {
-  return kind === 'expiring'
-    ? `EXISTS (
+  if (kind === 'expiring') {
+    return `EXISTS (
          SELECT 1 FROM orders o
           WHERE o.id = service_notifications.order_id
             AND o.kind = 'purchase' AND o.state = 'completed'
@@ -58,14 +72,39 @@ function eligibilitySql(kind: NoticeKind): string {
             AND julianday(o.service_expires_at) > julianday(?6)
             AND julianday(o.service_expires_at)
                 <= julianday(?6) + ?7 + 1.0 / 1440.0
-       )`
-    : `EXISTS (
+            AND NOT EXISTS (
+              SELECT 1 FROM free_test_claims f
+               WHERE f.order_id = service_notifications.order_id
+            )
+       )`;
+  }
+  if (kind === 'free_test_expiring') {
+    return `EXISTS (
+         SELECT 1 FROM orders o
+          WHERE o.id = service_notifications.order_id
+            AND o.kind = 'purchase' AND o.state = 'completed'
+            AND o.service_expires_at IS NOT NULL
+            AND julianday(o.service_expires_at) > julianday(?6)
+            AND julianday(o.service_expires_at)
+                <= julianday(?6) + ?7 + 1.0 / 1440.0
+            AND EXISTS (
+              SELECT 1 FROM free_test_claims f
+               WHERE f.order_id = service_notifications.order_id
+            )
+       )`;
+  }
+  // usage90
+  return `EXISTS (
          SELECT 1 FROM orders o
           WHERE o.id = service_notifications.order_id
             AND o.kind = 'purchase' AND o.state = 'completed'
             AND o.pasarguard_username IS NOT NULL
             AND (o.service_expires_at IS NULL
                  OR julianday(o.service_expires_at) > julianday(?6))
+            AND NOT EXISTS (
+              SELECT 1 FROM free_test_claims f
+               WHERE f.order_id = service_notifications.order_id
+            )
        )`;
 }
 
@@ -75,6 +114,8 @@ function eligibilitySql(kind: NoticeKind): string {
  * single notice fires on the first sweep that finds the service inside the
  * window — 3d OR 2d, whichever check reaches first, and never a second one).
  * A 1-minute SQL slack keeps float noise from delaying; handler gating is exact.
+ * Phase 15: claimed test orders are excluded here (and at the fused claim) —
+ * the free test has its own dedicated notice, never the paid expiry set.
  */
 export async function listExpiryCandidates(
   db: D1Database,
@@ -94,6 +135,9 @@ export async function listExpiryCandidates(
           AND julianday(o.service_expires_at)
               <= julianday(?1) + ?2 + 1.0 / 1440.0
           AND NOT EXISTS (
+            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id
+          )
+          AND NOT EXISTS (
             SELECT 1 FROM service_notifications sn
              WHERE sn.order_id = o.id AND sn.kind = 'expiring'
                AND ( sn.status IN ('sent','skipped','failed')
@@ -109,10 +153,54 @@ export async function listExpiryCandidates(
 }
 
 /**
+ * Phase 15: the free test's dedicated leg — completed CLAIMED orders whose
+ * expiry falls inside the next 2 hours, without a settled 'free_test_expiring'
+ * notice. Mirror image of the paid expiry query (same lease/staleness
+ * semantics, EXISTS on free_test_claims instead of NOT EXISTS); pure D1
+ * gating, the panel is never read for this send.
+ */
+export async function listFreeTestExpiryCandidates(
+  db: D1Database,
+  nowIso: string,
+  limit: number,
+): Promise<NoticeCandidate[]> {
+  const result = await db
+    .prepare(
+      `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
+              o.service_expires_at, o.pasarguard_username, o.selections
+         FROM orders o
+         JOIN customers c ON c.id = o.customer_id
+        WHERE o.kind = 'purchase'
+          AND o.state = 'completed'
+          AND o.service_expires_at IS NOT NULL
+          AND julianday(o.service_expires_at) > julianday(?1)
+          AND julianday(o.service_expires_at)
+              <= julianday(?1) + ?2 / 24.0 + 1.0 / 1440.0
+          AND EXISTS (
+            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM service_notifications sn
+             WHERE sn.order_id = o.id AND sn.kind = 'free_test_expiring'
+               AND ( sn.status IN ('sent','skipped','failed')
+                  OR (sn.status = 'sending'
+                      AND julianday(sn.updated_at) > julianday(?1) - ?4 / 1440.0) )
+          )
+        ORDER BY o.service_expires_at ASC
+        LIMIT ?3`,
+    )
+    .bind(nowIso, FREE_TEST_NOTICE_HOURS, limit, NOTICE_STALE_MINUTES)
+    .all<NoticeCandidate>();
+  return result.results;
+}
+
+/**
  * Completed, panel-addressed services still due for at least one usage poll:
  * no settled row, no fresh (non-stale) 'sending' lease owned by a
  * concurrent/stuck run, and not polled within the backoff window. Soonest
  * expiring first, id as the deterministic tiebreaker.
+ * Phase 15: claimed test orders never take usage polls (their panel budget
+ * is 100 MB for a day — the test gets the dedicated expiry notice instead).
  */
 export async function listUsageCandidates(
   db: D1Database,
@@ -130,6 +218,9 @@ export async function listUsageCandidates(
           AND o.pasarguard_username IS NOT NULL
           AND (o.service_expires_at IS NULL
                OR julianday(o.service_expires_at) > julianday(?1))
+          AND NOT EXISTS (
+            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id
+          )
           AND NOT EXISTS (
             SELECT 1 FROM service_notifications sn
              WHERE sn.order_id = o.id AND sn.kind = 'usage90'
@@ -191,7 +282,11 @@ export async function claimNotice(
       opts.orderId,
       opts.kind,
       opts.nowIso,
-      ...(opts.kind === 'expiring' ? [EXPIRY_NOTICE_DAYS] : []),
+      ...(opts.kind === 'expiring'
+        ? [EXPIRY_NOTICE_DAYS]
+        : opts.kind === 'free_test_expiring'
+          ? [FREE_TEST_NOTICE_HOURS / 24]
+          : []),
     )
     .run();
   return changeCount(updated) > 0;

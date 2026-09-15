@@ -50,15 +50,22 @@ test('phase2 loop: start → buy → name → volume step → replay → back', 
   // added wallet + invite; Phase 10 added the language selector, Phase 11 the
   // connection guide, and the support split (🆘 direct + 🎫 ticket) → 10 buttons).
   // Phase 8A: it is a REAL Reply Keyboard.
+  // Phase 15: a brand-new user's FIRST-ever /start additionally receives the
+  // one-time free-test offer as a SEPARATE bubble (menu bubble stays #0).
   stub.reset();
   await dispatch(messageUpdate('/start', 11));
-  assert.equal(sendCalls().length, 1);
-  const kb = sendCalls()[0]?.payload['reply_markup'] as {
+  const startBubbles = sendCalls();
+  assert.equal(startBubbles.length, 2);
+  const kb = startBubbles[0]?.payload['reply_markup'] as {
     keyboard: { text: string }[][];
     resize_keyboard?: boolean;
   };
   assert.equal(kb.keyboard.flat().length, 10);
   assert.equal(kb.resize_keyboard, true);
+  assert.ok(
+    String(startBubbles[1]?.text).includes('🎁'),
+    'first-ever /start carries the free-test offer bubble',
+  );
   const customerCount = () =>
     (sqlite.prepare('SELECT COUNT(*) AS n FROM customers').get() as { n: number }).n;
   assert.equal(customerCount(), 1);

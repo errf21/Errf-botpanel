@@ -45,6 +45,8 @@ export interface NewOrderFields {
   initialState?: 'pending_payment' | 'approved';
   /** Phase 7: 'wallet' when the order was paid from the balance. */
   verifiedBy?: string | null;
+  /** Phase 15: audit-event override for born-approved non-wallet orders. */
+  initialEvent?: string;
 }
 
 export async function insertOrderWithEvent(
@@ -53,7 +55,7 @@ export async function insertOrderWithEvent(
 ): Promise<void> {
   const initial = order.initialState ?? 'pending_payment';
   const createdEvent =
-    initial === 'approved' ? 'order_created_wallet_paid' : 'order_created';
+    order.initialEvent ?? (initial === 'approved' ? 'order_created_wallet_paid' : 'order_created');
   await db.batch([
     db
       .prepare(

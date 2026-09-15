@@ -67,6 +67,7 @@ friendly "temporarily unavailable" (catalog/pricing) or degrades to disabled
 | `wallet` | 1 | `src/catalog/wallet.ts` | `enabled,max_credit_irt,max_debit_irt` | Wallet kill switch + per-op caps. |
 | `referral` | 1 | `src/catalog/referral.ts` | `enabled,reward_percent,max_rewards_per_referrer` | Referral kill switch + reward% + lifetime cap per referrer. |
 | `sales` | 1 (`0013`) | `src/catalog/sales.ts` | `stopped:boolean` | **Fail-open** commercial stop switch. See [Pricing](pricing.md). |
+| `free_test` | 1 (`0014`) | `src/catalog/freeTest.ts` | `enabled,volume_mb,duration_days,device_count` | **Fail-CLOSED** one-time free test spec (`volume_mb` 1..100000, `duration_days` 1..366, `device_count` 1..10000). Hidden/malformed ⇒ no offers, claims refused, zero writes. Once-ever enforcement is the `free_test_claims` PK, NOT this doc. The sales stop also gates claims. |
 | `business_settings` | 1 | *(none reads it)* | `{"schema":1}` | Dormant/reserved placeholder — **no code reads it**. |
 
 ### Editing settings documents

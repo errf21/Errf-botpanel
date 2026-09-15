@@ -23,6 +23,7 @@ import { isValidOrderId } from '../lib/validate.ts';
 import { setSession, clearSession } from '../db/states.ts';
 import { findActiveRenewalForService, getOwnedService } from '../db/orders.ts';
 import type { OrderRow } from '../db/orders.ts';
+import { isFreeTestOrder } from '../db/freeTest.ts';
 import { provisionOrder } from '../provision/provision.ts';
 import { getOrderById, findOrderByIdempotencyKey } from '../db/orders.ts';
 
@@ -70,6 +71,12 @@ async function renewableService(
   const service = await getOwnedService(ctx.db, ctx.customerId, serviceOrderId);
   if (!service) {
     return { ok: false, toast: ctx.ui.t.serviceNotFound, clearSession: true };
+  }
+  // Phase 15: a free test is never renewable — enforced from the claims table
+  // (DB-authoritative), so a forged/hand-edited selections blob can't change
+  // the class. The renew button is already hidden in the detail keyboard.
+  if (await isFreeTestOrder(ctx.db, service.id)) {
+    return { ok: false, toast: ctx.ui.t.renewNotForFreeTest };
   }
   const active = await findActiveRenewalForService(ctx.db, service.id);
   if (active !== null) {

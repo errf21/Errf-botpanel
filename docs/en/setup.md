@@ -90,7 +90,7 @@ Order matters: **migrate before (or with) deploy**, then register the webhook
 only when the Worker + DB are healthy.
 
 ```bash
-npx wrangler d1 migrations list telbot-db --remote   # confirm pending = 0001..0013
+npx wrangler d1 migrations list telbot-db --remote   # confirm pending = 0001..0014
 npx wrangler d1 migrations apply telbot-db --remote
 npm run deploy                                        # = wrangler deploy
 npx wrangler tail                                     # optional: watch logs

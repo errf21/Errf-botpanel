@@ -131,7 +131,9 @@ test('NO auto-detect: an en-client newcomer still gets Persian, hint stays displ
   const hero = freshUser('nodetect', 'en-US');
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
-  const welcome = lastBubble(hero.id);
+  // Phase 15: the newcomer's LAST bubble is the free-test offer; the language
+  // under test lives on the FIRST (welcome+menu) bubble.
+  const welcome = sendsTo(hero.id)[0]!;
   assert.ok(String(welcome.text).includes('درود'), 'fa is the default for everyone');
   const labels = (replyKbOf(welcome.payload)?.keyboard ?? []).flat().map((b) => b.text);
   assert.ok(labels.includes(fa.menuBuy));

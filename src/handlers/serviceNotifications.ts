@@ -5,7 +5,10 @@
  *  1. expiring — pure D1 bookkeeping (service_expires_at is authoritative
  *     local record, forward-only); the 3-day window is evaluated locally;
  *     the panel is NEVER required for this leg.
- *  2. usage90 — needs one live panel read per service (used vs total bytes);
+ *  2. Phase 15 free-test expiry — a dedicated once-only notice for a claimed
+ *     test order in its final 2 hours (see the leg below); the paid legs
+ *     structurally skip claimed orders so these never cross over.
+ *  3. usage90 — needs one live panel read per service (used vs total bytes);
  *     strictly bounded: ≤ USAGE_CHECK_LIMIT GETs per run + ≥ 60-min
  *     per-service backoff. Fail-closed when the panel is unconfigured.
  *
@@ -19,7 +22,7 @@
  * never loop. Telegram delivery success is detected the same way Phase 7
  * announcements do: a non-null send result.
  */
-import type { Env, TelegramApiLike } from '../types.ts';
+import type { Env, TelegramApiLike, NoticeKind } from '../types.ts';
 import { TelegramApi } from '../telegram/api.ts';
 import { loadPanelConfig, PasarGuardClient } from '../pasarguard/client.ts';
 import { fa } from '../telegram/texts.ts';
@@ -29,12 +32,14 @@ import { GB_BYTES } from '../provision/provision.ts';
 import {
   EXPIRY_NOTICE_DAYS,
   EXPIRY_SWEEP_LIMIT,
+  FREE_TEST_NOTICE_HOURS,
   USAGE_CHECK_LIMIT,
   USAGE_THRESHOLD_RATIO,
   bookSent,
   claimNotice,
   ensurePending,
   listExpiryCandidates,
+  listFreeTestExpiryCandidates,
   listUsageCandidates,
   markSkipped,
   releaseFailedSend,
@@ -47,6 +52,8 @@ const DAY_MS = 86_400_000;
 export interface ServiceNoticeSweepResult {
   expirySent: number;
   usageSent: number;
+  /** Phase 15: free-test dedicated expiry notices (own 2h window, paid legs skip tests). */
+  freeTestSent: number;
   /** Panel answered "this service is gone / usage terminal" (settled). */
   skipped: number;
   /** Claims won whose Telegram send failed (already returned to retry). */
@@ -59,6 +66,14 @@ export function expiryNoticeDue(expiresIso: string | null, nowMs: number): boole
   const expires = Date.parse(expiresIso);
   if (!Number.isFinite(expires) || !Number.isFinite(nowMs)) return false;
   return expires > nowMs && expires - nowMs <= EXPIRY_NOTICE_DAYS * DAY_MS;
+}
+
+/** Exact gate for the free-test leg: the 2-hour pre-expiry window only. */
+export function freeTestExpiryDue(expiresIso: string | null, nowMs: number): boolean {
+  if (expiresIso === null) return false;
+  const expires = Date.parse(expiresIso);
+  if (!Number.isFinite(expires) || !Number.isFinite(nowMs)) return false;
+  return expires > nowMs && expires - nowMs <= FREE_TEST_NOTICE_HOURS * 3_600_000;
 }
 
 export type UsageDecision =
@@ -120,7 +135,7 @@ async function sendAndBook(
   db: D1Database,
   api: TelegramApiLike,
   row: NoticeCandidate,
-  kind: 'usage90' | 'expiring',
+  kind: NoticeKind,
   nowIso: string,
   text: string,
 ): Promise<'sent' | 'failed'> {
@@ -157,6 +172,7 @@ export async function runServiceNotificationSweep(
   const result: ServiceNoticeSweepResult = {
     expirySent: 0,
     usageSent: 0,
+    freeTestSent: 0,
     skipped: 0,
     sendFailed: 0,
   };
@@ -185,6 +201,45 @@ export async function runServiceNotificationSweep(
       const outcome = await sendAndBook(db, api, row, 'expiring', nowIso, text);
       if (outcome === 'sent') {
         result.expirySent += 1;
+      } else {
+        result.sendFailed += 1;
+        console.error(`service_notice_send_failed orderId=${row.order_id.slice(0, 32)}`);
+      }
+    } catch {
+      console.error(`service_notice_row_failed orderId=${row.order_id.slice(0, 32)}`);
+    }
+  }
+
+  /* ———— leg 1b: free-test expiry (Phase 15, pure D1, never the panel) ————
+   * A dedicated, once-only notice ~2h before the test's expiry. Fully
+   * separate kind/PK row from the paid set, and the paid legs structurally
+   * skip claimed orders, so a test never double-notifies and a paid service
+   * never sees this copy. Same lease/claim/book mechanics as the other legs. */
+  let freeTestCandidates: NoticeCandidate[] = [];
+  try {
+    freeTestCandidates = await listFreeTestExpiryCandidates(db, nowIso, EXPIRY_SWEEP_LIMIT);
+  } catch {
+    console.error('service_notice_freetest_query_failed');
+  }
+  for (const row of freeTestCandidates) {
+    try {
+      if (row.service_expires_at === null) continue;
+      if (!freeTestExpiryDue(row.service_expires_at, nowMs)) continue;
+      await ensurePending(db, row.order_id, 'free_test_expiring');
+      if (
+        !(await claimNotice(db, { orderId: row.order_id, kind: 'free_test_expiring', nowIso }))
+      ) {
+        continue; // overlapping run won, or eligibility changed
+      }
+      const ui = uiFor(row.language);
+      const text = ui.t.freeTestExpiryNotice(
+        noticeServiceName(row.selections, ui.t.noticeServiceFallback),
+        ui.f.remainingUntil(row.service_expires_at, nowMs),
+        ui.f.dateTime(row.service_expires_at),
+      );
+      const outcome = await sendAndBook(db, api, row, 'free_test_expiring', nowIso, text);
+      if (outcome === 'sent') {
+        result.freeTestSent += 1;
       } else {
         result.sendFailed += 1;
         console.error(`service_notice_send_failed orderId=${row.order_id.slice(0, 32)}`);

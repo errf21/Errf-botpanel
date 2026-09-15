@@ -21,12 +21,15 @@ import type { Ui } from '../telegram/i18n.ts';
 import { loadRenewalConfig, type RenewalConfig } from '../catalog/renewal.ts';
 import { isSalesStopped } from '../catalog/sales.ts';
 import { loadPanelConfig, PasarGuardClient, type PanelUser } from '../pasarguard/client.ts';
-import { backToMenuKeyboard, serviceDetailKeyboard, servicesListKeyboard } from '../telegram/menu.ts';
+import { backToMenuKeyboard, freeTestKeyboard, serviceDetailKeyboard, servicesListKeyboard } from '../telegram/menu.ts';
 import { tgEscapeHtml } from '../telegram/format.ts';
+import { freeTestEmptyStateOffer } from './freeTest.ts';
 
 const SERVICES_LIMIT = 10;
 const DAY_MS = 86_400_000;
 const GB_BYTES = 1_000_000_000;
+/** Phase 15: free-test volumes are strictly below the 1 GB ladder floor. */
+const MB_BYTES = 1_000_000;
 const DEFAULT_NEAR_EXPIRY_DAYS = 7;
 
 export interface ServiceSnapshot {
@@ -34,6 +37,10 @@ export interface ServiceSnapshot {
   volumeGb: number | null;
   deviceCount: number | null;
   durationDays: number | null;
+  /** Phase 15: byte-based volume of a free-test order (null = paid service). */
+  volumeMb: number | null;
+  /** Phase 15: authoritative class marker from the immutable snapshot. */
+  freeTest: boolean;
 }
 
 export function serviceSnapshotData(order: OrderRow): ServiceSnapshot {
@@ -56,6 +63,8 @@ export function serviceSnapshotData(order: OrderRow): ServiceSnapshot {
     volumeGb: num('volume_gb'),
     deviceCount: num('device_count'),
     durationDays: num('duration_days'),
+    volumeMb: num('volume_mb'),
+    freeTest: value['free_test'] === true,
   };
 }
 
@@ -95,6 +104,12 @@ function gbDisplay(ui: Ui, bytes: number | null): string {
   return ui.f.digits(Math.round((bytes / GB_BYTES) * 10) / 10);
 }
 
+/** Phase 15: test-sized traffic must never render as «0.1 گیگ» rounding. */
+function mbDisplay(ui: Ui, bytes: number | null): string {
+  if (bytes === null) return ui.t.accountNone;
+  return ui.f.digits(Math.round((bytes / MB_BYTES) * 100) / 100);
+}
+
 export async function loadRenewalViewConfig(db: D1Database): Promise<RenewalConfig> {
   const loaded = await loadRenewalConfig(db);
   return loaded.ok
@@ -104,12 +119,24 @@ export async function loadRenewalViewConfig(db: D1Database): Promise<RenewalConf
 
 /** `menu:services` — the customer's own services, rendered from the DB. */
 export async function showMyServices(ctx: UpdateContext): Promise<void> {
-  const { t, f } = ctx.ui;
+  const { t } = ctx.ui;
   const [rows, renewal] = await Promise.all([
     listServicesForCustomer(ctx.db, ctx.customerId, SERVICES_LIMIT),
     loadRenewalViewConfig(ctx.db),
   ]);
   if (rows.length === 0) {
+    // Phase 15: a customer with nothing yet is where the free test belongs.
+    // Eligibility (enabled, not stopped, claim still unused) is decided
+    // inside; a miss renders the plain empty state exactly as before.
+    const offer = await freeTestEmptyStateOffer(ctx);
+    if (offer !== null) {
+      await ctx.api.sendMessage(
+        ctx.chatId,
+        `${t.servicesEmpty}\n\n${offer}`,
+        freeTestKeyboard(ctx.ui),
+      );
+      return;
+    }
     await ctx.api.sendMessage(ctx.chatId, t.servicesEmpty, backToMenuKeyboard(ctx.ui));
     return;
   }
@@ -199,7 +226,13 @@ async function renderServiceDetail(
   if (service.pasarguard_username !== null) {
     lines.push(t.svcPanelUsername(service.pasarguard_username));
   }
-  if (snapshot.volumeGb !== null) lines.push(t.summaryVolume(snapshot.volumeGb));
+  if (snapshot.freeTest && snapshot.volumeMb !== null) {
+    // Phase 15: a 100 MB test would render as a misleading «0 گیگ» — label it
+    // in its own unit. Display only; the panel cap is the authority.
+    lines.push(t.summaryVolumeMb(snapshot.volumeMb));
+  } else if (snapshot.volumeGb !== null) {
+    lines.push(t.summaryVolume(snapshot.volumeGb));
+  }
   if (snapshot.deviceCount !== null) lines.push(t.summaryDevices(snapshot.deviceCount));
   if (service.service_created_at !== null) {
     lines.push(t.svcCreated(f.date(service.service_created_at)));
@@ -210,14 +243,20 @@ async function renderServiceDetail(
     lines.push(left > 0 ? t.svcDaysLeft(left) : t.svcExpiredDaysAgo(Math.max(0, -left)));
   }
   if (panelUser !== null) {
-    lines.push(t.svcUsage(gbDisplay(ctx.ui, panelUser.usedTraffic), gbDisplay(ctx.ui, panelUser.dataLimit)));
-    // Phase 9 audit: remaining volume, explicit (panel bytes, display GB).
+    // Phase 15: unit-correct copy for the test class (100 MB renders as
+    // «۱۰۰ مگابایت», never a misleading rounded-GB number).
+    lines.push(
+      snapshot.freeTest
+        ? t.svcUsageMb(mbDisplay(ctx.ui, panelUser.usedTraffic), mbDisplay(ctx.ui, panelUser.dataLimit))
+        : t.svcUsage(gbDisplay(ctx.ui, panelUser.usedTraffic), gbDisplay(ctx.ui, panelUser.dataLimit)),
+    );
+    // Phase 9 audit: remaining volume, explicit (panel bytes, display unit).
     if (panelUser.usedTraffic !== null && panelUser.dataLimit !== null) {
-      lines.push(
-        t.svcRemaining(
-          f.digits(Math.max(0, Math.round(((panelUser.dataLimit - panelUser.usedTraffic) / GB_BYTES) * 10) / 10)),
-        ),
+      const per = snapshot.freeTest ? MB_BYTES : GB_BYTES;
+      const remaining = f.digits(
+        Math.max(0, Math.round(((panelUser.dataLimit - panelUser.usedTraffic) / per) * 10) / 10),
       );
+      lines.push(snapshot.freeTest ? t.svcRemainingMb(remaining) : t.svcRemaining(remaining));
     }
   } else if (service.pasarguard_username !== null) {
     // Degraded path (snapshot render): point at the live-refresh affordance
@@ -242,7 +281,10 @@ async function renderServiceDetail(
   return {
     text: lines.join('\n'),
     keyboard: serviceDetailKeyboard(ctx.ui, service.id, {
-      canRenew: renewal.enabled && !salesStopped && active === null,
+      // Phase 15: a free test can never be renewed (one dashboard, but the
+      // 100 MB/1-day config is not sellable). UI hide + server authority in
+      // renewableService (renewal.ts) — the claims table decides.
+      canRenew: renewal.enabled && !salesStopped && active === null && !snapshot.freeTest,
       serviceUrl: service.subscription_url,
     }),
     live: panelUser !== null,

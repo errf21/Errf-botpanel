@@ -41,7 +41,7 @@ intended way). The safe universal order:
 
 ```bash
 npx wrangler d1 migrations list  telbot-db --remote    # inspect pending
-npx wrangler d1 migrations apply telbot-db --remote    # apply 0001..0013 in order
+npx wrangler d1 migrations apply telbot-db --remote    # apply 0001..0014 in order
 npx wrangler d1 migrations list  telbot-db --remote    # confirm: no pending
 npm run deploy                                         # THEN deploy the Worker
 ```

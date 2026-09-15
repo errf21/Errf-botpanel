@@ -9,6 +9,7 @@ import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { showPricing } from './pricingAdmin.ts';
 import { showSalesStatus } from './salesAdmin.ts';
+import { maybeOfferFreeTestOnStart } from './freeTest.ts';
 import { parseCommand } from '../lib/validate.ts';
 import { getSession } from '../db/states.ts';
 
@@ -38,6 +39,13 @@ export async function handleCommand(
         if (referrer !== null) void notifyReferralJoined(ctx, referrer);
       }
       await showMenu(ctx);
+      // Phase 15: the one-time free-test offer rides a SEPARATE bubble on the
+      // FIRST-EVER /start only (the menu's Reply Keyboard can't also carry an
+      // inline CTA — Telegram allows one markup per message, and the main
+      // menu shape is a pinned contract). Fail-closed and claim-aware inside.
+      if (ctx.firstEverStart) {
+        await maybeOfferFreeTestOnStart(ctx);
+      }
       return;
     }
     case 'help':

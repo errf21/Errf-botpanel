@@ -18,7 +18,8 @@ TELBOTV2 is a self-contained sales office for a VPN operation:
   working subscription link — all inside Telegram, in **Persian or English**.
 - The bot prices every order with a live, admin-editable pricing model, provisions the
   service on the PasarGuard panel automatically after payment approval, handles
-  renewals, wallets, referrals, support tickets, announcements, usage/expiry notices,
+  renewals, wallets, referrals, a one-time free test (100 MB / 1 day, once EVER per
+  user, DB-enforced), support tickets, announcements, usage/expiry notices,
   and a connection guide — with an audit trail behind every money decision.
 
 **Automated:** catalog & order placement flows, pricing, idempotent order creation,
@@ -51,6 +52,7 @@ Full details: [Architecture](docs/en/architecture.md) · [معماری](docs/fa/
 | My Services (live panel status + local snapshot), renewals | ✅ | [Features](docs/en/features.md) |
 | Wallet (ledger-based, guarded credit/debit, full/partial order payment) | ✅ | [Payment & Wallet](docs/en/payment-wallet.md) |
 | Referrals (first-touch attribution, capped exactly-once payouts) | ✅ | [Payment & Wallet](docs/en/payment-wallet.md) |
+| One-time free test (100 MB / 1 day, once EVER per user — `free_test_claims` PK wall, byte-based provisioning, never renewable) | ✅ | [Features](docs/en/features.md) |
 | Support tickets + chunked resumable broadcast announcements | ✅ | [Admin](docs/en/admin.md) |
 | Payment-review reminders + usage-90%/expiry service notices (cron sweeps) | ✅ | [Architecture](docs/en/architecture.md) |
 | Sales stop / resume switch `/sales` (commercial kill switch) | ✅ | [Pricing](docs/en/pricing.md) |
@@ -64,7 +66,7 @@ git clone <this-repo-url> && cd telbotv2
 npm install
 cp .dev.vars.example .dev.vars        # fill with LOCAL dev secrets — never commit
 npx wrangler d1 create telbot-db      # paste database_id into wrangler.jsonc
-npm run db:migrate:local              # apply migrations 0001→0013 to the local DB
+npm run db:migrate:local              # apply migrations 0001→0014 to the local DB
 npx wrangler secret put TELEGRAM_BOT_TOKEN        # (and the other 3 secrets)
 npm run typecheck && npm test         # must pass before anything else
 npm run dev                           # http://localhost:8787/health
@@ -105,7 +107,7 @@ src/                TypeScript Worker (no framework, minimal deps)
 ├─ pasarguard/      typed REST client (X-Api-Key, timeouts, error kinds)
 ├─ provision/       THE provisioning orchestrator (create + extend, idempotent)
 └─ telegram/        api client, keyboards, en/fa text bundles, i18n boundary
-migrations/         0001→0013 — strict linear order, additive/seeded (enum
+migrations/         0001→0014 — strict linear order, additive/seeded (enum
                     changes shipped as CHECK-rebuild migrations)
 tests/              node --test: unit + e2e against in-memory SQLite D1 shim
 docs/en/ docs/fa/   full bilingual documentation (this site)
