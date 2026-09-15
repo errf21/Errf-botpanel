@@ -6,6 +6,7 @@ import {
   parseServiceCallback,
   parseTicketCallback,
   parseAnnounceCallback,
+  parsePanelDeleteCallback,
 } from '../lib/validate.ts';
 import {
   CB,
@@ -54,6 +55,7 @@ import {
 import { runAnnouncementPass, showAnnouncements } from './announcements.ts';
 import { handlePricingCallback } from './pricingAdmin.ts';
 import { handleSalesCallback } from './salesAdmin.ts';
+import { handlePanelDeleteCallback } from './panelDelete.ts';
 import { cancelToMenu } from './commands.ts';
 import { claimFreeTestTap } from './freeTest.ts';
 
@@ -154,6 +156,18 @@ export async function handleCallback(
       messageChatId,
       messageId,
     );
+    return;
+  }
+
+  // ———— Phase 16: admin panel-service delete (explicit confirm, admin-gated
+  // inside the handler too — the router only admits the strict vocabulary) ————
+  if (data.startsWith('pdel:')) {
+    const parsed = parsePanelDeleteCallback(data);
+    if (!parsed || !ctx.isAdmin) {
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
+      return;
+    }
+    await handlePanelDeleteCallback(ctx, parsed, callbackQueryId, messageChatId, messageId);
     return;
   }
 

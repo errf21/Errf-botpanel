@@ -11,7 +11,13 @@
 
 export const FREE_TEST_SCHEMA = 1;
 
-/** 1 MB = 10^6 bytes on the panel wire (SI, matching GB_BYTES = 10^9). */
+/**
+ * 1 MB = 10^6 bytes on the panel wire. Intentionally still SI (10^6) while
+ * the paid GB conversion moved to binary GiB (provision.ts GB_BYTES = 2^30):
+ * the free test is a volume cap, not a ladder "GB" the customer sees, so it
+ * keeps its exact historical 100 MB = 100_000_000 bytes. Do NOT rebase to
+ * 2^20 — the P15 payload assertions pin it.
+ */
 export const MB_BYTES = 1_000_000;
 
 export interface FreeTestConfig {

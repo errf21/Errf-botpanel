@@ -13,6 +13,7 @@ import {
   findActiveRenewalForService,
   getOwnedService,
   listServicesForCustomer,
+  reconcilePanelGone,
   type OrderRow,
   type ServiceRow,
 } from '../db/orders.ts';
@@ -21,13 +22,15 @@ import type { Ui } from '../telegram/i18n.ts';
 import { loadRenewalConfig, type RenewalConfig } from '../catalog/renewal.ts';
 import { isSalesStopped } from '../catalog/sales.ts';
 import { loadPanelConfig, PasarGuardClient, type PanelUser } from '../pasarguard/client.ts';
+// Shared with the provisioning/payload layer: ONE GB↔bytes truth (2^30) so
+// the usage display matches what the panel shows, never a split unit.
+import { GB_BYTES } from '../provision/provision.ts';
 import { backToMenuKeyboard, freeTestKeyboard, serviceDetailKeyboard, servicesListKeyboard } from '../telegram/menu.ts';
 import { tgEscapeHtml } from '../telegram/format.ts';
 import { freeTestEmptyStateOffer } from './freeTest.ts';
 
 const SERVICES_LIMIT = 10;
 const DAY_MS = 86_400_000;
-const GB_BYTES = 1_000_000_000;
 /** Phase 15: free-test volumes are strictly below the 1 GB ladder floor. */
 const MB_BYTES = 1_000_000;
 const DEFAULT_NEAR_EXPIRY_DAYS = 7;
@@ -199,6 +202,7 @@ async function renderServiceDetail(
 
   const localExpiry = effectiveExpiryIso(service);
   let panelUser: PanelUser | null = null;
+  let panelGone = false;
   const attemptedPanel = live && service.pasarguard_username !== null;
   if (attemptedPanel && service.pasarguard_username !== null) {
     const panel = loadPanelConfig(ctx.env);
@@ -207,6 +211,14 @@ async function renderServiceDetail(
         service.pasarguard_username,
       );
       if (result.ok && result.data !== null) panelUser = result.data;
+      else if (!result.ok && result.kind === 'not_found') {
+        // Phase 16: the panel says this service is GONE (deleted directly
+        // there, or by an admin command elsewhere). Reconcile the D1 row to
+        // the terminal `panel_deleted` disposition on the spot — guarded,
+        // exactly-once, history untouched — and render the honest state.
+        await reconcilePanelGone(ctx.db, service, 'svc-refresh');
+        panelGone = true;
+      }
     }
   }
 
@@ -218,9 +230,11 @@ async function renderServiceDetail(
   const snapshot = serviceSnapshotData(service);
   const lines: string[] = [t.svcDetailHeader(esc(snapshot.name ?? t.accountNone))];
   lines.push(
-    panelUser !== null && panelUser.status !== null
-      ? esc(t.panelStatus(panelUser.status))
-      : statusLineFor(ctx.ui, expiresIso, renewal.nearExpiryDays),
+    panelGone
+      ? esc(t.svcPanelGone)
+      : panelUser !== null && panelUser.status !== null
+        ? esc(t.panelStatus(panelUser.status))
+        : statusLineFor(ctx.ui, expiresIso, renewal.nearExpiryDays),
   );
   lines.push(t.svcId(service.id));
   if (service.pasarguard_username !== null) {
@@ -237,12 +251,17 @@ async function renderServiceDetail(
   if (service.service_created_at !== null) {
     lines.push(t.svcCreated(f.date(service.service_created_at)));
   }
-  lines.push(t.svcExpires(expiryDateTimeDisplay(ctx.ui, expiresIso)));
-  if (expiresIso !== null) {
-    const left = Math.ceil((Date.parse(expiresIso) - Date.now()) / DAY_MS);
-    lines.push(left > 0 ? t.svcDaysLeft(left) : t.svcExpiredDaysAgo(Math.max(0, -left)));
+  if (!panelGone) {
+    lines.push(t.svcExpires(expiryDateTimeDisplay(ctx.ui, expiresIso)));
+    if (expiresIso !== null) {
+      const left = Math.ceil((Date.parse(expiresIso) - Date.now()) / DAY_MS);
+      lines.push(left > 0 ? t.svcDaysLeft(left) : t.svcExpiredDaysAgo(Math.max(0, -left)));
+    }
   }
-  if (panelUser !== null) {
+  if (panelGone) {
+    // Phase 16: gone services show no usage, no expiry countdown and no dead
+    // subscription link — the row stays only as reconciled history.
+  } else if (panelUser !== null) {
     // Phase 15: unit-correct copy for the test class (100 MB renders as
     // «۱۰۰ مگابایت», never a misleading rounded-GB number).
     lines.push(
@@ -263,7 +282,7 @@ async function renderServiceDetail(
     // instead of silently dropping the usage lines.
     lines.push(t.svcUsageHintSnapshot);
   }
-  if (service.subscription_url !== null) {
+  if (!panelGone && service.subscription_url !== null) {
     // Phase 8C: show the subscription URL as tap-to-copy inline code. The
     // value is panel-sourced, so HTML-escaping is also a correctness win.
     // Phase 9: name the panel page it opens (discovery only — no new page).
@@ -273,7 +292,7 @@ async function renderServiceDetail(
   if (active !== null) {
     lines.push(t.svcPendingRenewal(active.id.slice(0, 10)));
   }
-  if (attemptedPanel) {
+  if (attemptedPanel && !panelGone) {
     lines.push(panelUser !== null ? t.svcLiveNote : t.svcSnapshotNote);
   }
   if (!renewal.enabled) lines.push(t.renewDisabledNotice);
@@ -282,10 +301,11 @@ async function renderServiceDetail(
     text: lines.join('\n'),
     keyboard: serviceDetailKeyboard(ctx.ui, service.id, {
       // Phase 15: a free test can never be renewed (one dashboard, but the
-      // 100 MB/1-day config is not sellable). UI hide + server authority in
-      // renewableService (renewal.ts) — the claims table decides.
-      canRenew: renewal.enabled && !salesStopped && active === null && !snapshot.freeTest,
-      serviceUrl: service.subscription_url,
+      // 100 MB/1-day config is not sellable). Phase 16: a panel-deleted
+      // service can never be renewed either (server authority in
+      // renewableService + the getOwnedService filter both say the same).
+      canRenew: renewal.enabled && !salesStopped && active === null && !snapshot.freeTest && !panelGone,
+      serviceUrl: panelGone ? null : service.subscription_url,
     }),
     live: panelUser !== null,
     parseMode: asHtml ? 'HTML' : undefined,

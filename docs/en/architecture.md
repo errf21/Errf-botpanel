@@ -96,7 +96,9 @@ Buy taps → machine builds draft → checkout prices (integer engine, fail-clos
       winner notifies customer + refunds any applied wallet credit in the SAME batch
 → approved order: manual approve schedules provisionOrder via waitUntil:
    claim approved→provisioning (guarded, max_attempts in the claim itself) →
-   pre-check GET by-username → ADOPT existing or POST /api/user → verify →
+   pre-check GET by-username → ADOPT existing or POST /api/user (absolute
+   `expire` + GiB-exact `data_limit`) → read-back + expire verification
+   (one corrective PUT; fail CLOSED if unconfirmed) →
    completed + subscription_url → customer gets the link; failure → failed +
    admin push + /failed retry (same guarded claim against the cap).
 ```

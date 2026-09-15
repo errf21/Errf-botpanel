@@ -130,6 +130,7 @@ export async function listExpiryCandidates(
          JOIN customers c ON c.id = o.customer_id
         WHERE o.kind = 'purchase'
           AND o.state = 'completed'
+          AND o.panel_deleted_at IS NULL
           AND o.service_expires_at IS NOT NULL
           AND julianday(o.service_expires_at) > julianday(?1)
           AND julianday(o.service_expires_at)
@@ -172,6 +173,7 @@ export async function listFreeTestExpiryCandidates(
          JOIN customers c ON c.id = o.customer_id
         WHERE o.kind = 'purchase'
           AND o.state = 'completed'
+          AND o.panel_deleted_at IS NULL
           AND o.service_expires_at IS NOT NULL
           AND julianday(o.service_expires_at) > julianday(?1)
           AND julianday(o.service_expires_at)
@@ -215,6 +217,7 @@ export async function listUsageCandidates(
          JOIN customers c ON c.id = o.customer_id
         WHERE o.kind = 'purchase'
           AND o.state = 'completed'
+          AND o.panel_deleted_at IS NULL
           AND o.pasarguard_username IS NOT NULL
           AND (o.service_expires_at IS NULL
                OR julianday(o.service_expires_at) > julianday(?1))

@@ -29,6 +29,7 @@ import { fa } from '../telegram/texts.ts';
 import { FA_UI, uiFor } from '../telegram/i18n.ts';
 import { serviceNoticeKeyboard } from '../telegram/menu.ts';
 import { GB_BYTES } from '../provision/provision.ts';
+import { markPanelDeleted } from '../db/orders.ts';
 import {
   EXPIRY_NOTICE_DAYS,
   EXPIRY_SWEEP_LIMIT,
@@ -273,7 +274,15 @@ export async function runServiceNotificationSweep(
       if (!read.ok) {
         if (read.kind === 'not_found') {
           // Genuinely deleted on the panel: terminal, stops the poll loop.
+          // Phase 16: the same confirmed observation also reconciles the
+          // order row itself to the `panel_deleted` disposition (guarded,
+          // exactly-once — concurrent observers collapse).
           await markSkipped(db, { orderId: row.order_id, kind: 'usage90', nowIso });
+          await markPanelDeleted(db, {
+            orderId: row.order_id,
+            panelUsername: username,
+            via: 'system:notice-sweep',
+          });
           result.skipped += 1;
         } else {
           // Transient (network/5xx/auth): back off, retry a later run.

@@ -249,6 +249,28 @@ const en: Texts = {
   adminProvisionDone: (id: string) => `🔁 Retry outcome recorded\n🆔 ${id}`,
   adminProvisionStale: (id: string) => `ℹ️ Order ${id} has changed state; this button is no longer needed.`,
 
+  // ————— Phase 16: panel-service deletion (admin command, explicit confirm) —————
+  pdlUsage: '🗑 How to delete a panel service:\n/panel_del <panel username or 28-char order id>',
+  pdlNotFound: '🗑 No deletable service with that identifier (already deleted or never provisioned).',
+  pdlAlready: 'ℹ️ This service has already been deleted (panel_deleted).',
+  pdlCancelled: '↩️ Deletion cancelled; nothing changed.',
+  adminPdlConfirmHeader: (id: string) => `⚠️ Confirm deleting the service from the panel\n🆔 ${id}`,
+  adminPdlCustomer: (tgId: string) => `👤 Customer: ${tgId}`,
+  adminPdlWarning:
+    'This deletes the service on the panel and CANNOT be undone.\nOrder, payment and renewal history stays in the database; only the service becomes «panel_deleted».',
+  adminPdlDone: (id: string) =>
+    `✅ The service of order ${id} was deleted on the panel and booked as «panel_deleted».\nThe customer was notified.`,
+  adminPdlAlreadyGone: (id: string) =>
+    `✅ The service of order ${id} was already gone on the panel (manual delete); the database now says «panel_deleted» too.`,
+  adminPdlFailed: (id: string, reason: string) =>
+    `⚠️ Deleting the service of order ${id} failed.\n📝 ${reason}\nThe database was left untouched; you can retry.`,
+  pdlToastDone: '🗑 Deleted.',
+  pdlToastFailed: '❌ Deletion failed.',
+  serviceRevokedNotice: (name: string) =>
+    `🗑 The service «${name}» was removed from the panel by support.\n\nIf you believe this was a mistake, reach us via "🆘 Support" or "🎫 Open a ticket".`,
+  svcPanelGone: '🗑 This service no longer exists on the panel (it was deleted).',
+  serviceStatusDeleted: '🗑 Deleted from the panel',
+
   // ————— Phase 6: My Services + status + renewals —————
   servicesHeader: '📦 Your services',
   servicesEmpty: 'You don\'t have an active service yet.\nStart from "🛒 Buy a service" in the menu.',

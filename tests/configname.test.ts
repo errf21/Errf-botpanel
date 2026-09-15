@@ -98,7 +98,7 @@ test('randomConfigName: 1000 names — exactly 3 clean English words, all valid'
 
 const PANEL_KEY = 'PG-TEST-KEY-42';
 const PANEL_BASE = 'https://panel.test';
-const users = new Map<string, { id: string; username: string }>();
+const users = new Map<string, { id: string; username: string; expire: number }>();
 let panelSeq = 500;
 const scenario = {
   createError: null as { status: number; body: Record<string, string> } | null,
@@ -119,9 +119,16 @@ function panelRespond(request: PanelRequest): Response {
     const body = request.body ?? {};
     const username = String(body['username'] ?? '');
     if (users.has(username)) return Response.json({ detail: 'already exists' }, { status: 409 });
-    const record = { id: String(panelSeq++), username };
+    const record = { id: String(panelSeq++), username, expire: Number(body['expire'] ?? 0) };
     users.set(username, record);
     return Response.json({ data: { ...record, status: 'active', subscription_url: `/sub/${username}/LINK` } });
+  }
+  if (request.method === 'PUT' && request.path.startsWith('/api/user/by-username/')) {
+    const username = decodeURIComponent(request.path.slice('/api/user/by-username/'.length));
+    const user = users.get(username);
+    if (!user) return Response.json({ detail: 'Not Found' }, { status: 404 });
+    user.expire = Number((request.body ?? {})['expire'] ?? user.expire);
+    return Response.json({ data: { ...user, status: 'active', subscription_url: `/sub/${username}/LINK` } });
   }
   return Response.json({ detail: 'no route' }, { status: 404 });
 }

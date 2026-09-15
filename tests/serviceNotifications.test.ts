@@ -33,7 +33,8 @@ import {
 const here = fileURLToPath(new URL('.', import.meta.url));
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-const GB = 1_000_000_000;
+/** Binary GiB: the same divisor the panel and both display layers use. */
+const GB = 1_073_741_824;
 const PANEL_KEY = 'PG-SECRET-KEY-42';
 const PANEL_BASE = 'https://panel.test';
 
@@ -71,12 +72,19 @@ function panelRespond(request: PanelRequest): Response {
       username,
       status: String(body['status'] ?? 'active'),
       subscription_url: `/sub/${username}/SUBLINK`,
-      expire: Math.floor(Date.now() / 1000) + Number(body['expire_duration'] ?? 0),
+      expire: Number(body['expire'] ?? 0), // ABSOLUTE unix seconds — the 2026-09 wire contract
       data_limit: Number(body['data_limit'] ?? 0),
       used_traffic: 0,
     };
     users.set(username, record);
     return Response.json({ data: { ...record } });
+  }
+  if (request.method === 'PUT' && request.path.startsWith('/api/user/by-username/')) {
+    const username = decodeURIComponent(request.path.slice('/api/user/by-username/'.length));
+    const user = users.get(username);
+    if (!user) return Response.json({ detail: 'Not Found' }, { status: 404 });
+    user.expire = Number((request.body ?? {})['expire'] ?? user.expire);
+    return Response.json({ data: { ...user } });
   }
   return Response.json({ detail: 'no route' }, { status: 404 });
 }

@@ -34,6 +34,13 @@ const TICKET_CALLBACK_PATTERN = /^tsk:(rp|cl|vw):[0-9A-HJKMNP-TV-Z]{28}$/;
 /** Phase 7: announcement job control carries the announcement id (ULID). */
 const ANNOUNCE_CALLBACK_PATTERN = /^ann:(go|ct):[0-9A-HJKMNP-TV-Z]{28}$/;
 
+/**
+ * Phase 16: the admin panel-service delete needs an EXPLICIT confirmation —
+ * the `pdel:` namespace carries the target order id so a stale/forged tap can
+ * only ever address the service its confirmation card was minted for.
+ */
+const PANEL_DELETE_CALLBACK_PATTERN = /^pdel:(ok|no):[0-9A-HJKMNP-TV-Z]{28}$/;
+
 export function isValidCallbackData(data: unknown): data is string {
   return (
     typeof data === 'string' &&
@@ -41,7 +48,8 @@ export function isValidCallbackData(data: unknown): data is string {
       ADMIN_CALLBACK_PATTERN.test(data) ||
       SERVICE_CALLBACK_PATTERN.test(data) ||
       TICKET_CALLBACK_PATTERN.test(data) ||
-      ANNOUNCE_CALLBACK_PATTERN.test(data))
+      ANNOUNCE_CALLBACK_PATTERN.test(data) ||
+      PANEL_DELETE_CALLBACK_PATTERN.test(data))
   );
 }
 
@@ -164,6 +172,24 @@ export function parseAnnounceCallback(data: string): AnnounceCallback | null {
   if (!id || !ORDER_ID_PATTERN.test(id)) return null;
   if (action !== 'go' && action !== 'ct') return null;
   return { action, announcementId: id };
+}
+
+/* ———— Phase 16: admin panel-service delete (explicit confirm) ———— */
+
+export type PanelDeleteAction = 'ok' | 'no';
+
+export interface PanelDeleteCallback {
+  action: PanelDeleteAction;
+  orderId: string;
+}
+
+/** Parses ONLY data that already matched PANEL_DELETE_CALLBACK_PATTERN. */
+export function parsePanelDeleteCallback(data: string): PanelDeleteCallback | null {
+  if (!PANEL_DELETE_CALLBACK_PATTERN.test(data)) return null;
+  const [, action, orderId] = /^pdel:(\w+):(.+)$/.exec(data) ?? [];
+  if (!orderId || !ORDER_ID_PATTERN.test(orderId)) return null;
+  if (action !== 'ok' && action !== 'no') return null;
+  return { action, orderId };
 }
 
 export function isValidOrderId(value: unknown): value is string {

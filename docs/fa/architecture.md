@@ -88,8 +88,9 @@ WAITING_ANNOUNCE_TEXT, WAITING_ANNOUNCE_CONFIRM` (`src/types.ts:47-61`).
       برنده به مشتری اطلاع می‌دهد + برگشت اعتبار کیف پول در همان batch
 ← سفارش approved: تأییدِ ادمین، provisionOrder را روی waitUntil زمان‌بندی می‌کند:
    ادعای approved→provisioning (تک UPDATE با سقف تلاش در خودِ UPDATE) →
-   پیش‌بررسی GET by-username ← adoption سرویس موجود یا POST /api/user →
-   تأیید قرائتی → completed + subscription_url → لینک فوری برای مشتری؛
+   پیش‌بررسی GET by-username ← adoption سرویس موجود یا POST /api/user
+   (`expire` مطلق + بایت GiB) → تأیید قرائتی + سنجش انقضا (یک PUT ترمیم) →
+   completed + subscription_url → لینک فوری برای مشتری؛
    شکست ← failed + پوش ادمین با 🔁 + صف /failed (ادعا از حالت failed).
 ```
 

@@ -28,6 +28,15 @@ export interface OrderRow {
   provision_attempts: number;
   failure_reason: string | null;
   created_at: string;
+  /**
+   * Panel-service terminal state (Phase 16 admin delete + reconciliation):
+   * non-null `panel_deleted_at` IS the `panel_deleted` disposition — the
+   * panel service is gone, the order/payment history stays untouched, and no
+   * active-service surface may ever claim this row again.
+   */
+  panel_deleted_at: string | null;
+  /** 'admin:<telegram_id>' when an admin deleted it, 'system' on reconcile. */
+  panel_deleted_by: string | null;
 }
 
 export interface NewOrderFields {
@@ -342,7 +351,8 @@ export async function claimOrderForProvisioning(
           SET state = 'provisioning',
               provision_attempts = provision_attempts + 1,
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1 AND state = ?2 AND provision_attempts < ?3`,
+        WHERE id = ?1 AND state = ?2 AND provision_attempts < ?3
+          AND panel_deleted_at IS NULL`,
     )
     .bind(opts.orderId, opts.fromState, opts.maxAttempts)
     .run();
@@ -541,14 +551,15 @@ export async function failProvisionedOrder(
   return { ok: true, order: after };
 }
 
-/** failed orders, newest failures first — the admin retry queue. */
+/** failed orders, newest failures first — the admin retry queue.
+ *  Panel-deleted failures are terminal dispositions, never retryable. */
 export async function listOrdersFailed(
   db: D1Database,
   limit: number,
 ): Promise<OrderRow[]> {
   const result = await db
     .prepare(
-      `SELECT * FROM orders WHERE state = 'failed' ORDER BY updated_at DESC LIMIT ?1`,
+      `SELECT * FROM orders WHERE state = 'failed' AND panel_deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?1`,
     )
     .bind(limit)
     .all<OrderRow>();
@@ -580,7 +591,9 @@ const SERVICE_AGGREGATES = `(
       AND r.state IN ${ACTIVE_RENEWAL_STATES}
   ) AS active_renewals`;
 
-/** The customer's services: every completed purchase order. */
+/** The customer's services: every completed purchase order. A
+ *  panel-deleted row is terminal — listed nowhere, renewable via no path,
+ *  but its order/payment/audit history stays fully intact. */
 export async function listServicesForCustomer(
   db: D1Database,
   customerId: number,
@@ -591,6 +604,7 @@ export async function listServicesForCustomer(
       `SELECT o.*, ${SERVICE_AGGREGATES}
          FROM orders o
         WHERE o.customer_id = ?1 AND o.kind = 'purchase' AND o.state = 'completed'
+          AND o.panel_deleted_at IS NULL
         ORDER BY o.service_created_at DESC, o.created_at DESC
         LIMIT ?2`,
     )
@@ -599,7 +613,9 @@ export async function listServicesForCustomer(
   return result.results;
 }
 
-/** One owned completed-purchase service row, aggregates included. */
+/** One owned completed-purchase service row, aggregates included.
+ *  `panel_deleted_at IS NULL` makes every service-facing surface (detail,
+ *  refresh, renewal entry) refuse a deleted service with one choke point. */
 export async function getOwnedService(
   db: D1Database,
   customerId: number,
@@ -609,7 +625,8 @@ export async function getOwnedService(
     .prepare(
       `SELECT o.*, ${SERVICE_AGGREGATES}
          FROM orders o
-        WHERE o.id = ?1 AND o.customer_id = ?2 AND o.kind = 'purchase' AND o.state = 'completed'`,
+        WHERE o.id = ?1 AND o.customer_id = ?2 AND o.kind = 'purchase' AND o.state = 'completed'
+          AND o.panel_deleted_at IS NULL`,
     )
     .bind(orderId, customerId)
     .first<ServiceRow>();
@@ -698,4 +715,94 @@ export async function bookRenewalOnService(
     )
     .run();
   return true;
+}
+
+/* —— Phase 16: panel-service deletion (admin command + reconciliation) ———
+ * The panel is the service's real home; D1 keeps history forever. A deletion
+ * is therefore NEVER destructive to orders: it stamps the terminal
+ * `panel_deleted` disposition (panel_deleted_at/by + one audit event) on the
+ * completed purchase row after the panel reported the user gone. Every
+ * service-facing query (list/own/sweep/failed/claim) excludes stamped rows,
+ * so a deleted service can never be treated active, renewed, retried or
+ * re-provisioned again. Panel-deleted services whose D1 row is NOT yet
+ * stamped get reconciled by whoever observes the not-found state.
+ */
+
+/** The purchase order a panel username belongs to (admin tooling lookup). */
+export async function getOrderByPanelUsername(
+  db: D1Database,
+  username: string,
+): Promise<OrderRow | null> {
+  return db
+    .prepare('SELECT * FROM orders WHERE pasarguard_username = ?1')
+    .bind(username)
+    .first<OrderRow>();
+}
+
+export type PanelMarkOutcome =
+  | { ok: true }
+  | { ok: false; error: 'not_found' | 'already_deleted' };
+
+/**
+ * Claim the local `panel_deleted` bookkeeping for a provisioned purchase
+ * (completed service, or a FAILED row that still holds a claimed panel
+ * username) whose panel user is confirmed gone-or-absent. Exactly-once by the
+ * guarded UPDATE: concurrent reconciles (admin tap + refresh tap + sweep)
+ * collapse into one stamp + one audit event; a replay returns already_deleted
+ * so callers stay idempotent. Anything else is refused — pending/awaiting/
+ * rejected/cancelled rows have no live service to delete.
+ */
+export async function markPanelDeleted(
+  db: D1Database,
+  opts: { orderId: string; panelUsername: string; via: string },
+): Promise<PanelMarkOutcome> {
+  const updated = await db
+    .prepare(
+      `UPDATE orders
+          SET panel_deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+              panel_deleted_by = ?3,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?1 AND kind = 'purchase' AND pasarguard_username IS NOT NULL
+          AND state IN ('completed', 'failed')
+          AND panel_deleted_at IS NULL`,
+    )
+    .bind(opts.orderId, opts.panelUsername, opts.via.slice(0, 64))
+    .run();
+  if (changeCount(updated) > 0) {
+    await db
+      .prepare(
+        `INSERT INTO order_events (order_id, actor, action, data)
+         VALUES (?1, ?2, 'service_panel_deleted', ?3)`,
+      )
+      .bind(opts.orderId, opts.via.slice(0, 64), JSON.stringify({ username: opts.panelUsername }))
+      .run();
+    return { ok: true };
+  }
+  const current = await getOrderById(db, opts.orderId);
+  if (current === null) return { ok: false, error: 'not_found' };
+  return { ok: false, error: 'already_deleted' };
+}
+
+/**
+ * Reconciliation primitive (Phase 16): every PASSIVE observer that witnessed a
+ * confirmed panel 404 for a linked completed service (customer live refresh,
+ * usage notification sweep) books the same terminal disposition with a
+ * 'system:<observer>' actor. It never calls the panel — proving the deletion
+ * is the caller's job; idempotent through markPanelDeleted's guarded UPDATE.
+ */
+export async function reconcilePanelGone(
+  db: D1Database,
+  order: OrderRow,
+  observer: 'svc-refresh' | 'notice-sweep',
+): Promise<boolean> {
+  const username = order.pasarguard_username;
+  if (username === null || order.panel_deleted_at !== null || order.kind !== 'purchase') {
+    return false;
+  }
+  const marked = await markPanelDeleted(db, {
+    orderId: order.id,
+    panelUsername: username,
+    via: `system:${observer}`,
+  });
+  return marked.ok;
 }

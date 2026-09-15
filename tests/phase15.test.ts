@@ -7,8 +7,9 @@
  *     preserving every pre-existing row byte-for-byte);
  *  3. the claim flow e2e through the real dispatcher + panel stub: first-ever
  *     /start offer (main menu contract untouched), suppression rules, happy
- *     path (panel POST IN BYTES), re-tap, true concurrent race, confirmed
- *     failure release, crash-recovery rebuild, hostile replays;
+ *     path (panel POST with an ABSOLUTE expire + the exact MB byte cap),
+ *     re-tap, true concurrent race, confirmed failure release,
+ *     crash-recovery rebuild, hostile replays;
  *  4. the notification-policy split — the four required regressions: paid
  *     behavior unchanged; a test never gets the paid set; the dedicated ~2h
  *     notice fires exactly once; repeated/overlapping sweeps never dupe.
@@ -47,14 +48,14 @@ interface FakePanelUser {
   username: string;
   data_limit: number;
   used_traffic: number;
+  /** Absolute unix seconds (0 = the panel's Unlimited marker). */
+  expire: number;
 }
 
 const users = new Map<string, FakePanelUser>();
-const allPosts: PanelRequest[] = [];
 let panelSeq = 500;
 
 function panelRespond(request: PanelRequest): Response {
-  if (request.method === 'POST' && request.path === '/api/user') allPosts.push(request);
   if (request.method === 'GET' && request.path.startsWith('/api/user/by-username/')) {
     const username = decodeURIComponent(request.path.slice('/api/user/by-username/'.length));
     const user = users.get(username);
@@ -64,7 +65,6 @@ function panelRespond(request: PanelRequest): Response {
             ...user,
             status: 'active',
             subscription_url: `/sub/${username}/LINK`,
-            expire: Math.floor(Date.now() / 1000) + DAY_MS / 1000,
           },
         })
       : Response.json({ detail: 'Not Found' }, { status: 404 });
@@ -73,11 +73,14 @@ function panelRespond(request: PanelRequest): Response {
     const body = request.body ?? {};
     const username = String(body['username'] ?? '');
     if (users.has(username)) return Response.json({ detail: 'already exists' }, { status: 409 });
+    // Production contract (2026-09): create honors the ABSOLUTE `expire`
+    // (unix seconds) — the relative `expire_duration` is ignored.
     const record: FakePanelUser = {
       id: String(panelSeq++),
       username,
       data_limit: Number(body['data_limit'] ?? 0),
       used_traffic: 0,
+      expire: Number(body['expire'] ?? 0),
     };
     users.set(username, record);
     return Response.json({
@@ -85,9 +88,15 @@ function panelRespond(request: PanelRequest): Response {
         ...record,
         status: String(body['status'] ?? 'active'),
         subscription_url: `/sub/${username}/LINK`,
-        expire: Math.floor(Date.now() / 1000) + Number(body['expire_duration'] ?? 0),
       },
     });
+  }
+  if (request.method === 'PUT' && request.path.startsWith('/api/user/by-username/')) {
+    const username = decodeURIComponent(request.path.slice('/api/user/by-username/'.length));
+    const user = users.get(username);
+    if (!user) return Response.json({ detail: 'Not Found' }, { status: 404 });
+    user.expire = Number((request.body ?? {})['expire'] ?? user.expire);
+    return Response.json({ data: { ...user, subscription_url: `/sub/${username}/LINK` } });
   }
   return Response.json({ detail: 'no route' }, { status: 404 });
 }
@@ -324,7 +333,7 @@ test('P15-03 first-ever /start carries the offer bubble; the menu contract is un
   assert.equal(sends().length, 1, 'first-ever only');
 });
 
-test('P15-04 claim: one order born approved, completed inline, panel POST in SI BYTES', async () => {
+test('P15-04 claim: one order born approved, completed inline, panel POST with ABSOLUTE expire + MB bytes', async () => {
   const user = freshUser();
   stub.reset(); stub.panel.reset();
   await dispatch(messageUpdateAs(user, '/start', nextId()));
@@ -344,8 +353,16 @@ test('P15-04 claim: one order born approved, completed inline, panel POST in SI 
   const created = posts().filter((p) => p.body && String(p.body['note']) === `telbot:${order.id}`);
   assert.equal(created.length, 1);
   const body = created[0]!.body as Record<string, unknown>;
-  assert.equal(body['data_limit'], 100_000_000, '100 MB as bytes');
-  assert.equal(body['expire_duration'], 86_400, '1 day in seconds');
+  assert.equal(body['data_limit'], 100_000_000, '100 MB stays EXACTLY 100 MB of SI bytes');
+  assert.equal('expire_duration' in body, false, 'no ignored relative field on the wire');
+  const dayTarget = Math.floor(Date.now() / 1000) + 86_400;
+  assert.ok(
+    typeof body['expire'] === 'number' &&
+      body['expire'] !== 0 &&
+      body['expire'] >= dayTarget - 5 &&
+      body['expire'] <= dayTarget + 300,
+    `absolute one-day expiry, got ${String(body['expire'])}`,
+  );
   assert.equal(body['hwid_limit'], 1);
   assert.deepEqual(body['group_ids'], [24, 25], 'provisioning groups respected');
 

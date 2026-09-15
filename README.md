@@ -27,7 +27,7 @@ provision (one guarded path), renewals, wallet ledger, referral payouts, reminde
 service notifications, language, safety checks everywhere.
 **Manual by design:** payment verification (the admin reviews every uploaded receipt),
 funds reconciliation on rejected payments (wallet refund), wallet grants/debits
-(`admin /credit` / `admin /debit`), announcements authoring, sales stop/resume, pricing edits (admin-confirmed).
+(`admin /credit` / `admin /debit`), announcements authoring, sales stop/resume, pricing edits (admin-confirmed), panel-service deletion (`/panel_del` — admin-only, explicit confirmation, terminal `panel_deleted` disposition).
 
 ## Architecture
 
@@ -56,6 +56,7 @@ Full details: [Architecture](docs/en/architecture.md) · [معماری](docs/fa/
 | Support tickets + chunked resumable broadcast announcements | ✅ | [Admin](docs/en/admin.md) |
 | Payment-review reminders + usage-90%/expiry service notices (cron sweeps) | ✅ | [Architecture](docs/en/architecture.md) |
 | Sales stop / resume switch `/sales` (commercial kill switch) | ✅ | [Pricing](docs/en/pricing.md) |
+| Admin service delete `/panel_del` (explicit confirm; panel FIRST, then terminal `panel_deleted`; manual panel-side deletes reconciled; history never destroyed) | ✅ | [PasarGuard](docs/en/pasarguard.md) |
 | Connection guide (stateless, verified official app links) | ✅ | [Customer guide](docs/en/customer-guide.md) |
 | Full Persian + English UI (explicit choice, Persian default) | ✅ | [Localization](docs/en/localization.md) |
 

@@ -9,6 +9,13 @@
  * fields, `expire` as absolute unix seconds (user edit dialog + quick
  * buttons +7d/+1m/+2m/+3m → 30/60/90d).
  *
+ * Production finding (2026-09): the direct create endpoint silently ignored
+ * a relative `expire_duration` field — services were born Unlimited. The
+ * panel user model stores an ABSOLUTE `expire` (unix seconds; 0/absent =
+ * no expiry), so creation now sends the same `expire` field the verified PUT
+ * primitive uses, and provisioning read-back-verifies it (repair-PUT + fail
+ * closed in `provision.ts`).
+ *
  * Safety rules:
  *  - The API key is sent ONLY as the `x-api-key` header over HTTPS; it is
  *    never logged, never included in error details, never stored in D1.
@@ -93,10 +100,14 @@ function numberField(obj: Record<string, unknown> | null, keys: string[]): numbe
 export interface CreateUserPayload {
   username: string;
   status: 'active' | 'on_hold';
-  /** Traffic cap in bytes (panel wire unit). */
+  /** Traffic cap in bytes (panel wire unit; provisioning converts GiB→bytes). */
   data_limit: number;
-  /** Lifetime in seconds from creation (panel wire unit). */
-  expire_duration: number;
+  /**
+   * ABSOLUTE expiry in unix seconds — the same `expire` field/semantics the
+   * verified PUT/renewal primitive uses. 0/absent means Unlimited on the
+   * panel, so the provisioner never sends one (guarded in createUser below).
+   */
+  expire: number;
   /** Concurrent-device cap. */
   hwid_limit: number;
   /** Panel access groups the service is created in. */
@@ -240,8 +251,19 @@ export class PasarGuardClient {
     );
   }
 
-  /** POST /api/user — creates the service. NEVER auto-retried. */
+  /**
+   * POST /api/user — creates the service. NEVER auto-retried. The absolute
+   * `expire` is range-guarded exactly like the PUT primitive so an
+   * Unlimited-shaped (0/out-of-range) create can never leave this client.
+   */
   createUser(payload: CreateUserPayload): Promise<PanelResult<PanelUser | null>> {
+    if (
+      !Number.isSafeInteger(payload.expire) ||
+      payload.expire < 1 ||
+      payload.expire > 4_000_000_000
+    ) {
+      return Promise.resolve(failure(0, 'expire_target_range', 'rejected'));
+    }
     return this.#request<PanelUser | null>('POST', '/api/user', payload);
   }
 
@@ -276,8 +298,24 @@ export class PasarGuardClient {
     );
   }
 
+  /**
+   * DELETE /api/user/by-username/{name} — removes the service. NEVER
+   * auto-retried; the caller CONFIRMS with a by-username read-back before any
+   * local bookkeeping, and a 404 here means "already gone" (idempotent), not
+   * an error. `provision.ts:deletePanelService` is the only caller.
+   */
+  deleteUserByUsername(username: string): Promise<PanelResult<PanelUser | null>> {
+    if (!/^[A-Za-z0-9]{3,32}$/.test(username)) {
+      return Promise.resolve(failure(0, 'username_charset', 'rejected'));
+    }
+    return this.#request<PanelUser | null>(
+      'DELETE',
+      `/api/user/by-username/${encodeURIComponent(username)}`,
+    );
+  }
+
   async #request<T>(
-    method: 'GET' | 'POST' | 'PUT',
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     body?: unknown,
   ): Promise<PanelResult<T | null>> {
@@ -323,8 +361,9 @@ export class PasarGuardClient {
       return { ok: true, data: (extractPanelUser(json) ?? null) as T | null };
     }
 
-    // POST/PUT: a 2xx with an unusable envelope is still a SUCCESS signal —
-    // the mutation happened; callers confirm details with by-username/by-id.
+    // POST/PUT/DELETE: a 2xx with an unusable envelope is still a SUCCESS
+    // signal — the mutation happened; callers confirm with by-username reads
+    // (for DELETE the confirmation read must come back 404).
     if (json === null) return { ok: true, data: null as T | null };
     const parsed = extractPanelUser(json);
     return { ok: true, data: parsed as T | null };

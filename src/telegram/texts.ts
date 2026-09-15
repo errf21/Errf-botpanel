@@ -143,7 +143,7 @@ export const fa = {
   paymentIban: (v: string) => `IBAN: ${tgCode(v)}`,
   paymentAmountLine: (v: string) => `💰 مبلغ قابل واریز: ${v}`,
   paymentReceiptPrompt:
-    '🧾 مبلغ دقیق سفارش را به شماره کارت ذکرشده واریز کنید.\nبعد از واریز، تصویر یا فایل فیش پرداخت رو همین‌جا در گفتگو ارسال کنید.\n\n🔎 بررسی فیش به‌صورت دستی انجام می‌شه؛ ممکنه کمی زمان ببره.',
+    '🧾 مبلغ دقیق سفارش را به شماره کارت ذکرشده واریز کنید.\nبعد از واریز، تصویر یا فایل فیش پرداخت را همین‌جا در گفتگو ارسال کنید.\n\n🔎 بررسی فیش به‌صورت دستی انجام می‌شه؛ ممکنه کمی زمان ببره.',
   paymentCopyHint: '📋 برای کپی کردن شماره کارت، فقط یک بار روی شماره کارت بزن.',
   paymentInfoUnavailable:
     '⚠️ اطلاعات واریز فعلاً در دسترس نیست؛ برای ادامه با پشتیبانی در ارتباط باش.',
@@ -239,6 +239,33 @@ export const fa = {
   adminProvisionDisabledToast: '⚠️ ساخت خودکار سرویس فعلاً غیرفعال است.',
   adminProvisionDone: (id: string) => `🔁 نتیجه‌ی تلاش مجدد ثبت شد\n🆔 ${id}`,
   adminProvisionStale: (id: string) => `ℹ️ وضعیت سفارش ${id} تغییر کرده است؛ نیازی به این دکمه نیست.`,
+
+  // ————— Phase 16: panel-service deletion (admin command, explicit confirm) —————
+  // The admin surface is Persian-only by project decision; these live in the
+  // bundle anyway so the EN mirror keeps its key contract (i18n.test pins
+  // parity). Deletion is only EVER admin-initiated (or a reconciliation of a
+  // delete already done on the panel) and never touches money/order rows.
+  pdlUsage:
+    '🗑 نحوه حذف سرویس از پنل:\n/panel_del <نام‌کاربریِ پنل یا شناسه ۲۸ رقمیِ سفارش>',
+  pdlNotFound: '🗑 سرویسِ قابل‌حذفی با این شناسه پیدا نشد (از قبل حذف شده یا هرگز پنلی نبوده).',
+  pdlAlready: 'ℹ️ این سرویس قبلاً حذف (panel_deleted) شده است.',
+  pdlCancelled: '↩️ حذف لغو شد؛ هیچ چیزی تغییر نکرد.',
+  adminPdlConfirmHeader: (id: string) => `⚠️ تأیید حذف سرویس از پنل\n🆔 ${id}`,
+  adminPdlCustomer: (tgId: string) => `👤 مشتری: ${tgId}`,
+  adminPdlWarning:
+    'این کار سرویس را روی پنل حذف می‌کند و قابل بازگردانی نیست.\nتاریخچه سفارش، پرداخت و تمدیدها در دیتابیس می‌ماند؛ فقط وضعیت سرویس «panel_deleted» می‌شود.',
+  adminPdlDone: (id: string) =>
+    `✅ سرویسِ سفارش ${id} از پنل حذف و در دیتابیس «panel_deleted» ثبت شد.\nپیام اطلاع‌رسانی برای مشتری ارسال شد.`,
+  adminPdlAlreadyGone: (id: string) =>
+    `✅ سرویسِ سفارش ${id} روی پنل نبود (حذف دستی پنل)؛ دیتابیس هم «panel_deleted» شد.`,
+  adminPdlFailed: (id: string, reason: string) =>
+    `⚠️ حذف سرویسِ سفارش ${id} انجام نشد.\n📝 ${reason}\nدیتابیس دست‌نخورده است؛ می‌توانید دوباره تلاش کنید.`,
+  pdlToastDone: '🗑 حذف شد.',
+  pdlToastFailed: '❌ حذف انجام نشد.',
+  serviceRevokedNotice: (name: string) =>
+    `🗑 سرویس «${name}» توسط پشتیبانی از پنل حذف شد.\n\nاگر به نظرتان این کار اشتباه بوده، از «🆘 پشتیبانی» یا «🎫 ثبت تیکت» با ما در تماس باشید.`,
+  svcPanelGone: '🗑 این سرویس روی پنل دیگر وجود ندارد (حذف شده است).',
+  serviceStatusDeleted: '🗑 حذف‌شده از پنل',
 
   // ————— Phase 6: My Services + status + renewals —————
   servicesHeader: '📦 سرویس‌های شما',

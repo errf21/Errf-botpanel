@@ -3,8 +3,10 @@
  * PasarGuard. Two kinds of work, chosen by the order row's `kind`:
  *
  *  purchase (approved/failed retry): claim → pre-check GET by-username (an
- *  existing service is ADOPTED, never blindly re-created) → POST /api/user →
- *  finalize completed + local expiry.
+ *  existing service is ADOPTED, never blindly re-created) → POST /api/user
+ *  with an ABSOLUTE `expire` → verify the panel's expiry (read-back; one
+ *  corrective PUT when missing/insufficient) → finalize completed + the
+ *  VERIFIED panel expiry. Never completes on an Unlimited service.
  *
  *  renewal (approved/failed retry): resolve the linked service row → claim
  *  an ABSOLUTE expiry target on the renewal row BEFORE any panel write →
@@ -15,11 +17,16 @@
  *  never stack a second extension.
  *
  * Race-safety (both kinds): exactly one caller can move an order into
- * `provisioning` (single guarded UPDATE + affected-row check).
+ * `provisioning` (single guarded UPDATE + affected-row check). Rows stamped
+ * with the `panel_deleted` disposition (0015) are claimed-blocked there and
+ * refuse the create/renewal paths outright — a deleted service never returns.
  *
  * Phase 1-4 invariant preserved: when the panel, the provisioning document
  * or (for renewals) the renewal document is NOT configured, these paths make
  * ZERO database or network writes and the order stays where it is.
+ *
+ * Phase 16: `deletePanelService` is the panel module's ONLY deletion writer
+ * (admin surface calls into this file, never straight into the client).
  */
 import type { Env, TelegramApiLike } from '../types.ts';
 import type { CreateUserPayload, PanelUser } from '../pasarguard/client.ts';
@@ -46,15 +53,22 @@ import { fa } from '../telegram/texts.ts';
 import { FA_UI, uiFor } from '../telegram/i18n.ts';
 import type { Ui } from '../telegram/i18n.ts';
 
-/** 1 GB = 10^9 bytes on the panel wire (SI). Confirm on first live read. */
-export const GB_BYTES = 1_000_000_000;
+/**
+ * 1 GB of panel traffic = 2^30 bytes: the panel displays `data_limit` in GiB,
+ * so a selected N GB must arrive as exactly N × 1_073_741_824 bytes to render
+ * as « N » (live proof: 10^9 bytes displayed as 9.31). The free-test MB
+ * conversion (catalog/freeTest.ts MB_BYTES) deliberately stays SI.
+ */
+export const GB_BYTES = 1_073_741_824;
 export const DAY_SECONDS = 86_400;
 
-const MAX_GB = 4_194_304; // 2^32 bytes / 10^9 sanity cap
+const MAX_GB = 4_194_304; // sanity cap on the snapshot volume_gb (wire bytes stay far below 2^53)
 const MAX_DAYS = 36_600; // ~100 years
 const MAX_DEVICES = 10_000;
 /** Free-test volume cap: snapshot `volume_mb` must stay inside this range. */
 const MAX_MB = 100_000;
+/** Clock-skew tolerance (seconds) when verifying a create's ABSOLUTE expiry. */
+const EXPIRY_SLACK_SECONDS = 300;
 
 export type ProvisionSkipReason =
   | 'unconfigured'
@@ -82,6 +96,49 @@ export interface ProvisionDeps {
   api: TelegramApiLike;
 }
 
+/**
+ * Panel-side service removal (Phase 16 admin surface — the ONLY deletion
+ * writer). Same contract as every other write from this module: exactly one
+ * attempt, never auto-retried, and the panel's OWN read-back is the only
+ * proof accepted. A confirmed 404 after the call (whether the DELETE landed
+ * or the service was already gone) is success; ANYTHING else — 2xx with the
+ * user still present, an unreadable record, auth/server/transport failure on
+ * either call — fails CLOSED with a sanitized reason and changes nothing
+ * local. Callers book `panel_deleted` ONLY after `ok: true`.
+ */
+export type PanelDeleteOutcome =
+  | { ok: true; alreadyGone: boolean }
+  | { ok: false; reason: string };
+
+export async function deletePanelService(
+  env: Env,
+  username: string,
+): Promise<PanelDeleteOutcome> {
+  const panel = loadPanelConfig(env);
+  if (!panel.ok) return { ok: false, reason: `panel_${panel.kind}` };
+  const client = new PasarGuardClient(panel.config);
+  const attempt = await client.deleteUserByUsername(username);
+  const readBack = await client.getUserByUsername(username);
+  if (readBack.ok && readBack.data !== null) {
+    // The service is STILL THERE (or the panel answered the delete but not us):
+    // never book a deletion the panel does not confirm.
+    return {
+      ok: false,
+      reason: attempt.ok ? 'panel_delete_ignored' : panelReason(attempt),
+    };
+  }
+  if (readBack.ok) return { ok: false, reason: 'panel_delete_state_unreadable' };
+  if (readBack.kind !== 'not_found') {
+    return { ok: false, reason: `panel_delete_confirm_${panelReason(readBack)}` };
+  }
+  if (attempt.ok) return { ok: true, alreadyGone: false };
+  if (attempt.kind === 'not_found') return { ok: true, alreadyGone: true };
+  // Ambiguous on the wire but the read says gone: report success WITHOUT a
+  // local claim either way — booking stays the caller's, and the same read
+  // made the outcome true, so this is the confirmed shape, not a hope.
+  return { ok: true, alreadyGone: true };
+}
+
 /** Deterministic panel username: config prefix + full order id. */
 export function provisionUsername(orderId: string, prefix: string): string {
   return (prefix + orderId.toLowerCase()).slice(0, 32);
@@ -94,7 +151,7 @@ function panelReason(result: { kind: string; status: number; detail: string }): 
 
 function parseSelections(order: OrderRow): {
   volumeGb: number;
-  /** Traffic cap in bytes on the panel wire (SI). */
+  /** Traffic cap in bytes on the panel wire (GiB conversion; test path: SI MB). */
   dataLimitBytes: number;
   durationDays: number;
   deviceCount: number;
@@ -282,8 +339,93 @@ async function finalizeSuccess(
   return { ok: true, order: result.order, attempted: true };
 }
 
-function isoInDays(days: number): string {
-  return new Date(Date.now() + days * DAY_SECONDS * 1000).toISOString();
+/**
+ * The ABSOLUTE create-expiry target (panel `expire` semantics: unix seconds;
+ * what renewal's PUT primitive proves works). Null = unrepresentable — the
+ * order is failed BEFORE any username claim or panel write.
+ */
+function createExpiryTargetUnix(durationDays: number): number | null {
+  const target = Math.floor(Date.now() / 1000) + durationDays * DAY_SECONDS;
+  if (!Number.isSafeInteger(target) || target < 1 || target > 4_000_000_000) return null;
+  return target;
+}
+
+/** Panel-reported expiry reaches the claimed target (small clock skew OK). */
+function expiryAtTarget(expire: number | null, targetUnix: number): expire is number {
+  return expire !== null && expire >= targetUnix - EXPIRY_SLACK_SECONDS;
+}
+
+/**
+ * Post-create expiry verification (production fix 2026-09: creation used a
+ * relative `expire_duration` the panel silently ignored — services completed
+ * with a purely LOCAL expiry while the panel showed them Unlimited). The
+ * panel's reported ABSOLUTE `expire` is trusted when it reaches the claimed
+ * target; anything less (absent/0 = Unlimited, or short) earns exactly one
+ * corrective PUT with the renewal-proven primitive, then a read-back decides.
+ * Absolute re-application is a no-op, so this step converges across
+ * ambiguous timeouts and retries. FAIL CLOSED on anything unconfirmed: an
+ * order never completes while the panel could show it Unlimited.
+ */
+async function ensureCreateExpiry(
+  client: PasarGuardClient,
+  username: string,
+  user: PanelUser | null,
+  targetUnix: number,
+): Promise<
+  | { ok: true; user: PanelUser | null; expireUnix: number }
+  | { ok: false; reason: string }
+> {
+  let current = user;
+  let expire = current?.expire ?? null;
+  if (expiryAtTarget(expire, targetUnix)) return { ok: true, user: current, expireUnix: expire };
+
+  const patched = await client.modifyUserByUsername(username, { expire: targetUnix });
+  if (!patched.ok) {
+    // The write may STILL have landed (ambiguous timeout): one read decides.
+    const after = await client.getUserByUsername(username);
+    if (after.ok) {
+      const afterExpire = after.data?.expire ?? null;
+      if (expiryAtTarget(afterExpire, targetUnix)) {
+        return { ok: true, user: after.data, expireUnix: afterExpire };
+      }
+    }
+    return { ok: false, reason: `expiry_repair_${panelReason(patched)}` };
+  }
+  if (patched.data !== null) current = patched.data;
+  expire = current?.expire ?? null;
+  if (!expiryAtTarget(expire, targetUnix)) {
+    const after = await client.getUserByUsername(username);
+    if (after.ok && after.data !== null) {
+      current = after.data;
+      expire = current.expire;
+    }
+  }
+  return expiryAtTarget(expire, targetUnix)
+    ? { ok: true, user: current, expireUnix: expire }
+    : { ok: false, reason: 'create_expiry_unverified' };
+}
+
+/** Verified-expiry close-out for every create-shaped path (new or adopted). */
+async function finalizeCreate(
+  deps: ProvisionDeps,
+  order: OrderRow,
+  baseUrl: string,
+  client: PasarGuardClient,
+  username: string,
+  user: PanelUser | null,
+  targetUnix: number,
+): Promise<ProvisionOutcome> {
+  const verified = await ensureCreateExpiry(client, username, user, targetUnix);
+  if (!verified.ok) {
+    return finalizeFailure(deps, order.id, verified.reason);
+  }
+  return finalizeSuccess(
+    deps,
+    order.id,
+    baseUrl,
+    verified.user,
+    new Date(verified.expireUnix * 1000).toISOString(),
+  );
 }
 
 /** Parse the renewal-only fields of a renewal order's selections snapshot. */
@@ -348,6 +490,9 @@ export async function provisionRenewal(
     service === null ||
     service.kind !== 'purchase' ||
     service.state !== 'completed' ||
+    // Phase 16: a deleted service cannot be extended, even by a renewal that
+    // entered the queue before the deletion (fail CLOSED, zero panel writes).
+    service.panel_deleted_at !== null ||
     service.customer_id !== order.customer_id
   ) {
     return finalizeFailure(deps, order.id, 'renewal_service_invalid', true);
@@ -453,6 +598,10 @@ export async function provisionOrder(
 
   const kindProbe = await getOrderById(db, opts.orderId);
   if (!kindProbe) return { ok: false, error: 'not_found' };
+  // Phase 16: a `panel_deleted` row is terminal — never re-provisioned,
+  // never resurrected (the D1 username claim would collide anyway; refusing
+  // here keeps the audit honest and makes ZERO panel calls).
+  if (kindProbe.panel_deleted_at !== null) return { ok: false, error: 'state_changed' };
   const isRenewal = kindProbe.kind === 'renewal';
 
   if (isRenewal) {
@@ -500,6 +649,13 @@ export async function provisionOrder(
   if (selections === null) {
     return finalizeFailure(deps, order.id, 'selections_invalid');
   }
+  // Absolute expiry is CLAIMED here (before any panel write), like a renewal
+  // target: retries re-derive the same shape, and the verification step makes
+  // a re-application a no-op — no stacking, ever.
+  const targetUnix = createExpiryTargetUnix(selections.durationDays);
+  if (targetUnix === null) {
+    return finalizeFailure(deps, order.id, 'create_target_overflow');
+  }
 
   const username = provisionUsername(order.id, config.config.usernamePrefix);
   const claimed = await claimOrderUsername(db, { orderId: order.id, username });
@@ -514,19 +670,23 @@ export async function provisionOrder(
     return finalizeFailure(deps, order.id, panelReason(precheck));
   }
   if (precheck.ok && precheck.data !== null) {
-    return finalizeSuccess(
-      deps, order.id, panel.config.baseUrl, precheck.data, isoInDays(selections.durationDays),
+    // ADOPT, but only with a verified finite expiry — a pre-existing
+    // Unlimited service gets the same corrective PUT as a fresh create.
+    return finalizeCreate(
+      deps, order, panel.config.baseUrl, client, serviceUsername, precheck.data, targetUnix,
     );
   }
 
-  const created = await client.createUser(buildCreatePayload(order.id, selections, config.config, serviceUsername));
+  const created = await client.createUser(
+    buildCreatePayload(order.id, selections, config.config, serviceUsername, targetUnix),
+  );
   if (!created.ok) {
     if (created.kind === 'rejected' && created.status === 409) {
       // Raced with another creator: adopt if the lookup now finds it.
       const after = await client.getUserByUsername(serviceUsername);
       if (after.ok && after.data !== null) {
-        return finalizeSuccess(
-          deps, order.id, panel.config.baseUrl, after.data, isoInDays(selections.durationDays),
+        return finalizeCreate(
+          deps, order, panel.config.baseUrl, client, serviceUsername, after.data, targetUnix,
         );
       }
     }
@@ -539,32 +699,23 @@ export async function provisionOrder(
     const confirmed = await client.getUserByUsername(serviceUsername);
     if (confirmed.ok && confirmed.data !== null) user = confirmed.data;
   }
-  if (user !== null && user.expire !== null) {
-    // Panel reports the real expiry — trust it over our arithmetic.
-    return finalizeSuccess(
-      deps,
-      order.id,
-      panel.config.baseUrl,
-      user,
-      new Date(user.expire * 1000).toISOString(),
-    );
-  }
-  return finalizeSuccess(
-    deps, order.id, panel.config.baseUrl, user, isoInDays(selections.durationDays),
+  return finalizeCreate(
+    deps, order, panel.config.baseUrl, client, serviceUsername, user, targetUnix,
   );
 }
 
 function buildCreatePayload(
   orderId: string,
-  selections: { dataLimitBytes: number; durationDays: number; deviceCount: number },
+  selections: { dataLimitBytes: number; deviceCount: number },
   config: ProvisioningConfig,
   username: string,
+  expireUnix: number,
 ): CreateUserPayload {
   return {
     username,
     status: config.defaultStatus,
     data_limit: selections.dataLimitBytes,
-    expire_duration: selections.durationDays * DAY_SECONDS,
+    expire: expireUnix,
     hwid_limit: selections.deviceCount,
     group_ids: [...config.groupIds],
     note: `telbot:${orderId}`,

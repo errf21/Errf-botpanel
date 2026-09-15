@@ -76,7 +76,7 @@ function panelRespond(request: PanelRequest): Response {
       username,
       status: String(body['status'] ?? 'active'),
       subscription_url: `/sub/${username}/SUBLINK`,
-      expire: Math.floor(Date.now() / 1000) + Number(body['expire_duration'] ?? 0),
+      expire: Number(body['expire'] ?? 0), // ABSOLUTE unix seconds (2026-09 wire contract)
       data_limit: Number(body['data_limit'] ?? 0),
       used_traffic: 0,
     };

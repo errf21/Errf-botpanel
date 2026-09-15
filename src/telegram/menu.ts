@@ -107,6 +107,25 @@ export function adminProvisionFailedKeyboard(orderId: string): TelegramInlineKey
   };
 }
 
+/* ———— Phase 16: admin panel-service delete ————
+ * Like every other admin keyboard the labels are deliberately literal
+ * Persian (operating tools never localize). `pdel:` values are produced ONLY
+ * here and consumed ONLY by `parsePanelDeleteCallback()`; the delete itself
+ * re-checks admin + order state server-side on every tap.
+ */
+export function panelDeleteCallback(action: 'ok' | 'no', orderId: string): string {
+  return `pdel:${action}:${orderId}`;
+}
+
+export function panelDeleteConfirmKeyboard(orderId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('🔴 تأیید حذف از پنل', panelDeleteCallback('ok', orderId))],
+      [button('↩️ انصراف', panelDeleteCallback('no', orderId))],
+    ],
+  };
+}
+
 /** Phase 5: /failed queue — one retry button per failed order. */
 export function failedQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardMarkup {
   return {

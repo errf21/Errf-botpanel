@@ -40,6 +40,8 @@ interface FakeUser {
   username: string;
   status: string;
   subscription_url: string;
+  /** Absolute unix seconds (0 = the panel's Unlimited marker). */
+  expire: number;
 }
 
 const users = new Map<string, FakeUser>();
@@ -48,6 +50,11 @@ const scenario = {
   createFailures: 0,
   lastCreateError: { status: 500, body: { detail: 'panel down' } },
   race409: false,
+  // Incident #1 reproduction switches: POST silently drops `expire`, and/or
+  // the corrective PUT rejects — the provisioner must NEVER complete a
+  // service the panel still shows as Unlimited.
+  createIgnoresExpire: false,
+  putRejects: false,
 };
 
 function panelRespond(request: PanelRequest): Response {
@@ -73,17 +80,31 @@ function panelRespond(request: PanelRequest): Response {
         username,
         status: 'active',
         subscription_url: `/sub/${username}/RACETOK`,
+        expire: Number(body['expire'] ?? 0),
       });
       return Response.json({ detail: 'already exists' }, { status: 409 });
     }
+    // Production contract (2026-09): create honors the ABSOLUTE `expire`
+    // (unix seconds) and ignores everything else expiry-shaped.
     const record: FakeUser = {
       id: String(panelSeq++),
       username,
       status: String(body['status'] ?? 'active'),
       subscription_url: `/sub/${username}/SUBLINK`,
+      expire: scenario.createIgnoresExpire ? 0 : Number(body['expire'] ?? 0),
     };
     users.set(username, record);
     return Response.json({ data: { ...record } });
+  }
+  if (request.method === 'PUT' && request.path.startsWith('/api/user/by-username/')) {
+    if (scenario.putRejects) {
+      return Response.json({ detail: 'modify rejected' }, { status: 500 });
+    }
+    const username = decodeURIComponent(request.path.slice('/api/user/by-username/'.length));
+    const user = users.get(username);
+    if (!user) return Response.json({ detail: 'Not Found' }, { status: 404 });
+    user.expire = Number((request.body ?? {})['expire'] ?? user.expire);
+    return Response.json({ data: { ...user } });
   }
   return Response.json({ detail: 'no route' }, { status: 404 });
 }
@@ -216,8 +237,17 @@ test('approval provisions exactly once: payload, DB, audit, delivered link', asy
   const payload = calls[1]?.body as Record<string, unknown>;
   assert.equal(payload['username'], `pg${orderId.toLowerCase()}`);
   assert.equal(payload['status'], 'active');
-  assert.equal(payload['data_limit'], 10 * 1_000_000_000); // SI bytes (live-verify)
-  assert.equal(payload['expire_duration'], 30 * 86_400); // seconds
+  assert.equal(payload['data_limit'], 10 * 1_073_741_824); // EXACTLY 10 GiB of bytes
+  assert.equal(
+    'expire_duration' in payload, false, 'the ignored relative field must never ship again',
+  );
+  const target30d = Math.floor(Date.now() / 1000) + 30 * 86_400;
+  assert.ok(
+    typeof payload['expire'] === 'number' &&
+      payload['expire'] >= target30d - 5 &&
+      payload['expire'] <= target30d + 300,
+    `absolute expire ≈ now+30d, got ${String(payload['expire'])}`,
+  );
   assert.equal(payload['hwid_limit'], 3);
   assert.deepEqual(payload['group_ids'], [24, 25]);
   assert.equal(payload['note'], `telbot:${orderId}`);
@@ -391,6 +421,7 @@ test('existing panel user is adopted without any create call', async () => {
     username,
     status: 'active',
     subscription_url: `/sub/${username}/PREEXIST`,
+    expire: 0, // pre-existing UNLIMITED service — the exact Incident #1 shape
   });
 
   stub.panel.reset();
@@ -402,6 +433,78 @@ test('existing panel user is adopted without any create call', async () => {
   assert.equal(order?.state, 'completed');
   assert.equal(order?.pasarguard_user_id, '777');
   assert.ok(String(order?.subscription_url).includes('PREEXIST'));
+  // Approved behavior change (2026-09): adoption verifies the panel expiry and
+  // repairs a missing/insufficient ONE with the renewal-proven PUT primitive —
+  // never silently completes an Unlimited service. Target = now + 30 days.
+  const puts = stub.panel.calls.filter((c) => c.method === 'PUT');
+  assert.equal(puts.length, 1, 'exactly one corrective PUT');
+  assert.equal(puts[0]!.path, `/api/user/by-username/${username}`);
+  const putTarget = Number(puts[0]!.body?.['expire']);
+  const want30d = Math.floor(Date.now() / 1000) + 30 * 86_400;
+  assert.ok(putTarget >= want30d - 5 && putTarget <= want30d + 300, `absolute PUT target, got ${String(putTarget)}`);
+  assert.ok(users.get(username)!.expire > 0, 'panel no longer shows the adopt as Unlimited');
+});
+
+test('a panel that drops expiry on create is repaired, never completed Unlimited (fail CLOSED)', async () => {
+  // Incident #1 reproduced: POST silently ignores the absolute `expire`.
+  // The provisioner must issue ONE corrective PUT, and when THAT also fails
+  // the order lands in `failed` — it must NEVER complete with a locally
+  // invented expiry while the panel shows Unlimited.
+  const orderId = await purchaseToApproval();
+  scenario.createIgnoresExpire = true;
+  scenario.putRejects = true;
+  try {
+    stub.reset();
+    stub.panel.reset();
+    await dispatch(callbackUpdateAs(`adm:ok:${orderId}`, nextId(), ADMIN, ADMIN.id));
+    await flush();
+    const callsA = stub.panel.calls;
+    assert.deepEqual(
+      callsA.map((c) => c.method),
+      ['GET', 'POST', 'PUT', 'GET'],
+      'create → one repair PUT → one confirming read',
+    );
+    assert.match(
+      String(orderById(orderId)?.failure_reason),
+      /expiry_repair|create_expiry_unverified/,
+    );
+    assert.equal(
+      sqlite.prepare('SELECT service_expires_at AS e FROM orders WHERE id = ?1').get(orderId)['e'],
+      null,
+      'no expiry is invented for an unconfirmed panel state',
+    );
+
+    // Retry while the panel still rejects: fail-closed again, still one PUT per
+    // attempt, ONE create total (pre-check adopts instead of re-creating).
+    stub.panel.reset();
+    const second = await provisionOrder(quietDeps, { orderId, retry: true });
+    assert.equal(second.ok, false);
+    assert.deepEqual(
+      stub.panel.calls.map((c) => c.method),
+      ['GET', 'PUT', 'GET'],
+      'adopted (no re-create) → still exactly one more PUT + confirming read',
+    );
+  } finally {
+    scenario.createIgnoresExpire = false;
+    scenario.putRejects = false;
+  }
+
+  // Last retry: the repair PUT lands — completion books the PANEL's expiry.
+  stub.panel.reset();
+  const third = await provisionOrder(quietDeps, { orderId, retry: true });
+  assert.equal(third.ok, true, 'converged');
+  const username = `pg${orderId.toLowerCase()}`;
+  const panelExpire = users.get(username)!.expire;
+  assert.ok(panelExpire >= Math.floor(Date.now() / 1000) + 29 * 86_400, 'finite panel expiry now set');
+  assert.equal(orderById(orderId)?.state, 'completed');
+  const booked = sqlite.prepare('SELECT service_expires_at AS e FROM orders WHERE id = ?1').get(orderId)['e'] as string;
+  assert.equal(booked, new Date(panelExpire * 1000).toISOString(), 'expiry booked from the panel value');
+  // Across every attempt the panel saw exactly ONE create in total.
+  assert.equal(
+    stub.panel.calls.filter((c) => c.method === 'POST').length,
+    0,
+    'the converged retry adopted — no second create call ever',
+  );
 });
 
 test('409 create race is resolved by re-reading the winner', async () => {

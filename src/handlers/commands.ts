@@ -9,6 +9,7 @@ import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { showPricing } from './pricingAdmin.ts';
 import { showSalesStatus } from './salesAdmin.ts';
+import { handlePanelDeleteCommand } from './panelDelete.ts';
 import { maybeOfferFreeTestOnStart } from './freeTest.ts';
 import { parseCommand } from '../lib/validate.ts';
 import { getSession } from '../db/states.ts';
@@ -109,6 +110,15 @@ export async function handleCommand(
       // Phase 13: sales stop/resume — view doubles as the control surface
       // (admin gate lives INSIDE showSalesStatus, same precedent as /pricing).
       await showSalesStatus(ctx);
+      return;
+    case 'panel_del':
+      // Phase 16: admin-only service deletion; the explicit confirmation card
+      // is the second click. Args: one panel username or 28-char order id.
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
+      } else {
+        await handlePanelDeleteCommand(ctx, parsed.args.join(' '));
+      }
       return;
     default:
       // Task 1: an unknown command never re-presents the Reply Keyboard —
