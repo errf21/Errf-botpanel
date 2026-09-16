@@ -14,6 +14,7 @@ import { handlePanelDeleteCommand } from './panelDelete.ts';
 import { maybeOfferFreeTestOnStart } from './freeTest.ts';
 import { parseCommand } from '../lib/validate.ts';
 import { getSession } from '../db/states.ts';
+import { tgCode } from '../telegram/format.ts';
 
 /**
  * Slash-command handlers. Customer registration already happened in the
@@ -37,7 +38,9 @@ export async function handleCommand(
     case 'myid': {
       // Phase 17: numeric Telegram id straight from the verified update —
       // no DB read/write, no admin gate, never another user's id.
-      await ctx.api.sendMessage(ctx.chatId, t.myId(String(ctx.actor.id)));
+      // Tap-to-copy: <code> + parse_mode HTML is Telegram's real copy mechanism.
+      const id = String(ctx.actor.id);
+      await ctx.api.sendMessage(ctx.chatId, `${t.myId(tgCode(id))}\n📋 بزن روش، کپی میشه 😎`, undefined, 'HTML');
       return;
     }
     case 'start': {
