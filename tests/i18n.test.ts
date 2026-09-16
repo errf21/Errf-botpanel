@@ -147,11 +147,6 @@ test('uiFor returns the registry singletons', () => {
 
 /* ———— formatters ———— */
 
-const faDigits = (v: number | string): string => {
-  const digits = '۰۱۲۳۴۵۶۷۸۹';
-  return String(v).replace(/[0-9]/g, (d) => digits[Number(d)] ?? d);
-};
-
 test('money: fa keeps formatPrice byte-for-byte; en groups ASCII with words', async () => {
   const { formatPrice } = await import('../src/telegram/texts.ts');
   assert.equal(FA_UI.f.price(12500000, 'IRT'), formatPrice(12500000, 'IRT'));
@@ -160,18 +155,18 @@ test('money: fa keeps formatPrice byte-for-byte; en groups ASCII with words', as
   assert.equal(EN_UI.f.price(7, 'SAT'), '7 SAT', 'unknown currency passes the word raw');
 });
 
-test('dates: fa keeps Persian-digits ISO, en is ISO + UTC label', () => {
+test('dates: fa keeps raw ISO (ASCII digits), en is ISO + UTC label', () => {
   const iso = '2026-09-14T08:30:00.000Z';
-  assert.equal(FA_UI.f.date(iso), faDigits(iso.slice(0, 10)));
+  assert.equal(FA_UI.f.date(iso), iso.slice(0, 10));
   assert.equal(EN_UI.f.date(iso), '2026-09-14');
   assert.equal(EN_UI.f.dateTime(iso), '2026-09-14 08:30 UTC');
-  assert.equal(FA_UI.f.dateTime(iso), faDigits(`${iso.slice(0, 10)} ${iso.slice(11, 16)}`));
+  assert.equal(FA_UI.f.dateTime(iso), `${iso.slice(0, 10)} ${iso.slice(11, 16)}`);
 });
 
 test('duration/volume/device labels: fa byte-compatible, en pluralized', () => {
-  assert.equal(FA_UI.f.duration(30), '۱ ماه');
-  assert.equal(FA_UI.f.duration(90), '۳ ماه');
-  assert.equal(FA_UI.f.duration(45), '۴۵ روز');
+  assert.equal(FA_UI.f.duration(30), '1 ماه');
+  assert.equal(FA_UI.f.duration(90), '3 ماه');
+  assert.equal(FA_UI.f.duration(45), '45 روز');
   assert.equal(EN_UI.f.duration(30), '1 month');
   assert.equal(EN_UI.f.duration(90), '3 months');
   assert.equal(EN_UI.f.duration(45), '45 days');

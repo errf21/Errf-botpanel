@@ -45,7 +45,7 @@ npm run db:migrate:local         # اعمال ۰۰۰۱..۰۰۱۳ روی D1 لو�
 ## ۴. گردش کار تکرار لوکال
 
 ```bash
-# POST مستقیم آپدیت به وب‌هو (dev) (بدون تلگرام واقعی):
+# POST مستقیم آپدیت به وب‌هوک (dev) (بدون تلگرام واقعی):
 printf '{"update_id":1,"message":{"message_id":1,"from":{"id":111,"is_bot":false,"first_name":"Dev"},"chat":{"id":111},"text":"/start"}}' \
  | curl -sS -X POST http://localhost:8787/telegram/webhook \
    -H "X-Telegram-Bot-Api-Secret-Token: <secret لوکال>" \

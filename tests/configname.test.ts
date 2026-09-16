@@ -223,7 +223,7 @@ test('name step: prompt + 🎲 انتخاب خودکار directly below the mess
   const prompt = textsTo(ALICE.id).at(-1) ?? '';
   assert.equal(
     prompt,
-    'زیبا لطفا یه نام انگلیسی حداقل ۶ حرفی انتخاب کن یا اگر میخوای من برات رندوم انتخاب کنم',
+    'زیبا لطفا یه نام انگلیسی حداقل 6 حرفی انتخاب کن یا اگر میخوای من برات رندوم انتخاب کنم',
   );
   const rows = replyRowsOf(stub.sendCalls().length - 1);
   assert.ok(rows.flat().some((b) => b.text === '🎲 انتخاب خودکار'));

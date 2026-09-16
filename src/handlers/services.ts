@@ -263,7 +263,7 @@ async function renderServiceDetail(
     // subscription link — the row stays only as reconciled history.
   } else if (panelUser !== null) {
     // Phase 15: unit-correct copy for the test class (100 MB renders as
-    // «۱۰۰ مگابایت», never a misleading rounded-GB number).
+    // «100 مگابایت», never a misleading rounded-GB number).
     lines.push(
       snapshot.freeTest
         ? t.svcUsageMb(mbDisplay(ctx.ui, panelUser.usedTraffic), mbDisplay(ctx.ui, panelUser.dataLimit))

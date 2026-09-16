@@ -304,10 +304,10 @@ test('renewal pricing: exact admin duration entries — 1m = base price, integer
 });
 
 test('display helpers: month labels and persian digits', () => {
-  assert.equal(durationLabelFa(30), '۱ ماه');
-  assert.equal(durationLabelFa(60), '۲ ماه');
-  assert.equal(durationLabelFa(90), '۳ ماه');
-  assert.equal(durationLabelFa(45), '۴۵ روز');
+  assert.equal(durationLabelFa(30), '1 ماه');
+  assert.equal(durationLabelFa(60), '2 ماه');
+  assert.equal(durationLabelFa(90), '3 ماه');
+  assert.equal(durationLabelFa(45), '45 روز');
   assert.equal(digitsFa(12), '۱۲');
 });
 
@@ -552,8 +552,8 @@ test('UI renewal: ladder → priced renewal → receipt → approve → panel PU
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   await dispatch(callbackUpdateAs('dur:60', nextId(), USER));
   const summary = textsTo(USER.id).at(-1) ?? '';
-  assert.ok(summary.includes('۲ ماه'), 'month-label in summary');
-  assert.ok(summary.includes('80000') || summary.includes('۸۰٬۰۰۰'), 'price shown');
+  assert.ok(summary.includes('2 ماه'), 'month-label in summary');
+  assert.ok(summary.includes('80000') || summary.includes('80,000'), 'price shown');
   const token = JSON.parse(
     (
       sqlite.prepare('SELECT data FROM conversation_states WHERE customer_id = ?1')

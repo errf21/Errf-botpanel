@@ -94,7 +94,7 @@ export async function handlePanelDeleteCommand(
       contact !== null ? contact.telegram_user_id : `#${String(order.customer_id)}`,
     ),
     `📌 ${order.state}`,
-    ...(active !== null ? [`🔁 تمدید در جریان: ${active.id}`] : []),
+    ...(active !== null ? [fa.svcPendingRenewal(active.id.slice(0, 10))] : []),
     fa.adminPdlWarning,
   ];
   await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), panelDeleteConfirmKeyboard(order.id));

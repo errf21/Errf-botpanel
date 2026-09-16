@@ -21,7 +21,7 @@ import { provisionOrder } from './provision/provision.ts';
 import { payReferrerIfDue } from './lib/referralPayout.ts';
 import { isValidOrderId, type ReceiptMedia } from './lib/validate.ts';
 import { adminReceiptKeyboard } from './telegram/menu.ts';
-import { fa } from './telegram/texts.ts';
+import { fa, faAdmin } from './telegram/texts.ts';
 import { FA_UI, uiFor } from './telegram/i18n.ts';
 
 /** ADMIN_CHAT_ID env OR customers.is_admin — never anything else. */
@@ -108,7 +108,7 @@ export async function forwardReceiptToAdmins(
   const lines = [
     fa.adminReceiptHeader,
     ...orderSummaryLines(order),
-    `پرداخت‌کننده: ${uploader}`,
+    faAdmin.payerLine(uploader),
   ];
   if (order.payment_reference) lines.push(fa.paymentReferenceLine(order.payment_reference));
   const caption = lines.join('\n').slice(0, 1000);

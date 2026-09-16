@@ -131,7 +131,7 @@ test('/pricing renders the live document with dynamic field buttons', async () =
   const view = texts.at(-1) ?? '';
   assert.ok(view.includes('مدیریت قیمت‌ها'), 'header');
   assert.ok(view.includes('محصول پایه'), 'base line');
-  assert.ok(view.includes('۴۵٬۰۰۰'), 'base price formatted');
+  assert.ok(view.includes('45,000'), 'base price formatted');
   const buttons = keyboardButtons(lastKeyboard(ADMIN.id));
   assert.ok(buttons.some((b) => b === 'prc:e_base'));
   assert.ok(buttons.some((b) => b === 'prc:e_gb'));
@@ -177,7 +177,7 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
   await dispatch(callbackUpdateAs('prc:e_gb', nextId(), ADMIN, ADMIN.id));
   const prompt = sendTexts(ADMIN.id).at(-1) ?? '';
   assert.ok(prompt.includes('هر گیگ'), 'field named in the prompt');
-  assert.ok(prompt.includes('۴٬۵۰۰'), 'current value shown');
+  assert.ok(prompt.includes('4,500'), 'current value shown');
 
   // 2) garbage keeps the arming alive and applies nothing
   const beforeDoc = pricingDocRaw();
@@ -190,7 +190,7 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
   assert.ok(String(armingFor(ADMIN.id)?.target_id).startsWith('gb=5000:'), 'value + doc fingerprint staged server-side');
   assert.equal(pricingDocRaw(), beforeDoc, 'no write before confirm');
   const stagedText = sendTexts(ADMIN.id).at(-1) ?? '';
-  assert.ok(stagedText.includes('۵٬۰۰۰'), 'staged value shown');
+  assert.ok(stagedText.includes('5,000'), 'staged value shown');
   assert.ok(keyboardButtons(lastKeyboard(ADMIN.id)).includes('prc:ok'));
 
   // 4) confirm → guarded apply + audit + cleared arming
@@ -210,7 +210,7 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
     `admin:${ADMIN.id}`,
   );
   // re-render shows the new value
-  assert.ok(sendTexts(ADMIN.id).at(-1)?.includes('۵٬۰۰۰'), 'view refreshed');
+  assert.ok(sendTexts(ADMIN.id).at(-1)?.includes('5,000'), 'view refreshed');
 
   // 5) the earlier created order is UNTOUCHED (amount + snapshot immutable)
   const after = sqlite
@@ -242,7 +242,7 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
   await dispatch(callbackUpdateAs(`svc:rnw:${svc.id}`, nextId(), USER));
   await dispatch(callbackUpdateAs('dur:60', nextId(), USER, USER.id));
   const renewSummary = sendTexts(USER.id).at(-1) ?? '';
-  assert.ok(renewSummary.includes('۸۰٬۰۰۰'), 'renewal priced at the live 2-month entry');
+  assert.ok(renewSummary.includes('80,000'), 'renewal priced at the live 2-month entry');
   await dispatch(callbackUpdateAs('prc:e_d2', nextId(), ADMIN, ADMIN.id));
   await dispatch(messageUpdateAs(ADMIN, '۹۰۰۰۰', nextId()));
   await dispatch(callbackUpdateAs('prc:ok', nextId(), ADMIN, ADMIN.id));

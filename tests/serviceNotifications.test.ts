@@ -105,7 +105,7 @@ const {
   claimNotice,
   ensurePending,
 } = await import('../src/db/serviceNotifications.ts');
-const { fa, digitsFa } = await import('../src/telegram/texts.ts');
+const { fa } = await import('../src/telegram/texts.ts');
 
 const sqlite = freshDb();
 const shim = makeD1Shim(sqlite);
@@ -304,11 +304,11 @@ test('expiry: one notice per service; the 2-day line never re-fires', async () =
   assert.ok(text.startsWith('درود زیبا،'));
   assert.ok(text.includes('⏳'));
   assert.ok(text.includes('«north valley signal»'));
-  assert.ok(text.includes(`${digitsFa(2)} روز و ${digitsFa(12)} ساعت`));
+  assert.ok(text.includes('2 روز و 12 ساعت'));
   assert.ok(text.includes('تمدید'), 'renewal is the point of the notice');
-  assert.equal(/\d/.test(text), false, 'display uses Persian digits only');
+  assert.equal(/[۰-۹٬]/.test(text), false, 'display uses English digits only');
   const expiresIso = new Date(now + 2 * DAY_MS + 12 * HOUR_MS).toISOString();
-  const timeFa = digitsFa(`${expiresIso.slice(0, 10)} ${expiresIso.slice(11, 16)}`);
+  const timeFa = `${expiresIso.slice(0, 10)} ${expiresIso.slice(11, 16)}`;
   assert.ok(text.includes(timeFa), 'expiry date AND time in the notice');
   assert.equal(sends[0].payload['parse_mode'], undefined, 'notices stay plain text');
   const kb = sends[0].payload['reply_markup'] as {
@@ -448,8 +448,8 @@ test('usage: exact 90% fires once with honest copy; 89.9% stays silent + backs o
   assert.ok(text.startsWith('درود زیبا،'));
   assert.ok(text.includes('📊'));
   assert.ok(text.includes('«north valley signal»'));
-  assert.ok(text.includes(`${digitsFa(90)}٪`));
-  assert.ok(text.includes(`${digitsFa(1)} گیگ`), 'explicit remaining volume');
+  assert.ok(text.includes(`${90}٪`));
+  assert.ok(text.includes(`${1} گیگ`), 'explicit remaining volume');
   assert.ok(text.includes('محدود (حجم)'), 'panel-contract wording, no invented cutoff promise');
   assert.ok(
     text.includes('تمدیدِ مدت حجم تازه اضافه نمی‌کند'),
@@ -495,9 +495,9 @@ test('usage: over-100% usage is notified with a clamped percent', async () => {
   const r = await sweep(Date.now());
   assert.equal(r.usageSent, 1);
   const text = String(noticeSends()[0].text);
-  assert.ok(text.includes(`${digitsFa(99)}٪`), 'never a ۱۰۵٪ boast');
-  assert.equal(text.includes('۱۰۵'), false);
-  assert.ok(text.includes(`${digitsFa(0)} گیگ`), 'remaining floors at ۰, never negative');
+  assert.ok(text.includes('99٪'), 'never a ۱۰۵٪ boast');
+  assert.equal(text.includes('105'), false);
+  assert.ok(text.includes('0 گیگ'), 'remaining floors at ۰, never negative');
   retire(svc);
 });
 
@@ -614,13 +614,13 @@ test('usageNoticeDecision: null/zero caps are never-evaluable, the boundary is e
 test('remainingUntilFa & noticeServiceName: shapes and hostile input', () => {
   const base = Date.UTC(2026, 0, 1, 12);
   const isoIn = (ms: number) => new Date(base + ms).toISOString();
-  assert.equal(remainingUntilFa(isoIn(DAY_MS + HOUR_MS), base), `${digitsFa(1)} روز و ${digitsFa(1)} ساعت`);
-  assert.equal(remainingUntilFa(isoIn(2 * DAY_MS), base), `${digitsFa(2)} روز`);
-  assert.equal(remainingUntilFa(isoIn(3 * HOUR_MS), base), `${digitsFa(3)} ساعت`);
+  assert.equal(remainingUntilFa(isoIn(DAY_MS + HOUR_MS), base), '1 روز و 1 ساعت');
+  assert.equal(remainingUntilFa(isoIn(2 * DAY_MS), base), '2 روز');
+  assert.equal(remainingUntilFa(isoIn(3 * HOUR_MS), base), '3 ساعت');
   assert.equal(remainingUntilFa(isoIn(40_000), base), 'کمتر از یک ساعت');
   assert.equal(remainingUntilFa(isoIn(-DAY_MS), base), 'کمتر از یک ساعت', 'never negative');
   const d3 = remainingUntilFa(isoIn(3 * DAY_MS - 1000), base);
-  assert.ok(d3.includes(`${digitsFa(2)} روز`) && d3.includes(`${digitsFa(23)} ساعت`), 'never says ۳ and still be inside');
+  assert.ok(d3.includes('2 روز') && d3.includes('23 ساعت'), 'never says ۳ and still be inside');
   assert.equal(noticeServiceName('{"config_name":"north valley signal"}'), 'north valley signal');
   assert.equal(noticeServiceName('not json'), 'سرویس شما');
   assert.equal(noticeServiceName('[1,2,3]'), 'سرویس شما');
@@ -634,8 +634,8 @@ test('remainingUntilFa & noticeServiceName: shapes and hostile input', () => {
 
 test('persona: both notices open «درود زیبا،», never carry «سلام»', () => {
   for (const text of [
-    fa.usageNotice('north valley signal', digitsFa(90), digitsFa(1)),
-    fa.expiryNotice('north valley signal', `${digitsFa(2)} روز`, digitsFa('2027-01-01 00:00')),
+    fa.usageNotice('north valley signal', '90', '1'),
+    fa.expiryNotice('north valley signal', '2 روز', '2027-01-01 00:00'),
   ]) {
     assert.ok(text.startsWith('درود زیبا،'));
     assert.equal(text.includes('سلام'), false);
@@ -670,7 +670,7 @@ test('detail & list audit: names in list, expiry time, used/remaining, page note
   setUsage(svc, 4 * GB, 10 * GB);
   const username = usernameOf(svc) as string;
   const panelExpireIso = new Date(users.get(username)!.expire * 1000).toISOString();
-  const timeFa = digitsFa(`${panelExpireIso.slice(0, 10)} ${panelExpireIso.slice(11, 16)}`);
+  const timeFa = `${panelExpireIso.slice(0, 10)} ${panelExpireIso.slice(11, 16)}`;
   resetAll();
   await dispatch(callbackUpdateAs('menu:services', nextId(), USER));
   const list = (stub.sent.find((s) => String(s.text).includes(fa.servicesHeader))?.text) ?? '';
@@ -682,8 +682,8 @@ test('detail & list audit: names in list, expiry time, used/remaining, page note
   assert.ok(edited, 'detail edited in place');
   const text = String(edited.payload['text']);
   assert.ok(text.includes(timeFa), 'expiry shows date AND time');
-  assert.ok(text.includes(fa.svcUsage(digitsFa(4), digitsFa(10))), 'used X of Y');
-  assert.ok(text.includes(fa.svcRemaining(digitsFa(6))), 'explicit remaining volume');
+  assert.ok(text.includes(fa.svcUsage('4', '10')), 'used X of Y');
+  assert.ok(text.includes(fa.svcRemaining('6')), 'explicit remaining volume');
   assert.ok(text.includes(fa.svcPageNote), 'page discovery note next to the link');
   assert.ok(!text.includes(fa.svcUsageHintSnapshot), 'no hint while the panel answers');
   const kb = edited.payload['reply_markup'] as {

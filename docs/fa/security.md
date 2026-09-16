@@ -3,7 +3,7 @@
 [🇬🇧 English](../en/security.md) · 🇮🇷 **فارسی** · [فهرست](README.md)
 
 هرچه اینجا آمده در کدِ فعلی پیاده است (فایل‌ها ارجاع شده‌اند); مورد آرزومندانه‌ای
-نویسیده نشده.
+نوشته نشده.
 
 **سازنده / Creator:** [Espierz](https://t.me/Espierz) · تلگرام / Telegram: [@Espierz](https://t.me/Espierz)
 

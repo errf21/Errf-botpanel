@@ -66,7 +66,7 @@ Cloudflare Worker   ── ورودی: src/index.ts (fetch + scheduled)
 `state/machine.ts` خالص است؛ ماندگاری در `conversation_states` (یک سطر به ازای
 هر مشتری، ۱۳ حالت با CHECK، پیش‌نویس JSON، انقضای تنبل ۲۴ ساعته —
 `db/states.ts`). توکن ULIDِ `order_token` هنگام ظاهر شدن صفحهٔ تأیید ساخته
-می‌شود و بعد `idempotency_key` سفارش می‌گردد.
+می‌شود و بعد `idempotency_key` سفارش می‌شود.
 
 حالت‌ها: `IDLE, BUYING, WAITING_CONFIG_NAME, WAITING_VOLUME, WAITING_DURATION,
 WAITING_DEVICE_LIMIT, WAITING_ORDER_CONFIRMATION, WAITING_PAYMENT_RECEIPT,
@@ -95,7 +95,7 @@ WAITING_ANNOUNCE_TEXT, WAITING_ANNOUNCE_CONFIRM` (`src/types.ts:47-61`).
 ```
 
 حالت‌های سفارش در D1 با CHECK قفل‌اند: `pending_payment, awaiting_review,
-approved, provisioning, completed, rejected, failed, cancelled`. تمدیدها aynı
+approved, provisioning, completed, rejected, failed, cancelled`. تمدیدها همان
 خط لوله را با `kind='renewal'` روی سطر سرویس مقصد طی می‌کنند.
 
 ## ۵. مسیر پرداخت کیس‌پول (کیف پول)

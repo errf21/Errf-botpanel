@@ -103,8 +103,8 @@ test('device/volume reaction copy is pinned to the corrected wording', () => {
   assert.equal(deviceReaction(2), 'دمت گرم، تک‌خور نیستی 😄 دوکاربره انتخاب کردی');
   assert.equal(deviceReaction(3), 'ایول، سه‌کاربره انتخاب کردی 😄');
   // ≥4 stays proportional, names the count (Persian digits), friendly not silly.
-  assert.equal(deviceReaction(5), '۵ کاربره انتخاب کردی، چه تیم پرجمعیتی 😄');
-  assert.equal(deviceReaction(10), '۱۰ کاربره انتخاب کردی، چه تیم پرجمعیتی 😄');
+  assert.equal(deviceReaction(5), '5 کاربره انتخاب کردی، چه تیم پرجمعیتی 😄');
+  assert.equal(deviceReaction(10), '10 کاربره انتخاب کردی، چه تیم پرجمعیتی 😄');
 
   assert.equal(volumeReaction(10), null);
   assert.equal(volumeReaction(20), null, 'threshold is strictly ABOVE 20');
@@ -112,8 +112,8 @@ test('device/volume reaction copy is pinned to the corrected wording', () => {
 });
 
 test('welcome + approval greetings follow «درود زیبا» (and never سلام)', () => {
-  assert.equal(fa.welcomeGreeting(null), '👋 درود زیبا، به ربات خوش اومدی ❤️');
-  assert.equal(fa.welcomeGreeting('Ali'), '👋 درود Ali، به ربات خوش اومدی ❤️');
+  assert.equal(fa.welcomeGreeting(null), 'درود زیبا،امیدوارم که چطورت عالی باشه\nمرسی که مارو انتخاب کردی❤️(چه خوش سلیقه😁)');
+  assert.equal(fa.welcomeGreeting('Ali'), 'درود Ali،امیدوارم که چطورت عالی باشه\nمرسی که مارو انتخاب کردی❤️(چه خوش سلیقه😁)');
   assert.ok(fa.notifyApproved('ord_1', '1,000').startsWith('درود زیبا'));
   for (const text of [fa.welcomeGreeting(null), fa.notifyApproved('a', 'b')]) {
     assert.equal(text.includes('سلام'), false, 'greeting must be درود, never سلام');
@@ -212,12 +212,10 @@ test('device range rejection says «دستگاه»', async () => {
 // ————————————————————————————— ITEM 1: below-min volume echoes the value —————————————————————————————
 
 test('fa below-min volume rejection names the ENTERED number (5/8/3), never a fixed value', async () => {
-  const faDigits = (v: number | string) =>
-    String(v).replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d);
   for (const [entered, expected] of [
-    ['5', '۵'],
-    ['8', '۸'],
-    ['3', '۳'],
+    ['5', '5'],
+    ['8', '8'],
+    ['3', '3'],
   ] as const) {
     const hero = freshUser(`vol_echo_${entered}`);
     await buyToVolume(hero);
@@ -228,7 +226,7 @@ test('fa below-min volume rejection names the ENTERED number (5/8/3), never a fi
     // domain tokens stay, so the reply is still «volume» not a generic range
     assert.ok(text.includes('حجم') && text.includes('گیگ'), `volume-domain copy for ${entered}: ${text}`);
     // the minimum rule is untouched: below 10 is still refused, state kept
-    assert.ok(text.includes(faDigits(10)), 'the 10 GB floor is still named');
+    assert.ok(text.includes('10'), 'the 10 GB floor is still named');
     assert.equal(sessionFor(hero.id).state, 'WAITING_VOLUME', 'rejecting keeps you on the volume step');
   }
 });
@@ -238,7 +236,7 @@ test('fa below-min volume rejection is casual, and differs per value (a real int
   const [a5, a8, a3] = [render(5), render(8), render(3)];
   assert.notEqual(a5, a8, 'different numbers, different messages');
   assert.notEqual(a8, a3);
-  assert.ok(a5.includes('۵') && !a5.includes('۸'), 'each message carries only its own value');
+  assert.ok(a5.includes('5') && !a5.includes('8'), 'each message carries only its own value');
   assert.match(a5, /[😐❤️]/u, 'friendly tone (emoji) is present');
   assert.ok(!/قابل قبول نیست|تلاش کنید/.test(a5), 'stiff formal phrasing is gone');
 });
@@ -332,7 +330,7 @@ test('device choice: 1 plain, 3 leads summary, 2 (preset) leads with «دوکا�
   assert.equal(sessionFor(five.id).state, 'WAITING_DEVICE_LIMIT', 'out-of-range stays on the step');
   const fiveText = String(lastBubble(five.id).text);
   assert.ok(fiveText.includes('دستگاه'), `device-domain rejection expected: ${fiveText}`);
-  assert.equal(fiveText.includes('۵ کاربره'), false, 'no acceptance reaction for an unbuyable count');
+  assert.equal(fiveText.includes('5 کاربره'), false, 'no acceptance reaction for an unbuyable count');
   // The device keyboard now offers 1/2/3 only — no custom button, no typing hint.
   const devKb = sendsTo(five.id)
     .reverse()

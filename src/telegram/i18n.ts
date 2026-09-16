@@ -10,7 +10,7 @@
  * `customers.language`. Telegram's `language_code` is stored for display on
  * the Account screen and NEVER selects a language.
  */
-import { fa, digitsFa, durationLabelFa, formatPrice } from './texts.ts';
+import { fa, durationLabelFa, formatPrice } from './texts.ts';
 import type { Texts } from './texts.ts';
 import { en } from './texts.en.ts';
 
@@ -38,30 +38,30 @@ export interface Fmt {
   volumeOption(gb: number): string;
   /** Device option button label (en pluralizes: "1 device"). */
   deviceOption(count: number): string;
-  /** Whole-days phrase for notice bodies ("۳ روز" / "3 days"). */
+  /** Whole-days phrase for notice bodies ("3 روز" / "3 days"). */
   dayCount(days: number): string;
   /** Time-left phrase for the expiry notice (bounded by the 3-day window). */
   remainingUntil(expiresIso: string, nowMs: number): string;
 }
 
 const fmtFa: Fmt = {
-  digits: (v) => digitsFa(v),
+  digits: (v) => String(v),
   price: (amount, currency) => formatPrice(amount, currency),
-  // Mirrors the exact call-site formatting of Phases 6-9 (display UTC).
-  date: (iso) => digitsFa(iso.slice(0, 10)),
-  dateTime: (iso) => digitsFa(`${iso.slice(0, 10)} ${iso.slice(11, 16)}`),
+  // Display-only, locale-neutral digits (user ruling: no Persian digits in UI).
+  date: (iso) => iso.slice(0, 10),
+  dateTime: (iso) => `${iso.slice(0, 10)} ${iso.slice(11, 16)}`,
   duration: (days, perMonth) => durationLabelFa(days, perMonth),
   volumeOption: (gb) => `${gb} گیگ`,
   deviceOption: (count) => `${count} دستگاه`,
-  dayCount: (days) => `${digitsFa(days)} روز`,
+  dayCount: (days) => `${days} روز`,
   remainingUntil: (expiresIso, nowMs) => {
     const diff = Date.parse(expiresIso) - nowMs;
     const totalHours = Math.max(0, Math.floor(diff / 3_600_000));
     const days = Math.floor(totalHours / 24);
     const hours = totalHours % 24;
-    if (days > 0 && hours > 0) return `${digitsFa(days)} روز و ${digitsFa(hours)} ساعت`;
-    if (days > 0) return `${digitsFa(days)} روز`;
-    if (hours > 0) return `${digitsFa(hours)} ساعت`;
+    if (days > 0 && hours > 0) return `${days} روز و ${hours} ساعت`;
+    if (days > 0) return `${days} روز`;
+    if (hours > 0) return `${hours} ساعت`;
     return 'کمتر از یک ساعت';
   },
 };

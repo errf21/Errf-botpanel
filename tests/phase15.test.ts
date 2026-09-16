@@ -321,7 +321,7 @@ test('P15-03 first-ever /start carries the offer bubble; the menu contract is un
   // Task 1: the pinned menu shape carries the one-time hide semantics too.
   assert.equal(menu.one_time_keyboard, true);
   const offer = bubbles[1]!;
-  assert.ok(String(offer.text).includes('۱۰۰'), 'Persian digits for the seeded volume');
+  assert.ok(String(offer.text).includes('100'), 'ASCII digits for the seeded volume');
   assert.ok(String(offer.text).includes('تست'), 'fa copy names the free test');
   const offerKb = inlineOf(offer.payload);
   assert.equal(offerKb[0][0].callback_data, 'tst:claim');

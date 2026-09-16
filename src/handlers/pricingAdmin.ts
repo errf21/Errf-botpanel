@@ -32,7 +32,7 @@ import {
 } from '../catalog/pricingDoc.ts';
 import { parsePricingAmount, parsePricingCallback } from '../lib/validate.ts';
 import { pricingConfirmKeyboard, pricingMenuKeyboard } from '../telegram/menu.ts';
-import { fa, formatPrice } from '../telegram/texts.ts';
+import { fa, faAdmin, formatPrice } from '../telegram/texts.ts';
 
 const T = fa;
 
@@ -95,7 +95,7 @@ export async function showPricing(ctx: UpdateContext): Promise<void> {
     );
   }
   if (live.row.updated_by !== null) {
-    lines.push(`آخرین ویرایش: ${live.row.updated_by} — ${live.row.updated_at.slice(0, 16)}`);
+    lines.push(faAdmin.pricingLastEdit(live.row.updated_by, live.row.updated_at.slice(0, 16)));
   }
   lines.push(T.adminPricingHint);
   await ctx.api.sendMessage(
@@ -113,7 +113,7 @@ export async function showPricing(ctx: UpdateContext): Promise<void> {
             : field.kind === 'gb'
               ? '⚖️'
               : field.kind === 'duration'
-                ? `📅${field.index}م`
+                ? faAdmin.pricingMonthGlyph(field.index)
                 : `👤${field.index}`;
         return { label: `${glyph} ${price}`.slice(0, 64), token: field.token };
       }),

@@ -10,7 +10,7 @@ import { getBalance, listWalletEntries, type WalletEntryRow } from '../db/wallet
 import { loadWalletConfig, type WalletConfig } from '../catalog/wallet.ts';
 import { getCustomer } from '../db/customers.ts';
 import { backToMenuKeyboard, composingKeyboard } from '../telegram/menu.ts';
-import { fa, formatPrice } from '../telegram/texts.ts';
+import { fa, faAdmin, formatPrice } from '../telegram/texts.ts';
 import { FA_UI } from '../telegram/i18n.ts';
 import { parseCommand, parseWalletAmount } from '../lib/validate.ts';
 import { applyWalletMutation } from '../db/wallet.ts';
@@ -85,9 +85,9 @@ export async function handleWalletAdminCommand(
   const [targetRaw = '', amountRaw = ''] = parsed.args;
   const targetTg = parsePositiveId(targetRaw);
   const grant = parsed.name === 'credit';
-  const usage = `${grant ? '/credit' : '/debit'} <شناسه تلگرام> <مبلغ>`;
+  const usage = faAdmin.walletUsage(grant);
   if (targetTg === null) {
-    await ctx.api.sendMessage(ctx.chatId, `${usage}\nمثال: /credit 123456789 500000`);
+    await ctx.api.sendMessage(ctx.chatId, `${usage}\n${faAdmin.walletUsageExample}`);
     return 'handled';
   }
   if (targetTg === ctx.actor.id) {
@@ -106,7 +106,7 @@ export async function handleWalletAdminCommand(
     // Phase 8A: admin now types the amount as free text — hide the main keyboard.
     await ctx.api.sendMessage(
       ctx.chatId,
-      `${fa.walletPromptAmount(grant ? 'افزودن' : 'کسر')}\n${fa.walletTargetUser(`@${record.telegram_username ?? record.telegram_user_id}`)}`,
+      `${fa.walletPromptAmount(grant ? faAdmin.walletVerbAdd : faAdmin.walletVerbSub)}\n${fa.walletTargetUser(`@${record.telegram_username ?? record.telegram_user_id}`)}`,
       composingKeyboard(FA_UI),
     );
     return 'handled';

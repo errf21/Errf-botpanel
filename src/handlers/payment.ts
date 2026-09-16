@@ -20,7 +20,7 @@ import { loadPaymentInfo, paymentCardFromEnv } from '../catalog/payment.ts';
 import { isValidOrderId, type ReceiptMedia } from '../lib/validate.ts';
 import { forwardReceiptToAdmins } from '../admin.ts';
 import { adminQueueKeyboard, backToMenuKeyboard } from '../telegram/menu.ts';
-import { fa } from '../telegram/texts.ts';
+import { fa, faAdmin } from '../telegram/texts.ts';
 import { FA_UI } from '../telegram/i18n.ts';
 
 const MY_ORDERS_LIMIT = 8;
@@ -79,7 +79,7 @@ function uploaderLabel(ctx: UpdateContext): string {
   const actor = ctx.actor;
   return actor.username
     ? `@${actor.username}`
-    : `${actor.first_name ?? 'کاربر'} (${String(actor.id)})`;
+    : `${actor.first_name ?? faAdmin.uploaderFallback} (${String(actor.id)})`;
 }
 
 /**

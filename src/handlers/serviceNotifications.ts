@@ -99,14 +99,14 @@ export function usageNoticeDecision(
   };
 }
 
-/** «۲ روز و ۱۱ ساعت» / «کمتر از یک ساعت» — bounded by the 3-day window.
+/** «2 روز و 11 ساعت» / «کمتر از یک ساعت» — bounded by the 3-day window.
  *  Thin fa alias of the bundle formatter (Phase 10); English users get the
  *  sibling formatter via `uiFor(row.language).f.remainingUntil`. */
 export function remainingUntilFa(expiresIso: string, nowMs: number): string {
   return FA_UI.f.remainingUntil(expiresIso, nowMs);
 }
 
-/** ISO date + UTC time, Persian digits (repo's established display basis). */
+/** ISO date + UTC time, ASCII digits (display rule: English digits everywhere). */
 export function expiryDateTimeFa(expiresIso: string): string {
   return FA_UI.f.dateTime(expiresIso);
 }
