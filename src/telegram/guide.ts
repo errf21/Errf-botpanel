@@ -14,11 +14,13 @@
  *  - v2rayNG   — official GitHub repo + its Releases page (the README's own
  *                download location). NO Google Play button: the listing
  *                could not be verified — omitted by policy, never guessed.
+ *  - NekoBox   — official GitHub repo MatsuriDayo/NekoBoxForAndroid + its
+ *                Releases page. NO Google Play button: the README states the
+ *                Play listing is third-party/fake since May 2024 — omitted
+ *                by policy, never guessed.
  *  - V2Box / Streisand — App Store IDs confirmed via Apple's lookup API;
  *                both proprietary, so no GitHub button exists.
  *  - Throne    — official GitHub org repo (throneproj/Throne) + Releases.
- *  - incy      — Google Play listing (dev Incy, LLC, pkg llc.itdev.incy),
- *                live-verified from the store page (2026-09-15).
  * Never add a URL that was not verified against the project's own page.
  */
 import type {
@@ -68,10 +70,6 @@ export interface GuidePlatform {
 
 /* ———— verified official links ———— */
 
-const LINK_PLAY_INCY: GuideLink = {
-  label: (t) => t.guideBtnPlay,
-  url: 'https://play.google.com/store/apps/details?id=llc.itdev.incy',
-};
 const LINK_PLAY_V2RAYTUN: GuideLink = {
   label: (t) => t.guideBtnPlay,
   url: 'https://play.google.com/store/apps/details?id=com.v2raytun.android',
@@ -87,6 +85,14 @@ const LINK_RELEASES_V2RAYNG: GuideLink = {
 const LINK_GITHUB_V2RAYNG: GuideLink = {
   label: (t) => t.guideBtnGithub,
   url: 'https://github.com/2dust/v2rayNG',
+};
+const LINK_RELEASES_NEKOBOX: GuideLink = {
+  label: (t) => t.guideBtnReleases,
+  url: 'https://github.com/MatsuriDayo/NekoBoxForAndroid/releases',
+};
+const LINK_GITHUB_NEKOBOX: GuideLink = {
+  label: (t) => t.guideBtnGithub,
+  url: 'https://github.com/MatsuriDayo/NekoBoxForAndroid',
 };
 const LINK_APPSTORE_V2BOX: GuideLink = {
   label: (t) => t.guideBtnStore,
@@ -112,22 +118,22 @@ export const GUIDE_PLATFORMS: readonly GuidePlatform[] = [
     intro: (t) => t.guidePlatformAndroid,
     apps: [
       {
-        callback: CB.GUIDE_AND_INCY,
-        name: 'incy',
-        steps: (t) => t.guideStepsIncy,
-        links: [LINK_PLAY_INCY],
+        callback: CB.GUIDE_AND_NG,
+        name: 'v2rayNG',
+        steps: (t) => t.guideStepsNg,
+        links: [LINK_RELEASES_V2RAYNG, LINK_GITHUB_V2RAYNG],
+      },
+      {
+        callback: CB.GUIDE_AND_NEKO,
+        name: 'NekoBox',
+        steps: (t) => t.guideStepsNeko,
+        links: [LINK_RELEASES_NEKOBOX, LINK_GITHUB_NEKOBOX],
       },
       {
         callback: CB.GUIDE_AND_TUN,
         name: 'v2RayTun',
         steps: (t) => t.guideStepsTun,
         links: [LINK_PLAY_V2RAYTUN, LINK_GITHUB_V2RAYTUN],
-      },
-      {
-        callback: CB.GUIDE_AND_NG,
-        name: 'v2rayNG',
-        steps: (t) => t.guideStepsNg,
-        links: [LINK_RELEASES_V2RAYNG, LINK_GITHUB_V2RAYNG],
       },
     ],
   },

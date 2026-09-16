@@ -596,11 +596,11 @@ Once traffic starts counting, you're online. Leave the rest of the settings alon
 5. Pick a server and press the ▶ Connect button. Tap Allow on the VPN request.
 
 Defaults are fine — nothing else needs changing.`,
-  guideStepsIncy: `📚 incy — connect in a minute
+  guideStepsNeko: `📚 NekoBox — connect in a minute
 
 1. Copy your subscription link: 📦 My Services → pick your service → tap the Subscription link.
-2. Install incy from Google Play using the button below.
-3. Open incy, tap add/import and choose import from link — paste the copied link (or scan a QR code).
+2. This app ships through GitHub, not Google Play: the official download is the ⬇️ Releases button below. Grab the latest .apk and install it. If Android shows a security warning, follow the on-screen steps and make sure you are installing the release from the official MatsuriDayo/NekoBoxForAndroid GitHub page.
+3. Open NekoBox, tap add/import and choose import from link — paste the copied link (or scan a QR code).
 4. Name the configuration anything you like — "My service" is fine.
 5. Select the configuration and press Connect. When Android asks to allow the VPN connection, tap Allow.
 

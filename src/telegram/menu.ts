@@ -43,7 +43,7 @@ export const CB = {
   GUIDE_ANDROID: 'gud:android',
   GUIDE_IOS: 'gud:ios',
   GUIDE_WINDOWS: 'gud:windows',
-  GUIDE_AND_INCY: 'gud:and_incy',
+  GUIDE_AND_NEKO: 'gud:and_neko',
   GUIDE_AND_TUN: 'gud:and_tun',
   GUIDE_AND_NG: 'gud:and_ng',
   GUIDE_IOS_V2BOX: 'gud:ios_v2box',

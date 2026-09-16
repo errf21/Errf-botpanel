@@ -24,11 +24,12 @@ const PERSIAN = /[\u0600-\u06FF\u200C\u200D]/;
 
 /** The exact official URL set, pinned literal (live-verified at build time). */
 const PINNED_URLS = [
-  'https://play.google.com/store/apps/details?id=llc.itdev.incy',
   'https://play.google.com/store/apps/details?id=com.v2raytun.android',
   'https://github.com/v2RayTun',
   'https://github.com/2dust/v2rayNG',
   'https://github.com/2dust/v2rayNG/releases',
+  'https://github.com/MatsuriDayo/NekoBoxForAndroid',
+  'https://github.com/MatsuriDayo/NekoBoxForAndroid/releases',
   'https://apps.apple.com/app/id6446814690',
   'https://apps.apple.com/app/id6450534064',
   'https://github.com/throneproj/Throne',
@@ -41,7 +42,7 @@ test('platforms and app picks follow the agreed official order', () => {
   ]);
   assert.deepEqual(GUIDE_PLATFORMS.map((p) => p.label), ['🤖 Android', '🍎 iOS', '🪟 Windows']);
   assert.deepEqual(GUIDE_PLATFORMS.map((p) => p.apps.map((a) => a.name)), [
-    ['incy', 'v2RayTun', 'v2rayNG'],
+    ['v2rayNG', 'NekoBox', 'v2RayTun'],
     ['V2Box', 'Streisand'],
     ['Throne'],
   ]);
@@ -71,7 +72,7 @@ test('registries only reference official domains it was verified against', () =>
     if (host === 'github.com') {
       const owner = new URL(url).pathname.split('/')[1] ?? '';
       assert.ok(
-        owner === 'v2RayTun' || owner === '2dust' || owner === 'throneproj',
+        owner === 'v2RayTun' || owner === '2dust' || owner === 'throneproj' || owner === 'MatsuriDayo',
         `unofficial owner: ${owner}`,
       );
     }
@@ -88,16 +89,19 @@ test('v2rayNG carries NO Google Play button (Play link failed live verification)
   ]);
 });
 
-test('incy is the FIRST Android app and carries ONLY its verified Google Play link', () => {
-  assert.deepEqual(GUIDE_PLATFORMS[0]!.apps.map((a) => a.name), ['incy', 'v2RayTun', 'v2rayNG']);
-  const incy = findGuideApp(CB.GUIDE_AND_INCY);
-  assert.ok(incy, 'incy is registered');
-  assert.deepEqual(incy.app.links.map((l) => l.url), [
-    'https://play.google.com/store/apps/details?id=llc.itdev.incy',
+test('NekoBox carries NO Google Play button (README flags Play listing as fake)', () => {
+  assert.deepEqual(GUIDE_PLATFORMS[0]!.apps.map((a) => a.name), ['v2rayNG', 'NekoBox', 'v2RayTun']);
+  const neko = findGuideApp(CB.GUIDE_AND_NEKO);
+  assert.ok(neko, 'NekoBox is registered');
+  assert.equal(neko.app.links.some((l) => l.url.includes('play.google.com')), false);
+  assert.deepEqual(neko.app.links.map((l) => l.url), [
+    'https://github.com/MatsuriDayo/NekoBoxForAndroid/releases',
+    'https://github.com/MatsuriDayo/NekoBoxForAndroid',
   ]);
-  const incyKb = guideAppKeyboard(incy, fa).inline_keyboard;
-  assert.deepEqual(incyKb[0]?.map((b) => [b.text, b.url]), [
-    ['📥 Google Play', 'https://play.google.com/store/apps/details?id=llc.itdev.incy'],
+  const nekoKb = guideAppKeyboard(neko, fa).inline_keyboard;
+  assert.deepEqual(nekoKb[0]?.map((b) => [b.text, b.url]), [
+    ['⬇️ Releases', 'https://github.com/MatsuriDayo/NekoBoxForAndroid/releases'],
+    ['📦 GitHub', 'https://github.com/MatsuriDayo/NekoBoxForAndroid'],
   ]);
 });
 
@@ -145,9 +149,9 @@ test('keyboard shapes: picker rows, per-platform 📖 order, single-app nav rule
 
   const android = GUIDE_PLATFORMS[0]!;
   const platformKb = guidePlatformKeyboard(android, fa).inline_keyboard;
-  assert.equal(platformKb[0]?.[0]?.text, '📖 راهنمای اتصال — incy', 'app order: incy first');
-  assert.equal(platformKb[1]?.[0]?.text, '📖 راهنمای اتصال — v2RayTun');
-  assert.equal(platformKb[2]?.[0]?.text, '📖 راهنمای اتصال — v2rayNG');
+  assert.equal(platformKb[0]?.[0]?.text, '📖 راهنمای اتصال — v2rayNG', 'app order: v2rayNG first');
+  assert.equal(platformKb[1]?.[0]?.text, '📖 راهنمای اتصال — NekoBox');
+  assert.equal(platformKb[2]?.[0]?.text, '📖 راهنمای اتصال — v2RayTun');
   assert.deepEqual(platformKb.at(-2)?.map((b) => b.callback_data), [CB.GUIDE_IOS, CB.GUIDE_WINDOWS]);
   assert.deepEqual(platformKb.at(-1)?.map((b) => b.callback_data ?? b.url), [CB.ACT_BACK_MENU]);
 
