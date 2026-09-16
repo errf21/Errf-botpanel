@@ -152,7 +152,7 @@ test('photo receipt → awaiting_review + forwarded to admin with buttons', asyn
   assert.deepEqual(sentTo(ADMIN.id), []);
   // customer confirmation notice (state preserved)
   assert.equal(sessionFor(USER.id).state, 'WAITING_PAYMENT_RECEIPT');
-  assert.ok(sends().some((s) => String(s.text).includes('برای بررسی ارسال شد')));
+  assert.ok(sends().some((s) => String(s.text).includes('ارسالش کردیم')));
 });
 
 test('ADMIN_CHAT_ID env alone authorizes + receives the forward', async () => {

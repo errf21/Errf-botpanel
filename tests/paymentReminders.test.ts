@@ -162,7 +162,9 @@ test('stage 1 at 15:00 → one customer nudge + one admin digest; re-run is iner
   const reminders = reminderTextsTo(USER.id, orderId);
   assert.equal(reminders.length, 1);
   assert.ok(reminders[0]?.startsWith('⏳'));
-  assert.ok(reminders[0]?.includes('هنوز در انتظار بررسی'));
+  assert.ok(reminders[0]?.includes('در حال بررسیه'));
+  assert.ok(reminders[0]?.includes('یادآوری برای ادمین'));
+  assert.ok(reminders[0]?.includes(orderId));
   const digests = messagesTo(ADMIN.id);
   assert.equal(digests.length, 1);
   assert.ok(String(digests[0]?.text).includes(fa.reminderAdminHeader));
@@ -425,14 +427,18 @@ test('persona: three distinct variants, all ⏳-anchored, never any greeting, no
     assert.ok(v.startsWith('⏳'));
     assert.equal(v.includes('سلام'), false);
     assert.equal(v.includes('درود'), false);
-    assert.ok(v.includes('هنوز در انتظار'));
   }
+  assert.ok(variants[1]?.includes('هنوز در انتظار'));
+  assert.ok(variants[2]?.includes('هنوز در انتظار'));
+  assert.ok(variants[0]?.includes('در حال بررسیه'));
+  assert.ok(variants[0]?.includes('یادآوری برای ادمین'));
+  assert.ok(variants[0]?.includes('🆔 سفارش:'));
   // receipt confirmations also stay greeting-free (mid-flow bubble)
   assert.equal(fa.receiptAccepted.includes('درود'), false);
   assert.equal(fa.receiptReplaced.includes('درود'), false);
   // asserted stems survived the 8C copy refresh (regression guard)
   assert.ok(fa.receiptAccepted.includes('ثبت شد'), 'ثبت شد stem');
-  assert.ok(fa.receiptAccepted.includes('برای بررسی ارسال شد'));
+  assert.ok(fa.receiptAccepted.includes('ارسالش کردیم'));
   assert.ok(fa.receiptReplaced.includes('جایگزین شد'));
   assert.ok(fa.receiptReplaced.includes('برای بررسی ارسال شد'));
 
