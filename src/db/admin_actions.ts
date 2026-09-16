@@ -6,6 +6,7 @@
  *  - support_reply:     order_id NULL, target_id = ticket id
  *  - wallet_grant/debit: order_id NULL, target_id = target telegram user id
  *  - pricing (P12):     order_id NULL, target_id = edit token (see db/pricing.ts)
+ *  - topup_reject (P17): order_id NULL, target_id = wallet_topups id
  */
 export const ADMIN_ACTION_TTL_MS = 15 * 60 * 1000;
 
@@ -14,7 +15,8 @@ export type AdminActionKind =
   | 'support_reply'
   | 'wallet_grant'
   | 'wallet_debit'
-  | 'pricing';
+  | 'pricing'
+  | 'topup_reject';
 
 export interface AdminActionRow {
   admin_user_id: string;
@@ -66,6 +68,22 @@ export async function setPendingAdminWalletAction(
        VALUES (?1, NULL, ?2, ?3, ?4)`,
     )
     .bind(String(adminUserId), action, String(targetTelegramId), expires)
+    .run();
+}
+
+/** Phase 17: arm a top-up rejection (reason typed next; order_id stays NULL). */
+export async function setPendingTopupReject(
+  db: D1Database,
+  adminUserId: number,
+  topupId: string,
+): Promise<void> {
+  const expires = new Date(Date.now() + ADMIN_ACTION_TTL_MS).toISOString();
+  await db
+    .prepare(
+      `INSERT OR REPLACE INTO admin_actions (admin_user_id, order_id, action, target_id, expires_at)
+       VALUES (?1, NULL, 'topup_reject', ?2, ?3)`,
+    )
+    .bind(String(adminUserId), topupId, expires)
     .run();
 }
 

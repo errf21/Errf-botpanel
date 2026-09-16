@@ -24,6 +24,7 @@ import { isSalesStopped } from '../catalog/sales.ts';
 import { showMyOrders } from './payment.ts';
 import { showMyServices } from './services.ts';
 import { showMyWallet } from './wallet.ts';
+import { resumeTopup } from './topup.ts';
 import { showInvite } from './referrals.ts';
 import { openSupportEntry, showDirectSupport } from './support.ts';
 import { openGuide } from './guide.ts';
@@ -68,6 +69,11 @@ async function startPurchase(ctx: UpdateContext, session: Session): Promise<void
       await sendSummary(ctx, session, loaded.catalog);
     } else if (session.state === 'WAITING_PAYMENT_RECEIPT') {
       await ctx.api.sendMessage(ctx.chatId, t.paymentWaitNotice, backToMenuKeyboard(ctx.ui));
+    } else if (
+      session.state === 'WAITING_TOPUP_AMOUNT' ||
+      session.state === 'WAITING_TOPUP_RECEIPT'
+    ) {
+      await resumeTopup(ctx);
     } else if (
       session.state === 'WAITING_RENEWAL_DURATION' ||
       session.state === 'WAITING_RENEWAL_CONFIRMATION'

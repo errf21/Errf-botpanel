@@ -338,6 +338,7 @@ export const fa = {
   walletKindAdminDebit: '➖ کسر اعتبار',
   walletKindOrderPayment: '🛒 پرداخت سفارش',
   walletKindOrderRefund: '↩️ بازگشت اعتبار',
+  walletKindTopupCredit: '➕ شارژ کیف پول',
   walletDebited: (v: string) => `✅ مبلغ ${v} از موجودی کیف پول کسر شد.`,
   walletGranted: (v: string) => `✅ مبلغ ${v} به کیف پول شما اضافه شد.`,
   walletAmountInvalid:
@@ -363,6 +364,42 @@ export const fa = {
   notifyWalletRefunded: (id: string, amount: string) =>
     `ℹ️ مبلغ ${amount} از سفارشِ رد‌شده به کیف پول شما بازگشت.\n\n🆔 سفارش: ${id}`,
   adminRefundedLine: (amount: string) => `↩️ بازگشت به کیف پول مشتری: ${amount}`,
+
+  // ————— Phase 17: customer wallet top-up (Toman; MIN 45,000, same IRT unit) —————
+  topupButton: '➕ افزایش موجودی',
+  topupPromptAmount: (min: string) =>
+    `⌨️ مبلغ شارژ را به تومان بفرستید (حداقل ${min}).\n\nبرای انصراف «بازگشت به منو» را بزنید.`,
+  topupAmountInvalid:
+    '⚠️ مبلغ را صحیح و بدون نشانه‌ی اضافی بفرستید؛ یا «بازگشت» را بزنید.',
+  topupAmountTooSmall: (min: string) => `⚠️ حداقل مبلغ شارژ: ${min}`,
+  topupAmountTooBig: (max: string) => `⚠️ حداکثر مقدار مجاز در هر عملیات: ${max}`,
+  topupAmountLine: (v: string) => `💰 مبلغ شارژ: ${v}`,
+  topupReceiptPrompt:
+    '🧾 مبلغ دقیق شارژ را به شماره کارت ذکرشده واریز کنید.\nبعد از واریز، تصویر یا فایل فیش پرداخت را همین‌جا توی گفتگو بفرستید.\n\n🔎 بررسی فیش دستی است؛ ممکن است کمی زمان ببرد.',
+  topupSubmitted: (id: string) =>
+    `✅ درخواست شارژ ثبت شد و برای بررسی ارسال شد.\n\n🆔 کد: ${id}\n\nنتیجه‌ی بررسی را همین‌جا به شما خبر می‌دهیم.`,
+  topupReceiptReplaced: (id: string) =>
+    `✅ فیش جدید جایگزین شد و دوباره برای بررسی ارسال شد.\n\n🆔 کد: ${id}`,
+  topupWaitNotice:
+    '⏳ درخواست شارژ شما در انتظار بررسی است؛ نگران نباشید.\n\n💡 اگر فیش اشتباه ارسال شده، تصویر/فایل جدیدی بفرستید تا جایگزین شود.',
+  topupApproved: (id: string, amount: string) =>
+    `🎉 شارژ کیف پول تأیید شد!\n\n🆔 کد: ${id}\n💰 مبلغ: ${amount}\n\nموجودی کیف پول شما به‌روز شد.`,
+  topupRejected: (id: string, reason: string) =>
+    `❌ متأسفانه درخواست شارژ تأیید نشد.\n\n🆔 کد: ${id}\n📝 دلیل: ${reason}`,
+  topupReceiptMissing: '⚠️ درخواست شارژی مرتبط با این گفتگو پیدا نشد؛ از «💰 کیف پول» دوباره شروع کنید.',
+  topupNotPayable: '⚠️ این درخواست شارژ دیگر در مرحله‌ی ارسال فیش نیست.',
+  topupUserNotFound: '🚫 کاربری با این نام کاربری پیدا نشد.',
+  adminTopupHeader: '🧾 درخواست شارژ کیف پول',
+  adminTopupProcessedApprove: (id: string, adminId: string) =>
+    `✅ شارژ تأیید شد\n🆔 ${id}\nبررسی‌کننده: ${adminId}`,
+  adminTopupProcessedReject: (id: string, adminId: string) =>
+    `❌ شارژ رد شد\n🆔 ${id}\nبررسی‌کننده: ${adminId}`,
+  adminTopupQueueHeader: '🗂 درخواست‌های شارژ در انتظار بررسی',
+  adminTopupQueueEmpty: '🎉 در حال حاضر درخواست شارژی در انتظار بررسی نیست.',
+  adminTopupApprovedToast: '✅ شارژ تأیید و به کیف پول اضافه شد.',
+  adminTopupRejectedToast: '❌ درخواست شارژ رد شد.',
+  adminTopupStaleToast: 'این درخواست شارژ قبلاً بررسی شده است.',
+  myId: (id: string) => `🆔 Telegram ID: ${id}`,
 
   inviteHeader: '🤝 دعوت از دوستان',
   inviteLinkNone: (link: string) => `🔗 لینک دعوت شما:\n${link}`,
@@ -708,6 +745,8 @@ export const fa = {
         return fa.walletKindOrderPayment;
       case 'order_refund':
         return fa.walletKindOrderRefund;
+      case 'topup_credit':
+        return fa.walletKindTopupCredit;
       default:
         return kind.slice(0, 24);
     }

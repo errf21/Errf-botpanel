@@ -5,6 +5,7 @@ import { showPendingQueue } from './payment.ts';
 import { showFailedQueue } from './provisioning.ts';
 import { captureReferralOnStart, notifyReferralJoined } from './referrals.ts';
 import { handleWalletAdminCommand } from './wallet.ts';
+import { showTopupQueue } from './topup.ts';
 import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { showPricing } from './pricingAdmin.ts';
@@ -33,6 +34,12 @@ export async function handleCommand(
   if (!parsed) return;
 
   switch (parsed.name) {
+    case 'myid': {
+      // Phase 17: numeric Telegram id straight from the verified update —
+      // no DB read/write, no admin gate, never another user's id.
+      await ctx.api.sendMessage(ctx.chatId, t.myId(String(ctx.actor.id)));
+      return;
+    }
     case 'start': {
       // Referral deep-link capture (dispatcher probed first-ever status).
       if (ctx.pendingReferralCode) {
@@ -60,6 +67,14 @@ export async function handleCommand(
         await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
       } else {
         await showPendingQueue(ctx);
+      }
+      return;
+    case 'topups':
+      // Phase 17: admin-only recovery view for top-up receipts (twin of /pending).
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
+      } else {
+        await showTopupQueue(ctx);
       }
       return;
     case 'failed':

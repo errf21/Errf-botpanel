@@ -41,6 +41,13 @@ const ANNOUNCE_CALLBACK_PATTERN = /^ann:(go|ct):[0-9A-HJKMNP-TV-Z]{28}$/;
  */
 const PANEL_DELETE_CALLBACK_PATTERN = /^pdel:(ok|no):[0-9A-HJKMNP-TV-Z]{28}$/;
 
+/* ———— Phase 17: customer wallet top-up admin review ————
+ * `tup:` carries the wallet_topups id (ULID, same 28-char shape as orders).
+ * Produced ONLY by topupReviewKeyboard(), consumed ONLY by
+ * parseTopupCallback(); every tap re-checks admin + top-up state server-side.
+ */
+const TOPUP_CALLBACK_PATTERN = /^tup:(ok|no):[0-9A-HJKMNP-TV-Z]{28}$/;
+
 export function isValidCallbackData(data: unknown): data is string {
   return (
     typeof data === 'string' &&
@@ -49,7 +56,8 @@ export function isValidCallbackData(data: unknown): data is string {
       SERVICE_CALLBACK_PATTERN.test(data) ||
       TICKET_CALLBACK_PATTERN.test(data) ||
       ANNOUNCE_CALLBACK_PATTERN.test(data) ||
-      PANEL_DELETE_CALLBACK_PATTERN.test(data))
+      PANEL_DELETE_CALLBACK_PATTERN.test(data) ||
+      TOPUP_CALLBACK_PATTERN.test(data))
   );
 }
 
@@ -190,6 +198,65 @@ export function parsePanelDeleteCallback(data: string): PanelDeleteCallback | nu
   if (!orderId || !ORDER_ID_PATTERN.test(orderId)) return null;
   if (action !== 'ok' && action !== 'no') return null;
   return { action, orderId };
+}
+
+/* ———— Phase 17: wallet top-up review + amount parsing ———— */
+
+export type TopupReviewAction = 'ok' | 'no';
+
+export interface TopupCallback {
+  action: TopupReviewAction;
+  topupId: string;
+}
+
+/** Parses ONLY data that already matched TOPUP_CALLBACK_PATTERN. */
+export function parseTopupCallback(data: string): TopupCallback | null {
+  if (!TOPUP_CALLBACK_PATTERN.test(data)) return null;
+  const [, action, topupId] = /^tup:(\w+):(.+)$/.exec(data) ?? [];
+  if (!topupId || !ORDER_ID_PATTERN.test(topupId)) return null;
+  if (action !== 'ok' && action !== 'no') return null;
+  return { action, topupId };
+}
+
+/** Minimum customer top-up: 45,000 Toman, same IRT unit as the wallet. */
+export const MIN_TOPUP_IRT = 45_000;
+
+/**
+ * Customer top-up amount: whole Toman number, Persian/Arabic digits and
+ * thousands separators accepted (same normalization family as
+ * parsePricingAmount/parsePositiveInt). Range is enforced by the CALLER
+ * against MIN_TOPUP_IRT..maxCreditIrt; this parser only guarantees a
+ * positive safe integer within the wallet's absolute bound.
+ */
+export function parseTopupAmount(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  // Explicit sign or decimal input is never a top-up amount (checked on the
+  // raw text BEFORE separator stripping — a [+-.] class would also match ',').
+  const trimmed = raw.trim();
+  if (/^[+-]/.test(trimmed)) return null;
+  if (trimmed.includes('.')) return null;
+  let text = trimmed.replace(/\s+/gu, '').replace(/[٬,]/g, '');
+  text = text.replace(PERSIAN_DIGITS_ALL, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+  text = text.replace(ARABIC_DIGITS_ALL, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  if (!/^[0-9]{1,13}$/.test(text)) return null;
+  const num = Number(text);
+  if (!Number.isSafeInteger(num) || num <= 0) return null;
+  if (num > 1_000_000_000_000) return null;
+  return num;
+}
+
+/**
+ * Admin /credit target that may be a numeric Telegram id or a @username.
+ * Returns the stripped username (without '@') or null. Numeric ids keep
+ * flowing through parsePositiveId-equivalent handling at the call site.
+ */
+export function parseUsernameTarget(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  let text = raw.trim();
+  if (text.startsWith('@')) text = text.slice(1);
+  text = text.trim();
+  if (!/^[A-Za-z0-9_]{5,32}$/.test(text)) return null;
+  return text;
 }
 
 export function isValidOrderId(value: unknown): value is string {

@@ -24,9 +24,11 @@ import {
   getPendingAdminAction,
 } from '../db/admin_actions.ts';
 import { performAdminReview } from '../admin.ts';
+import { performTopupReview } from './topupAdmin.ts';
 import { acceptsTextInput, isBusy } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { submitReceipt } from './payment.ts';
+import { handleTopupAmountText, resumeTopup, submitTopupReceiptInput } from './topup.ts';
 import { resumeRenewal } from './renewal.ts';
 import { deliverTicketReply, submitSupportText } from './support.ts';
 import { saveAnnounceDraft } from './announcements.ts';
@@ -139,6 +141,50 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
         if (consumed) await clearPendingAdminAction(ctx.db, ctx.actor.id);
         return;
       }
+      // Phase 17: top-up rejection reason (or skip = default reason).
+      if (pending.action === 'topup_reject' && pending.target_id) {
+        if (stepPress === 'skip') {
+          await clearPendingAdminAction(ctx.db, ctx.actor.id);
+          const result = await performTopupReview({
+            env: ctx.env,
+            db: ctx.db,
+            api: ctx.api,
+            actorId: ctx.actor.id,
+            topupId: pending.target_id,
+            decision: 'reject',
+            reason: fa.adminRejectDefaultReason,
+          });
+          await ctx.api.sendMessage(
+            ctx.chatId,
+            result.ok ? fa.adminTopupRejectedToast : fa.adminTopupStaleToast,
+          );
+          return;
+        }
+        const reason = sanitizeRejectionReason(text);
+        if (reason === null) {
+          await ctx.api.sendMessage(
+            ctx.chatId,
+            fa.adminRejectPromptMsg,
+            adminRejectPromptKeyboard(),
+          );
+          return;
+        }
+        await clearPendingAdminAction(ctx.db, ctx.actor.id);
+        const result = await performTopupReview({
+          env: ctx.env,
+          db: ctx.db,
+          api: ctx.api,
+          actorId: ctx.actor.id,
+          topupId: pending.target_id,
+          decision: 'reject',
+          reason,
+        });
+        await ctx.api.sendMessage(
+          ctx.chatId,
+          result.ok ? fa.adminTopupRejectedToast : fa.adminTopupStaleToast,
+        );
+        return;
+      }
       // Phase 12: pricing value entry / re-staging. MUST be checked BEFORE
       // the order_id-less fallback below (pricing arming never has one);
       // the arming clears only via confirm/cancel/back, garbage never eats it.
@@ -190,6 +236,16 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
   // ———— Phase 7: announcement draft ————
   if (session.state === 'WAITING_ANNOUNCE_TEXT') {
     await saveAnnounceDraft(ctx, session, text);
+    return;
+  }
+
+  // ———— Phase 17: top-up amount (free text) / receipt-state text nudge ————
+  if (session.state === 'WAITING_TOPUP_AMOUNT') {
+    await handleTopupAmountText(ctx, session, text);
+    return;
+  }
+  if (session.state === 'WAITING_TOPUP_RECEIPT') {
+    await ctx.api.sendMessage(ctx.chatId, t.topupWaitNotice, backToMenuKeyboard(ctx.ui));
     return;
   }
 
@@ -326,6 +382,10 @@ export async function handleMedia(
   const session = await getSession(ctx.db, ctx.customerId);
   if (session.state === 'WAITING_PAYMENT_RECEIPT') {
     await submitReceipt(ctx, session, receipt);
+    return;
+  }
+  if (session.state === 'WAITING_TOPUP_RECEIPT') {
+    await submitTopupReceiptInput(ctx, session, receipt);
     return;
   }
   if (session.state === 'IDLE') {

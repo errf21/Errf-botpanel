@@ -74,6 +74,8 @@ export const CONVERSATION_STATES = [
   'WAITING_SUPPORT_MESSAGE',
   'WAITING_ANNOUNCE_TEXT',
   'WAITING_ANNOUNCE_CONFIRM',
+  'WAITING_TOPUP_AMOUNT',
+  'WAITING_TOPUP_RECEIPT',
 ] as const;
 
 export type ConversationState = (typeof CONVERSATION_STATES)[number];
@@ -92,6 +94,9 @@ export interface StateData {
   renews_order_id?: string;
   /** Phase 7: 'full' pays the whole order from the wallet, 'partial' credits it. */
   wallet_use?: 'full' | 'partial';
+  /** Phase 17: customer wallet top-up draft (isolated from orders). */
+  topup_id?: string;
+  topup_amount?: number;
   /** Phase 7: announcement id awaiting the admin's final confirm tap. */
   announcement_id?: string;
   [key: string]: unknown;

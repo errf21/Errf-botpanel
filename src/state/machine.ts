@@ -28,6 +28,9 @@ export type ConversationEvent =
   | 'announce_start'
   | 'announce_draft_saved'
   | 'announce_confirmed'
+  | 'topup_start'
+  | 'topup_amount_accepted'
+  | 'topup_receipt_received'
   | 'step_back'
   | 'cancel'
   | 'back_to_menu'
@@ -59,6 +62,11 @@ const FORWARD: Partial<
   announce_start: [['IDLE', 'WAITING_ANNOUNCE_TEXT']],
   announce_draft_saved: [['WAITING_ANNOUNCE_TEXT', 'WAITING_ANNOUNCE_CONFIRM']],
   announce_confirmed: [['WAITING_ANNOUNCE_CONFIRM', 'IDLE']],
+  // Phase 17 top-up: isolated from orders — amount text, then receipt media.
+  // The receipt state self-loops so a replacement receipt stays in place.
+  topup_start: [['IDLE', 'WAITING_TOPUP_AMOUNT']],
+  topup_amount_accepted: [['WAITING_TOPUP_AMOUNT', 'WAITING_TOPUP_RECEIPT']],
+  topup_receipt_received: [['WAITING_TOPUP_RECEIPT', 'WAITING_TOPUP_RECEIPT']],
 };
 
 export function isConversationState(value: string): value is ConversationState {
@@ -78,6 +86,9 @@ const BACK_MAP: Partial<Record<ConversationState, ConversationState>> = {
   WAITING_PAYMENT_RECEIPT: 'WAITING_PAYMENT_RECEIPT',
   // Renewal ladder back (its duration step backs out to IDLE via the map miss).
   WAITING_RENEWAL_CONFIRMATION: 'WAITING_RENEWAL_DURATION',
+  // Top-up receipt is durable-adjacent (request row exists): frozen like payment.
+  WAITING_TOPUP_RECEIPT: 'WAITING_TOPUP_RECEIPT',
+  WAITING_TOPUP_AMOUNT: 'IDLE',
 };
 
 /**
@@ -113,6 +124,8 @@ const TEXT_ACCEPTING_STATES: readonly ConversationState[] = [
   // Phase 7: support body and announcement text are free-text by design.
   'WAITING_SUPPORT_MESSAGE',
   'WAITING_ANNOUNCE_TEXT',
+  // Phase 17: top-up amount is free-text by design.
+  'WAITING_TOPUP_AMOUNT',
 ];
 
 export function acceptsTextInput(state: ConversationState): boolean {

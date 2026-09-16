@@ -58,6 +58,8 @@ export const CB = {
   /** Phase 7: wallet-paid order buttons on the purchase/renewal summary. */
   PAY_WALLET_FULL: 'wlt:full',
   PAY_WALLET_PART: 'wlt:part',
+  /** Phase 17: customer wallet top-up entry (wallet view → amount → receipt). */
+  TOPUP_START: 'top:start',
   /** Phase 15: claim the one-time free test (offer / services empty state). */
   TEST_CLAIM: 'tst:claim',
 } as const;
@@ -620,6 +622,44 @@ export function walletPayKeyboard(ui: Ui, partialAvailable: boolean): TelegramIn
     [button(t.stepBack, CB.STEP_BACK), button(t.btnCancelInline, CB.ACT_CANCEL)],
   );
   return { inline_keyboard: rows };
+}
+
+/* ———— Phase 17: customer wallet top-up ————
+ * Top-up lives OUTSIDE orders: the wallet view gains one entry button, and
+ * admin review rides its own `tup:` namespace (strict parser in validate.ts),
+ * so a forged tap can only ever address the top-up it was minted for.
+ */
+export function topupCallback(action: 'ok' | 'no', topupId: string): string {
+  return `tup:${action}:${topupId}`;
+}
+
+/** Wallet view: top-up entry (hidden under sales stop / kill-switch) + back. */
+export function walletViewKeyboard(ui: Ui, showTopup: boolean): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [];
+  if (showTopup) {
+    rows.push([button(ui.t.topupButton, CB.TOPUP_START)]);
+  }
+  rows.push([button(ui.t.backToMenu, CB.ACT_BACK_MENU)]);
+  return { inline_keyboard: rows };
+}
+
+/** Admin review keyboard for one top-up request (Persian operational surface). */
+export function topupReviewKeyboard(topupId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button('✅ تأیید شارژ', topupCallback('ok', topupId)), button('❌ رد', topupCallback('no', topupId))],
+    ],
+  };
+}
+
+/** Admin queue rows for pending top-ups: one approve/reject pair per request. */
+export function topupQueueKeyboard(topupIds: string[]): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: topupIds.map((id) => [
+      button('✅', topupCallback('ok', id)),
+      button('❌', topupCallback('no', id)),
+    ]),
+  };
 }
 
 /** Phase 8A: the config-name step is free text → composing mode with auto-pick. */

@@ -340,6 +340,7 @@ const en: Texts = {
   walletKindAdminDebit: '➖ Deduction',
   walletKindOrderPayment: '🛒 Order payment',
   walletKindOrderRefund: '↩️ Credit returned',
+  walletKindTopupCredit: '➕ Wallet top-up',
   walletDebited: (v: string) => `✅ ${v} was deducted from the balance.`,
   walletGranted: (v: string) => `✅ ${v} was added to the wallet.`,
   walletAmountInvalid:
@@ -365,6 +366,42 @@ const en: Texts = {
   notifyWalletRefunded: (id: string, amount: string) =>
     `ℹ️ ${amount} from the rejected order has been returned to your wallet.\n\n🆔 Order: ${id}`,
   adminRefundedLine: (amount: string) => `↩️ Refunded to customer wallet: ${amount}`,
+
+  // ————— Phase 17: customer wallet top-up (Toman; MIN 45,000, same IRT unit) —————
+  topupButton: '➕ Top up',
+  topupPromptAmount: (min: string) =>
+    `⌨️ Send the top-up amount in Toman (minimum ${min}).\n\nPress "Back to menu" to cancel.`,
+  topupAmountInvalid:
+    '⚠️ Send a clean amount with no extra symbols — or press "Back".',
+  topupAmountTooSmall: (min: string) => `⚠️ Minimum top-up is: ${min}`,
+  topupAmountTooBig: (max: string) => `⚠️ The maximum per operation is: ${max}`,
+  topupAmountLine: (v: string) => `💰 Top-up amount: ${v}`,
+  topupReceiptPrompt:
+    '🧾 Transfer the exact top-up amount to the card number above.\nAfter paying, send a photo or file of the payment receipt right here in this chat.\n\n🔎 Receipt review is done manually; it may take a little while.',
+  topupSubmitted: (id: string) =>
+    `✅ Top-up submitted for review.\n\n🆔 ID: ${id}\n\nWe will message you the review result here.`,
+  topupReceiptReplaced: (id: string) =>
+    `✅ New receipt received — the old one has been replaced and sent for review.\n\n🆔 ID: ${id}`,
+  topupWaitNotice:
+    '⏳ Your top-up request is under review.\n\n💡 Sent the wrong receipt? Just send a new image/file and it will be replaced.',
+  topupApproved: (id: string, amount: string) =>
+    `🎉 Top-up approved!\n\n🆔 ID: ${id}\n💰 Amount: ${amount}\n\nYour wallet balance is updated.`,
+  topupRejected: (id: string, reason: string) =>
+    `❌ Unfortunately, the top-up request wasn't approved.\n\n🆔 ID: ${id}\n📝 Reason: ${reason}`,
+  topupReceiptMissing: '⚠️ No top-up request found for this chat — start again from "💰 Wallet".',
+  topupNotPayable: '⚠️ This top-up request is no longer waiting for a receipt.',
+  topupUserNotFound: '🚫 No user found with that username.',
+  adminTopupHeader: '🧾 New receipt to review',
+  adminTopupProcessedApprove: (id: string, adminId: string) =>
+    `✅ Approved\n🆔 ${id}\nreviewed by: ${adminId}`,
+  adminTopupProcessedReject: (id: string, adminId: string) =>
+    `❌ Rejected\n🆔 ${id}\nreviewed by: ${adminId}`,
+  adminTopupQueueHeader: '🗂 Receipts awaiting review',
+  adminTopupQueueEmpty: '🎉 No receipts are waiting for review.',
+  adminTopupApprovedToast: '✅ Order approved.',
+  adminTopupRejectedToast: '❌ Order rejected.',
+  adminTopupStaleToast: 'This order has already been reviewed.',
+  myId: (id: string) => `🆔 Telegram ID: ${id}`,
 
   inviteHeader: '🤝 Invite friends',
   inviteLinkNone: (link: string) => `🔗 Your invite link:\n${link}`,
@@ -689,6 +726,8 @@ Green status in the app means your whole machine is routed.`,
         return en.walletKindOrderPayment;
       case 'order_refund':
         return en.walletKindOrderRefund;
+      case 'topup_credit':
+        return en.walletKindTopupCredit;
       default:
         return kind.slice(0, 24);
     }

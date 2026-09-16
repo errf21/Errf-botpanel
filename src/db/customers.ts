@@ -115,6 +115,31 @@ export async function getCustomer(
     .first<CustomerRecord>();
 }
 
+/**
+ * Phase 17: username lookup for admin /credit @username. Telegram usernames
+ * are case-insensitive; the stored value is refreshed on every upsert, so a
+ * user who never interacted (or has no username) simply yields null — the
+ * caller treats that as zero-mutation, exactly like an unknown numeric id.
+ * Numeric identity stays canonical: callers resolve to the customer row and
+ * then use its internal id / telegram_user_id for all money movement.
+ */
+export async function getCustomerByUsername(
+  db: D1Database,
+  username: string,
+): Promise<CustomerRecord | null> {
+  const name = username.trim().replace(/^@/, '').trim();
+  if (!/^[A-Za-z0-9_]{5,32}$/.test(name)) return null;
+  return db
+    .prepare(
+      `SELECT id, telegram_user_id, telegram_username, first_name, last_name,
+              language_code, language, is_admin, created_at, updated_at
+         FROM customers
+        WHERE telegram_username = ?1 COLLATE NOCASE LIMIT 1`,
+    )
+    .bind(name)
+    .first<CustomerRecord>();
+}
+
 /** DB-side admin flag. Absent/unregistered users are never admins. */
 export async function isAdminUserId(
   db: D1Database,

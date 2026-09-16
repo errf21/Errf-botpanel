@@ -8,11 +8,12 @@
 import type { UpdateContext } from '../types.ts';
 import { getBalance, listWalletEntries, type WalletEntryRow } from '../db/wallet.ts';
 import { loadWalletConfig, type WalletConfig } from '../catalog/wallet.ts';
-import { getCustomer } from '../db/customers.ts';
-import { backToMenuKeyboard, composingKeyboard } from '../telegram/menu.ts';
+import { isSalesStopped } from '../catalog/sales.ts';
+import { getCustomer, getCustomerByUsername } from '../db/customers.ts';
+import { backToMenuKeyboard, composingKeyboard, walletViewKeyboard } from '../telegram/menu.ts';
 import { fa, faAdmin, formatPrice } from '../telegram/texts.ts';
 import { FA_UI } from '../telegram/i18n.ts';
-import { parseCommand, parseWalletAmount } from '../lib/validate.ts';
+import { parseCommand, parseUsernameTarget, parseWalletAmount } from '../lib/validate.ts';
 import { applyWalletMutation } from '../db/wallet.ts';
 import {
   clearPendingAdminAction,
@@ -57,7 +58,15 @@ export async function showMyWallet(ctx: UpdateContext): Promise<void> {
       );
     });
   }
-  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), backToMenuKeyboard(ctx.ui));
+  // Phase 17: top-up entry lives on the wallet view. Hidden while sales are
+  // stopped (server gates below enforce the same rule for stale taps).
+  let showTopup = true;
+  try {
+    showTopup = !(await isSalesStopped(ctx.db));
+  } catch {
+    showTopup = true;
+  }
+  await ctx.api.sendMessage(ctx.chatId, lines.join('\n\n'), walletViewKeyboard(ctx.ui, showTopup));
 }
 
 /* ———— Admin money commands: /credit, /debit ————
@@ -83,26 +92,46 @@ export async function handleWalletAdminCommand(
     return 'handled';
   }
   const [targetRaw = '', amountRaw = ''] = parsed.args;
-  const targetTg = parsePositiveId(targetRaw);
   const grant = parsed.name === 'credit';
   const usage = faAdmin.walletUsage(grant);
-  if (targetTg === null) {
-    await ctx.api.sendMessage(ctx.chatId, `${usage}\n${faAdmin.walletUsageExample}`);
-    return 'handled';
+  // Phase 17: numeric Telegram id stays canonical; @username is lookup-only.
+  let record = null;
+  const targetTg = parsePositiveId(targetRaw);
+  if (targetTg !== null) {
+    if (targetTg === ctx.actor.id) {
+      await ctx.api.sendMessage(ctx.chatId, fa.invalidChoice);
+      return 'handled';
+    }
+    record = await getCustomer(ctx.db, targetTg);
+    if (!record) {
+      await ctx.api.sendMessage(ctx.chatId, fa.walletTargetUser(fa.accountNone));
+      return 'handled';
+    }
+  } else {
+    const username = parseUsernameTarget(targetRaw);
+    if (username === null) {
+      await ctx.api.sendMessage(ctx.chatId, `${usage}\n${faAdmin.walletUsageExample}`);
+      return 'handled';
+    }
+    record = await getCustomerByUsername(ctx.db, username);
+    if (!record) {
+      await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.topupUserNotFound);
+      return 'handled';
+    }
+    if (Number(record.telegram_user_id) === ctx.actor.id) {
+      await ctx.api.sendMessage(ctx.chatId, fa.invalidChoice);
+      return 'handled';
+    }
   }
-  if (targetTg === ctx.actor.id) {
-    await ctx.api.sendMessage(ctx.chatId, fa.invalidChoice);
-    return 'handled';
-  }
-  const record = await getCustomer(ctx.db, targetTg);
-  if (!record) {
+  const resolvedTg = Number(record.telegram_user_id);
+  if (!Number.isSafeInteger(resolvedTg) || resolvedTg <= 0) {
     await ctx.api.sendMessage(ctx.chatId, fa.walletTargetUser(fa.accountNone));
     return 'handled';
   }
   const amount = parseWalletAmount(amountRaw);
   if (amount === null || amount.sign !== 1) {
     // arm via text interception if no valid amount given inline
-    await setPendingAdminWalletAction(ctx.db, ctx.actor.id, grant ? 'wallet_grant' : 'wallet_debit', targetTg);
+    await setPendingAdminWalletAction(ctx.db, ctx.actor.id, grant ? 'wallet_grant' : 'wallet_debit', resolvedTg);
     // Phase 8A: admin now types the amount as free text — hide the main keyboard.
     await ctx.api.sendMessage(
       ctx.chatId,

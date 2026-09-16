@@ -7,10 +7,12 @@ import {
   parseTicketCallback,
   parseAnnounceCallback,
   parsePanelDeleteCallback,
+  parseTopupCallback,
 } from '../lib/validate.ts';
 import {
   CB,
   adminRejectPromptKeyboard,
+  backToMenuKeyboard,
   isKnownCallback,
   mainMenuKeyboard,
   routeCallback,
@@ -56,6 +58,12 @@ import { runAnnouncementPass, showAnnouncements } from './announcements.ts';
 import { handlePricingCallback } from './pricingAdmin.ts';
 import { handleSalesCallback } from './salesAdmin.ts';
 import { handlePanelDeleteCallback } from './panelDelete.ts';
+import { handleTopupStart } from './topup.ts';
+import {
+  finishTopupReview,
+  performTopupReview,
+} from './topupAdmin.ts';
+import { setPendingTopupReject } from '../db/admin_actions.ts';
 import { cancelToMenu } from './commands.ts';
 import { claimFreeTestTap } from './freeTest.ts';
 
@@ -168,6 +176,12 @@ export async function handleCallback(
       return;
     }
     await handlePanelDeleteCallback(ctx, parsed, callbackQueryId, messageChatId, messageId);
+    return;
+  }
+
+  // ———— Phase 17: wallet top-up review (admin-gated inside the handler too) ————
+  if (data.startsWith('tup:')) {
+    await handleTopupCallback(ctx, data, callbackQueryId, messageChatId, messageId);
     return;
   }
 
@@ -296,6 +310,17 @@ export async function handleCallback(
     }
 
     case CB.STEP_BACK: {
+      // Phase 17: top-up ladder backs out without touching purchase drafts.
+      if (session.state === 'WAITING_TOPUP_RECEIPT') {
+        await ctx.api.answerCallbackQuery(callbackQueryId);
+        await ctx.api.sendMessage(ctx.chatId, t.topupWaitNotice, backToMenuKeyboard(ctx.ui));
+        return;
+      }
+      if (session.state === 'WAITING_TOPUP_AMOUNT') {
+        await ctx.api.answerCallbackQuery(callbackQueryId);
+        await cancelToMenu(ctx); // clears session, sends menu
+        return;
+      }
       const loaded = await loadCatalog(ctx.db);
       if (!loaded.ok) {
         await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
@@ -390,6 +415,13 @@ export async function handleCallback(
         walletMode,
         callbackQueryId,
       );
+      return;
+    }
+
+    case CB.TOPUP_START: {
+      // Phase 17: wallet top-up entry — sales-stop + kill-switch enforced
+      // inside the handler, so stale/forged taps are rejected server-side.
+      await handleTopupStart(ctx, session, callbackQueryId);
       return;
     }
   }
@@ -498,5 +530,51 @@ async function finishAdminReview(
     approved
       ? fa.adminProcessedApprove(result.order.id, String(ctx.actor.id))
       : fa.adminProcessedReject(result.order.id, String(ctx.actor.id)),
+  );
+}
+
+/**
+ * Handles `tup:ok:` / `tup:no:` (Phase 17 top-up review). Called ONLY after
+ * the callback passed format validation AND the actor is a verified admin.
+ * `ok` approves (guarded claim + exactly-once credit); `no` arms the
+ * reject-reason prompt (same 15-min one-per-admin rule as order rejects).
+ */
+async function handleTopupCallback(
+  ctx: UpdateContext,
+  data: string,
+  callbackQueryId: string,
+  messageChatId: number | null,
+  messageId: number | null,
+): Promise<void> {
+  const parsed = parseTopupCallback(data);
+  if (!ctx.isAdmin || !parsed) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.invalidChoice);
+    return;
+  }
+  if (parsed.action === 'ok') {
+    const result = await performTopupReview({
+      env: ctx.env,
+      db: ctx.db,
+      api: ctx.api,
+      actorId: ctx.actor.id,
+      topupId: parsed.topupId,
+      decision: 'approve',
+    });
+    await finishTopupReview(
+      ctx.api,
+      ctx.actor.id,
+      result,
+      callbackQueryId,
+      messageChatId,
+      messageId,
+    );
+    return;
+  }
+  await setPendingTopupReject(ctx.db, ctx.actor.id, parsed.topupId);
+  await ctx.api.answerCallbackQuery(callbackQueryId);
+  await ctx.api.sendMessage(
+    ctx.chatId,
+    fa.adminRejectPromptMsg,
+    adminRejectPromptKeyboard(),
   );
 }
