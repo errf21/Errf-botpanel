@@ -140,7 +140,7 @@ export async function handleWalletAdminCommand(
     );
     return 'handled';
   }
-  await applyWalletAdminAction(ctx, record.id, grant, amount.amount);
+  await applyWalletAdminAction(ctx, record.id, resolvedTg, grant, amount.amount);
   return 'handled';
 }
 
@@ -165,13 +165,14 @@ export async function completeArmedWalletAction(
     await ctx.api.sendMessage(ctx.chatId, fa.walletTargetUser(fa.accountNone));
     return true;
   }
-  await applyWalletAdminAction(ctx, record.id, pending.action === 'wallet_grant', parsed.amount);
+  await applyWalletAdminAction(ctx, record.id, targetTg, pending.action === 'wallet_grant', parsed.amount);
   return true;
 }
 
 async function applyWalletAdminAction(
   ctx: UpdateContext,
   targetCustomerId: number,
+  targetTgId: number,
   grant: boolean,
   amountIrt: number,
 ): Promise<void> {
@@ -205,6 +206,14 @@ async function applyWalletAdminAction(
       ? fa.walletGranted(formatPrice(amountIrt, 'IRT'))
       : fa.walletDebited(formatPrice(amountIrt, 'IRT')),
   );
+  // Notification-only: the mutation above already succeeded. A notify
+  // failure must never roll back or alter it.
+  if (Number.isSafeInteger(targetTgId) && targetTgId > 0) {
+    const text = grant
+      ? `💰 افزایش موجودی کیف پول\nمبلغ ${amountIrt.toLocaleString('en-US')} تومان توسط مدیریت به کیف پول شما اضافه شد.\nموجودی جدید شما: ${result.balance.toLocaleString('en-US')} تومان ✅`
+      : `💰 کسر از موجودی کیف پول\nمبلغ ${amountIrt.toLocaleString('en-US')} تومان توسط مدیریت از کیف پول شما کسر شد.\nموجودی جدید شما: ${result.balance.toLocaleString('en-US')} تومان`;
+    await ctx.api.sendMessage(targetTgId, text).catch(() => undefined);
+  }
 }
 
 function parsePositiveId(raw: string): number | null {
