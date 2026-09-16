@@ -188,9 +188,10 @@ function setExpiry(orderId: string, atMs: number): void {
 
 /**
  * Sweep isolation (same discipline as the Phase 9 suite's `retire()`): mark
- * the PAID kinds 'sent' for every OTHER completed purchase so a global sweep
- * only ever counts the service under test. Test-kind rows never pre-exist for
- * these orders (claims are empty for them), so they stay unaffected.
+ * the notice kinds 'sent' for every OTHER completed purchase so a global
+ * sweep only ever counts the service under test. Covers paid kinds plus the
+ * isolated test kinds (harmless for cross-class rows: EXISTS/NOT EXISTS
+ * mismatch means they never become candidates anyway).
  */
 function settleOtherPaidServices(keepOrderId: string): void {
   sqlite
@@ -198,10 +199,22 @@ function settleOtherPaidServices(keepOrderId: string): void {
       `INSERT OR IGNORE INTO service_notifications (order_id, kind, status)
        SELECT o.id, k.kind, 'sent'
          FROM orders o
-         CROSS JOIN (SELECT 'expiring' AS kind UNION ALL SELECT 'usage90') k
+         CROSS JOIN (SELECT 'expiring' AS kind UNION ALL SELECT 'usage90' UNION ALL SELECT 'free_test_expiring' UNION ALL SELECT 'free_test_usage90' UNION ALL SELECT 'free_test_exhausted') k
         WHERE o.state = 'completed' AND o.kind = 'purchase' AND o.id != ?1`,
     )
     .run(keepOrderId);
+}
+
+/** Set live panel usage for a test order (SI bytes on the wire). */
+function setTestUsage(orderId: string, usedBytes: number, limitBytes: number): void {
+  const row = sqlite.prepare('SELECT pasarguard_username AS u FROM orders WHERE id = ?1').get(orderId) as {
+    u: string | null;
+  };
+  assert.ok(row.u, 'test service is linked on the panel');
+  const fake = users.get(row.u as string);
+  assert.ok(fake, 'panel user exists for the test service');
+  fake.used_traffic = usedBytes;
+  fake.data_limit = limitBytes;
 }
 
 async function startAndClaim(user: typeof USER): Promise<string> {
@@ -637,24 +650,34 @@ test('P15-12 proofs#2/#3/#4: paid legs ignore a test; its 2h notice fires once; 
   assert.equal(r.expirySent, 0, 'paid expiry ignores a claimed order (window overlap deliberate)');
   assert.equal(r.usageSent, 0, 'paid usage ignores a claimed order too');
   assert.equal(r.freeTestSent, 0, '3h out is still too early');
-  assert.equal(noticeKinds(orderId).length, 0, 'no row birthed before the window');
-  assert.equal(getsByTestUsername(orderId).length, 0, 'never enters panel polling');
+  assert.equal(r.freeTestExhaustedSent, 0, 'fresh 0/100MB test is not exhausted');
+  // The isolated test-usage leg polls the panel (fresh 0/100MB → not_yet
+  // backoff); the PAID usage90 row must never exist for a claimed order.
+  assert.equal(noticeKinds(orderId).filter((k) => k.kind === 'usage90').length, 0);
+  assert.equal(noticeKinds(orderId).filter((k) => k.kind === 'expiring').length, 0);
+  assert.equal(getsByTestUsername(orderId).length, 2, 'both isolated test legs poll once, then back off');
+  assert.equal(
+    noticeKinds(orderId).find((k) => k.kind === 'free_test_usage90')?.status,
+    'pending',
+  );
 
   expires = now + 2 * HOUR_MS - 60_000; // firmly inside the window (slack included)
   setExpiry(orderId, expires);
+  stub.panel.reset();
   r = await runServiceNotificationSweep(env, now);
   assert.equal(r.freeTestSent, 1, 'exactly one dedicated notice');
   assert.equal(r.expirySent + r.usageSent, 0);
-  assert.deepEqual(
-    noticeKinds(orderId),
-    [{ kind: 'free_test_expiring', status: 'sent' }],
-    'settled terminal row, test kind only',
+  assert.equal(
+    noticeKinds(orderId).find((k) => k.kind === 'free_test_expiring')?.status,
+    'sent',
+    'settled terminal row for the test expiry kind',
   );
+  assert.equal(noticeKinds(orderId).filter((k) => k.kind === 'usage90').length, 0);
+  assert.equal(noticeKinds(orderId).filter((k) => k.kind === 'expiring').length, 0);
   const copy = textsTo(user.id).find((m) => m.includes('⏳'))!;
   assert.ok(copy.includes('درود زیبا'), 'standalone notice persona rule');
   assert.ok(copy.includes('تست'), 'copy names the test');
   assert.ok(!/گیگ/.test(copy), 'unit-honest: no GB phrasing on a test notice');
-  assert.equal(getsByTestUsername(orderId).length, 0, 'still zero usage GETs for the test');
 
   // proof#4: replay at the same instant, in-window, past expiry → nothing, ever.
   r = await runServiceNotificationSweep(env, now);
@@ -662,8 +685,11 @@ test('P15-12 proofs#2/#3/#4: paid legs ignore a test; its 2h notice fires once; 
   r = await runServiceNotificationSweep(env, now + HOUR_MS);
   assert.equal(r.freeTestSent, 0);
   r = await runServiceNotificationSweep(env, expires + MIN);
-  assert.equal(r.freeTestSent, 0, 'after expiry: the missed-window rule stays');
-  assert.equal(noticeKinds(orderId).length, 1, 'a single row forever');
+  assert.equal(r.freeTestSent, 0, 'already-sent row stays terminal inside the grace');
+  assert.equal(
+    noticeKinds(orderId).find((k) => k.kind === 'free_test_expiring')?.status,
+    'sent',
+  );
 });
 
 const MIN = 60_000;
@@ -695,4 +721,283 @@ test('P15-14 the notice follows the recipient language', async () => {
   const en = textsTo(user.id).find((m) => m.includes('⏳'))!;
   assert.ok(/free test/i.test(en), 'English copy names the test');
   assert.ok(!/[\u0600-\u06FF]/.test(en), 'no Persian leaks into the English notice');
+});
+
+/* ————— 5. Phase 15b: isolated test usage + exhausted + expiry grace ————— */
+
+test('P15-15 free_test_usage90 fires once at 90MB with MB copy; 89MB stays silent + backs off', async () => {
+  const { runServiceNotificationSweep } = await import('../src/handlers/serviceNotifications.ts');
+  const user = freshUser();
+  const orderId = await startAndClaim(user);
+  const now = Date.now();
+  setExpiry(orderId, now + 20 * HOUR_MS); // far from the 2h expiry window
+  setTestUsage(orderId, 90_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(orderId);
+  const r = await runServiceNotificationSweep(env, now);
+  assert.equal(r.freeTestUsageSent, 1, 'exactly one 90% notice');
+  assert.equal(r.usageSent, 0, 'paid usage90 untouched');
+  assert.equal(r.expirySent, 0);
+  assert.equal(r.freeTestSent, 0);
+  const sends = textsTo(user.id).filter((m) => m.includes('📊'));
+  assert.equal(sends.length, 1);
+  const text = sends[0]!;
+  assert.ok(text.startsWith('درود زیبا،'), 'standalone persona');
+  assert.ok(text.includes('90٪'), 'percent shown');
+  assert.ok(text.includes('10 مگابایت'), 'MB-true remaining');
+  assert.ok(!/گیگ/.test(text), 'no GB phrasing on a test notice');
+  assert.equal(text.includes('سلام'), false);
+  assert.equal(
+    noticeKinds(orderId).find((k) => k.kind === 'free_test_usage90')?.status,
+    'sent',
+  );
+  assert.equal(noticeKinds(orderId).filter((k) => k.kind === 'usage90').length, 0);
+
+  // Replay + backoff: settled row leaves the candidate set forever.
+  stub.reset(); stub.panel.reset();
+  const again = await runServiceNotificationSweep(env, now + 2 * HOUR_MS);
+  assert.equal(again.freeTestUsageSent, 0);
+  assert.equal(textsTo(user.id).filter((m) => m.includes('📊')).length, 0);
+
+  // Below quota: silent + pending backoff, re-polled only after 60 min.
+  const user2 = freshUser();
+  const order2 = await startAndClaim(user2);
+  setExpiry(order2, now + 20 * HOUR_MS);
+  setTestUsage(order2, 89_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(order2);
+  const r2 = await runServiceNotificationSweep(env, now);
+  assert.equal(r2.freeTestUsageSent, 0);
+  assert.equal(
+    noticeKinds(order2).find((k) => k.kind === 'free_test_usage90')?.status,
+    'pending',
+  );
+  const gets1 = stub.panel.calls.filter((c) => c.method === 'GET').length;
+  assert.ok(gets1 >= 1, 'polled once');
+  stub.panel.reset();
+  await runServiceNotificationSweep(env, now + 10 * MIN);
+  assert.equal(stub.panel.calls.filter((c) => c.method === 'GET').length, 0, 'backoff holds');
+  const r3 = await runServiceNotificationSweep(env, now + 61 * MIN);
+  assert.equal(r3.freeTestUsageSent, 0, 'still below quota after backoff');
+  assert.ok(stub.panel.calls.filter((c) => c.method === 'GET').length >= 1, 're-polled');
+});
+
+test('P15-16 free_test_exhausted: exact/at-over quota fires once; below/unlimited silent; independent of 90%', async () => {
+  const { runServiceNotificationSweep } = await import('../src/handlers/serviceNotifications.ts');
+  const user = freshUser();
+  const orderId = await startAndClaim(user);
+  const now = Date.now();
+  setExpiry(orderId, now + 20 * HOUR_MS);
+  setTestUsage(orderId, 100_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(orderId);
+  const r = await runServiceNotificationSweep(env, now);
+  assert.equal(r.freeTestExhaustedSent, 1, 'exact quota fires');
+  // 100% also crosses 90%: both isolated rows may birth on the same sweep.
+  assert.equal(r.freeTestUsageSent, 1, '90% leg is independent, not suppressed');
+  assert.equal(r.usageSent, 0, 'paid usage90 untouched');
+  const texts = textsTo(user.id);
+  assert.ok(texts.some((m) => m.includes('تموم شد')), 'fa exhausted copy');
+  assert.ok(texts.some((m) => m.includes('🛒 خرید سرویس')), 'soft CTA present');
+  assert.equal(
+    noticeKinds(orderId).find((k) => k.kind === 'free_test_exhausted')?.status,
+    'sent',
+  );
+
+  // Above quota also counts, but an already-sent row never re-fires.
+  setTestUsage(orderId, 120_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  const rOver = await runServiceNotificationSweep(env, now + HOUR_MS);
+  assert.equal(rOver.freeTestExhaustedSent, 0, 'once-only even above quota');
+
+  // Overlapping sweeps on a fresh exhausted service: exactly one winner.
+  const userO = freshUser();
+  const orderO = await startAndClaim(userO);
+  setExpiry(orderO, now + 20 * HOUR_MS);
+  setTestUsage(orderO, 100_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(orderO);
+  const [a, b] = await Promise.all([
+    runServiceNotificationSweep(env, now),
+    runServiceNotificationSweep(env, now + 1_000),
+  ]);
+  assert.equal(a.freeTestExhaustedSent + b.freeTestExhaustedSent, 1);
+
+  // Below quota: silent.
+  const userB = freshUser();
+  const orderB = await startAndClaim(userB);
+  setExpiry(orderB, now + 20 * HOUR_MS);
+  setTestUsage(orderB, 50_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(orderB);
+  const rB = await runServiceNotificationSweep(env, now);
+  assert.equal(rB.freeTestExhaustedSent, 0);
+  assert.equal(textsTo(userB.id).filter((m) => m.includes('تموم شد')).length, 0);
+
+  // Unlimited/unknown quota: never exhausted.
+  const userU = freshUser();
+  const orderU = await startAndClaim(userU);
+  setExpiry(orderU, now + 20 * HOUR_MS);
+  setTestUsage(orderU, 999_000_000, 0); // data_limit 0 = panel unlimited
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(orderU);
+  const rU = await runServiceNotificationSweep(env, now);
+  assert.equal(rU.freeTestExhaustedSent, 0);
+  assert.equal(rU.freeTestUsageSent, 0);
+
+  // English copy.
+  const userE = freshUser();
+  const orderE = await startAndClaim(userE);
+  sqlite.prepare(`UPDATE customers SET language = 'en' WHERE telegram_user_id = ?1`).run(String(userE.id));
+  setExpiry(orderE, now + 20 * HOUR_MS);
+  setTestUsage(orderE, 100_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(orderE);
+  const rE = await runServiceNotificationSweep(env, now);
+  assert.equal(rE.freeTestExhaustedSent, 1);
+  const en = textsTo(userE.id).find((m) => /ran out of data/i.test(m))!;
+  assert.ok(en, 'english exhausted copy');
+  assert.ok(!/[\u0600-\u06FF]/.test(en), 'no Persian leaks into the English notice');
+});
+
+test('P15-17 expiry catch-up grace: 10min-past still notifies once; 31min-past stays silent', async () => {
+  const { runServiceNotificationSweep } = await import('../src/handlers/serviceNotifications.ts');
+  const user = freshUser();
+  const orderId = await startAndClaim(user);
+  const now = Date.now();
+  setExpiry(orderId, now - 10 * MIN); // just missed the window, inside grace
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(orderId);
+  const r = await runServiceNotificationSweep(env, now);
+  assert.equal(r.freeTestSent, 1, 'grace catch-up fires once');
+  assert.equal(
+    noticeKinds(orderId).find((k) => k.kind === 'free_test_expiring')?.status,
+    'sent',
+  );
+  const again = await runServiceNotificationSweep(env, now + MIN);
+  assert.equal(again.freeTestSent, 0, 'terminal after catch-up');
+
+  const user2 = freshUser();
+  const order2 = await startAndClaim(user2);
+  setExpiry(order2, now - 31 * MIN); // outside the 30-min grace
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(order2);
+  const r2 = await runServiceNotificationSweep(env, now);
+  assert.equal(r2.freeTestSent, 0, 'outside grace stays silent');
+  assert.equal(noticeKinds(order2).filter((k) => k.kind === 'free_test_expiring').length, 0);
+});
+
+test('P15-18 migration 0016 rebuild preserves rows and admits the two new kinds', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { DatabaseSync } = await import('node:sqlite');
+  const preFiles = [
+    '0001_init.sql', '0002_phase2.sql', '0003_phase3.sql', '0004_phase4.sql', '0005_phase5.sql',
+    '0006_phase6.sql', '0007_phase7.sql', '0008_phase8c.sql', '0009_phase9.sql', '0010_phase10.sql',
+    '0011_pricing_model.sql', '0012_device_limit.sql', '0013_sales_switch.sql',
+    '0014_free_test.sql', '0015_panel_delete.sql',
+  ];
+  const raw = new DatabaseSync(':memory:');
+  for (const f of preFiles) raw.exec(readFileSync(`${here}../migrations/${f}`, 'utf8'));
+  raw.exec(`INSERT INTO customers (telegram_user_id) VALUES ('800001');`);
+  raw.exec(`INSERT INTO orders (id, customer_id, selections, amount) VALUES ('O9', 1, '{"volume_gb":10}', 45000);`);
+  raw.exec(
+    `INSERT INTO service_notifications (order_id, kind, status, attempts, last_checked_at)
+     VALUES ('O9','expiring','sent',1,NULL), ('O9','usage90','pending',0,NULL), ('O9','free_test_expiring','failed',4,NULL);`,
+  );
+  const before = raw
+    .prepare('SELECT order_id, kind, status, attempts, last_checked_at FROM service_notifications ORDER BY kind')
+    .all();
+  raw.exec(readFileSync(`${here}../migrations/0016_free_test_notices.sql`, 'utf8'));
+  const after = raw
+    .prepare('SELECT order_id, kind, status, attempts, last_checked_at FROM service_notifications ORDER BY kind')
+    .all();
+  assert.deepEqual(after, before);
+  raw.exec(`INSERT INTO service_notifications (order_id, kind) VALUES ('O9','free_test_usage90');`);
+  raw.exec(`INSERT INTO service_notifications (order_id, kind) VALUES ('O9','free_test_exhausted');`);
+  assert.throws(() =>
+    raw.exec(`INSERT INTO service_notifications (order_id, kind) VALUES ('O9','bogus_kind');`),
+  );
+  raw.close();
+});
+
+test('P15-19 pure gates: MB math at 90MB, exhausted boundary, expiry grace boundary', async () => {
+  const {
+    usageNoticeDecision,
+    freeTestExhaustedDue,
+    freeTestExpiryDue,
+  } = await import('../src/handlers/serviceNotifications.ts');
+  assert.deepEqual(usageNoticeDecision(90_000_000, 100_000_000), {
+    kind: 'due',
+    percent: 90,
+    remainingGb: 0,
+    remainingMb: 10,
+  });
+  assert.equal(usageNoticeDecision(89_999_999, 100_000_000).kind, 'not_yet');
+  assert.equal(usageNoticeDecision(5_000_000, 0).kind, 'not_evaluable');
+  assert.equal(usageNoticeDecision(null, 100_000_000).kind, 'not_evaluable');
+  assert.equal(freeTestExhaustedDue(100_000_000, 100_000_000).kind, 'due');
+  assert.equal(freeTestExhaustedDue(150_000_000, 100_000_000).kind, 'due');
+  assert.equal(freeTestExhaustedDue(99_999_999, 100_000_000).kind, 'not_yet');
+  assert.equal(freeTestExhaustedDue(9_000_000, 0).kind, 'not_evaluable');
+  assert.equal(freeTestExhaustedDue(null, 100_000_000).kind, 'not_evaluable');
+  const base = Date.UTC(2026, 0, 1, 12);
+  const iso = (ms: number) => new Date(base + ms).toISOString();
+  assert.equal(freeTestExpiryDue(iso(2 * HOUR_MS), base), true, 'upper edge still due');
+  assert.equal(freeTestExpiryDue(iso(2 * HOUR_MS + 61_000), base), false, 'past upper edge silent');
+  assert.equal(freeTestExpiryDue(iso(-10 * MIN), base), true, 'inside 30-min grace');
+  assert.equal(freeTestExpiryDue(iso(-31 * MIN), base), false, 'outside grace silent');
+  assert.equal(freeTestExpiryDue(null, base), false);
+});
+
+test('P15-20 class isolation: paid never gets test kinds, tests never get paid kinds', async () => {
+  const { runServiceNotificationSweep } = await import('../src/handlers/serviceNotifications.ts');
+  // Paid service pushed to 100% + inside paid expiry window.
+  const paid = freshUser();
+  await dispatch(messageUpdateAs(paid, '/start', nextId()));
+  await dispatch(callbackUpdateAs('menu:buy', nextId(), paid));
+  await dispatch(messageUpdateAs(paid, 'quartz dune signal grid', nextId()));
+  await dispatch(callbackUpdateAs('vol:10', nextId(), paid));
+  await dispatch(callbackUpdateAs('dur:30', nextId(), paid));
+  await dispatch(callbackUpdateAs('dev:1', nextId(), paid));
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), paid));
+  const draft = ordersOf(paid.id)[0];
+  await dispatch(mediaUpdate(nextId(), { kind: 'photo', fileId: 'rc-iso' }, paid));
+  await dispatch(callbackUpdateAs(`adm:ok:${draft.id}`, nextId(), ADMIN, ADMIN.id));
+  const paidId = ordersOf(paid.id)[0].id;
+  const now = Date.now();
+  setExpiry(paidId, now + 26 * HOUR_MS);
+  const pu = (
+    sqlite.prepare('SELECT pasarguard_username AS u FROM orders WHERE id = ?1').get(paidId) as {
+      u: string | null;
+    }
+  ).u as string;
+  users.get(pu)!.used_traffic = users.get(pu)!.data_limit;
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(paidId);
+  const rp = await runServiceNotificationSweep(env, now);
+  assert.equal(rp.expirySent, 1);
+  assert.equal(rp.usageSent, 1);
+  assert.equal(rp.freeTestUsageSent, 0);
+  assert.equal(rp.freeTestExhaustedSent, 0);
+  assert.equal(rp.freeTestSent, 0);
+  const paidKinds = noticeKinds(paidId).map((k) => k.kind);
+  assert.ok(!paidKinds.includes('free_test_usage90'));
+  assert.ok(!paidKinds.includes('free_test_exhausted'));
+  assert.ok(!paidKinds.includes('free_test_expiring'));
+
+  // Test service at 100%: paid rows must never appear.
+  const tuser = freshUser();
+  const testId = await startAndClaim(tuser);
+  setExpiry(testId, now + 20 * HOUR_MS);
+  setTestUsage(testId, 100_000_000, 100_000_000);
+  stub.reset(); stub.panel.reset();
+  settleOtherPaidServices(testId);
+  const rt = await runServiceNotificationSweep(env, now);
+  assert.equal(rt.usageSent, 0);
+  assert.equal(rt.expirySent, 0);
+  assert.equal(rt.freeTestUsageSent, 1);
+  assert.equal(rt.freeTestExhaustedSent, 1);
+  const testKinds = noticeKinds(testId).map((k) => k.kind);
+  assert.ok(!testKinds.includes('usage90'));
+  assert.ok(!testKinds.includes('expiring'));
 });

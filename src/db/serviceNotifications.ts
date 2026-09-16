@@ -13,6 +13,10 @@
  * free_test_claims — the claims table is the authority, never the JSON
  * snapshot); a free-test service gets instead exactly one
  * 'free_test_expiring' notice inside the 2-hour window before expiry.
+ * Phase 15b adds two further test-only kinds ('free_test_usage90' at >=90%
+ * of the live panel quota, 'free_test_exhausted' at used >= limit), each
+ * with its own isolated candidate query, fused-claim branch and per-run
+ * budget — the paid pools are never shared, starved or re-gated.
  *
  * Claim uses a LEASE (30 min) instead of 8C's fire-and-forget stage bump:
  * a notice that never gets sent is worse than the (self-healing, one-shot)
@@ -27,10 +31,15 @@ export const USAGE_THRESHOLD_RATIO = 0.9;
 export const EXPIRY_NOTICE_DAYS = 3;
 /** Phase 15: the free test's single, dedicated expiry notice window. */
 export const FREE_TEST_NOTICE_HOURS = 2;
+/** Phase 15b: catch-up grace after test expiry (missed-window safety). */
+export const FREE_TEST_EXPIRY_GRACE_MINUTES = 30;
 /** Expiry candidates per run (pure D1 gating — no panel reads). */
 export const EXPIRY_SWEEP_LIMIT = 25;
 /** Panel reads per run: bounds wall-clock/panel load hard. */
 export const USAGE_CHECK_LIMIT = 8;
+/** Phase 15b: per-run panel-read budgets for the two isolated test legs. */
+export const FREE_TEST_USAGE_CHECK_LIMIT = 8;
+export const FREE_TEST_EXHAUSTED_CHECK_LIMIT = 8;
 export const NOTICE_MAX_ATTEMPTS = 4;
 /** A 'sending' claim is only abandoned after this many minutes. */
 export const NOTICE_STALE_MINUTES = 30;
@@ -60,7 +69,10 @@ export interface NoticeCandidate {
  *
  * PAID legs (usage90/expiring) carry NOT EXISTS free_test_claims: the test
  * audience is structurally removed from them, both at list AND at claim.
- * The test leg carries the mirrored EXISTS and its own 2-hour window.
+ * The test legs carry the mirrored EXISTS and their own windows/budgets.
+ * 'free_test_expiring' additionally carries a 30-minute post-expiry grace
+ * (list + claim + handler gate) so a missed 5-minute sweep inside the
+ * narrow 2h window still catches up once instead of going silent forever.
  */
 function eligibilitySql(kind: NoticeKind): string {
   if (kind === 'expiring') {
@@ -84,9 +96,23 @@ function eligibilitySql(kind: NoticeKind): string {
           WHERE o.id = service_notifications.order_id
             AND o.kind = 'purchase' AND o.state = 'completed'
             AND o.service_expires_at IS NOT NULL
-            AND julianday(o.service_expires_at) > julianday(?6)
+            AND julianday(o.service_expires_at) > julianday(?6) - ?8 / 1440.0
             AND julianday(o.service_expires_at)
                 <= julianday(?6) + ?7 + 1.0 / 1440.0
+            AND EXISTS (
+              SELECT 1 FROM free_test_claims f
+               WHERE f.order_id = service_notifications.order_id
+            )
+       )`;
+  }
+  if (kind === 'free_test_usage90' || kind === 'free_test_exhausted') {
+    return `EXISTS (
+         SELECT 1 FROM orders o
+          WHERE o.id = service_notifications.order_id
+            AND o.kind = 'purchase' AND o.state = 'completed'
+            AND o.pasarguard_username IS NOT NULL
+            AND (o.service_expires_at IS NULL
+                 OR julianday(o.service_expires_at) > julianday(?6))
             AND EXISTS (
               SELECT 1 FROM free_test_claims f
                WHERE f.order_id = service_notifications.order_id
@@ -155,10 +181,11 @@ export async function listExpiryCandidates(
 
 /**
  * Phase 15: the free test's dedicated leg — completed CLAIMED orders whose
- * expiry falls inside the next 2 hours, without a settled 'free_test_expiring'
- * notice. Mirror image of the paid expiry query (same lease/staleness
- * semantics, EXISTS on free_test_claims instead of NOT EXISTS); pure D1
- * gating, the panel is never read for this send.
+ * expiry falls inside the next 2 hours (plus a 30-minute post-expiry grace
+ * so one missed 5-minute sweep cannot lose the notice forever), without a
+ * settled 'free_test_expiring' notice. Mirror image of the paid expiry
+ * query (same lease/staleness semantics, EXISTS on free_test_claims instead
+ * of NOT EXISTS); pure D1 gating, the panel is never read for this send.
  */
 export async function listFreeTestExpiryCandidates(
   db: D1Database,
@@ -175,7 +202,7 @@ export async function listFreeTestExpiryCandidates(
           AND o.state = 'completed'
           AND o.panel_deleted_at IS NULL
           AND o.service_expires_at IS NOT NULL
-          AND julianday(o.service_expires_at) > julianday(?1)
+          AND julianday(o.service_expires_at) > julianday(?1) - ?5 / 1440.0
           AND julianday(o.service_expires_at)
               <= julianday(?1) + ?2 / 24.0 + 1.0 / 1440.0
           AND EXISTS (
@@ -191,7 +218,7 @@ export async function listFreeTestExpiryCandidates(
         ORDER BY o.service_expires_at ASC
         LIMIT ?3`,
     )
-    .bind(nowIso, FREE_TEST_NOTICE_HOURS, limit, NOTICE_STALE_MINUTES)
+    .bind(nowIso, FREE_TEST_NOTICE_HOURS, limit, NOTICE_STALE_MINUTES, FREE_TEST_EXPIRY_GRACE_MINUTES)
     .all<NoticeCandidate>();
   return result.results;
 }
@@ -242,6 +269,66 @@ export async function listUsageCandidates(
   return result.results;
 }
 
+/**
+ * Phase 15b: free-test usage polls — completed CLAIMED, panel-addressed
+ * test orders still due for at least one usage poll for `kind`. Isolated
+ * per-kind candidate set (own PK rows, own backoff/lease tracking) with an
+ * independent per-run budget, so the paid usage90 pool is never shared or
+ * starved. Unexpired services only (same guard as the paid usage leg).
+ */
+function freeTestUsageCandidatesSql(kind: NoticeKind): string {
+  void kind;
+  return `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
+              o.service_expires_at, o.pasarguard_username, o.selections
+         FROM orders o
+         JOIN customers c ON c.id = o.customer_id
+        WHERE o.kind = 'purchase'
+          AND o.state = 'completed'
+          AND o.panel_deleted_at IS NULL
+          AND o.pasarguard_username IS NOT NULL
+          AND (o.service_expires_at IS NULL
+               OR julianday(o.service_expires_at) > julianday(?1))
+          AND EXISTS (
+            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM service_notifications sn
+             WHERE sn.order_id = o.id AND sn.kind = ?5
+               AND ( sn.status IN ('sent','skipped','failed')
+                  OR (sn.status = 'sending'
+                      AND julianday(sn.updated_at) > julianday(?1) - ?2 / 1440.0)
+                  OR (sn.status = 'pending'
+                      AND sn.last_checked_at IS NOT NULL
+                      AND julianday(sn.last_checked_at) > julianday(?1) - ?3 / 1440.0) )
+          )
+        ORDER BY (o.service_expires_at IS NULL) ASC, o.service_expires_at ASC, o.id ASC
+        LIMIT ?4`;
+}
+
+export async function listFreeTestUsageCandidates(
+  db: D1Database,
+  nowIso: string,
+  limit: number,
+): Promise<NoticeCandidate[]> {
+  const result = await db
+    .prepare(freeTestUsageCandidatesSql('free_test_usage90'))
+    .bind(nowIso, NOTICE_STALE_MINUTES, USAGE_BACKOFF_MINUTES, limit, 'free_test_usage90')
+    .all<NoticeCandidate>();
+  return result.results;
+}
+
+export async function listFreeTestExhaustedCandidates(
+  db: D1Database,
+  nowIso: string,
+  limit: number,
+): Promise<NoticeCandidate[]> {
+  const result = await db
+    .prepare(freeTestUsageCandidatesSql('free_test_exhausted'))
+    .bind(nowIso, NOTICE_STALE_MINUTES, USAGE_BACKOFF_MINUTES, limit, 'free_test_exhausted')
+    .all<NoticeCandidate>();
+  return result.results;
+}
+
 /** Birth of a schedule row: never overwrites anything (PK = promise). */
 export async function ensurePending(
   db: D1Database,
@@ -260,7 +347,8 @@ export async function ensurePending(
  * The single atomic lease claim (pending-or-stale-sending -> sending).
  * ?1 = nowIso (fresh lease stamp + staleness clock + eligibility clock via
  * ?6), ?2 attempts cap, ?3 stale minutes, ?4 order, ?5 kind, ?7 expiring
- * window days. changes>0 means THIS run owns the one send for this notice.
+ * window days, ?8 free-test expiry grace minutes. changes>0 means THIS run
+ * owns the one send for this notice.
  */
 export async function claimNotice(
   db: D1Database,
@@ -288,7 +376,7 @@ export async function claimNotice(
       ...(opts.kind === 'expiring'
         ? [EXPIRY_NOTICE_DAYS]
         : opts.kind === 'free_test_expiring'
-          ? [FREE_TEST_NOTICE_HOURS / 24]
+          ? [FREE_TEST_NOTICE_HOURS / 24, FREE_TEST_EXPIRY_GRACE_MINUTES]
           : []),
     )
     .run();
@@ -360,22 +448,25 @@ export async function markSkipped(
 }
 
 /**
- * Panel said "not yet 90%" (or the plan is unlimited / usage unknown): the
+ * Panel said "not yet due" (or the plan is unlimited / usage unknown): the
  * service stays eligible but rests in the backoff window. Attempts are NOT
- * touched — a not-yet answer is not a failure.
+ * touched — a not-yet answer is not a failure. `kind` defaults to the paid
+ * 'usage90' so existing call sites stay byte-identical; the isolated test
+ * legs pass their own kind.
  */
 export async function stampUsageCheck(
   db: D1Database,
-  opts: { orderId: string; nowIso: string },
+  opts: { orderId: string; nowIso: string; kind?: NoticeKind },
 ): Promise<void> {
-  await ensurePending(db, opts.orderId, 'usage90');
+  const kind = opts.kind ?? 'usage90';
+  await ensurePending(db, opts.orderId, kind);
   await db
     .prepare(
       `UPDATE service_notifications
           SET last_checked_at = ?2, updated_at = ?2
-        WHERE order_id = ?1 AND kind = 'usage90' AND status = 'pending'`,
+        WHERE order_id = ?1 AND kind = ?3 AND status = 'pending'`,
     )
-    .bind(opts.orderId, opts.nowIso)
+    .bind(opts.orderId, opts.nowIso, kind)
     .run();
 }
 

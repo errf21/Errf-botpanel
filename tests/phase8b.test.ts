@@ -182,8 +182,8 @@ test('below-minimum volume is answered in its OWN domain, state kept', async () 
   stub.reset();
   await dispatch(messageUpdateAs(hero, '۵', nextId())); // Persian 5 < min 10
   const text = String(lastBubble(hero.id).text);
-  assert.ok(text.includes('حجم'), `volume-specific copy expected: ${text}`);
-  assert.equal(text.includes('گیگابایت'), true);
+  assert.ok(text.includes('گیگ'), `volume-specific copy expected: ${text}`);
+  assert.equal(text.includes('حداقل خرید'), true);
   assert.equal(sessionFor(hero.id).state, 'WAITING_VOLUME');
 });
 
@@ -224,7 +224,7 @@ test('fa below-min volume rejection names the ENTERED number (5/8/3), never a fi
     const text = String(lastBubble(hero.id).text);
     assert.ok(text.includes(expected), `typed ${entered} must appear as ${expected}: ${text}`);
     // domain tokens stay, so the reply is still «volume» not a generic range
-    assert.ok(text.includes('حجم') && text.includes('گیگ'), `volume-domain copy for ${entered}: ${text}`);
+    assert.ok(text.includes('گیگ'), `volume-domain copy for ${entered}: ${text}`);
     // the minimum rule is untouched: below 10 is still refused, state kept
     assert.ok(text.includes('10'), 'the 10 GB floor is still named');
     assert.equal(sessionFor(hero.id).state, 'WAITING_VOLUME', 'rejecting keeps you on the volume step');
@@ -237,7 +237,7 @@ test('fa below-min volume rejection is casual, and differs per value (a real int
   assert.notEqual(a5, a8, 'different numbers, different messages');
   assert.notEqual(a8, a3);
   assert.ok(a5.includes('5') && !a5.includes('8'), 'each message carries only its own value');
-  assert.match(a5, /[😐❤️]/u, 'friendly tone (emoji) is present');
+  assert.match(a5, /[😅❤️]/u, 'friendly tone (emoji) is present');
   assert.ok(!/قابل قبول نیست|تلاش کنید/.test(a5), 'stiff formal phrasing is gone');
 });
 

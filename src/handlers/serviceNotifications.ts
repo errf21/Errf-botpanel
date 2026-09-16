@@ -1,16 +1,23 @@
 /**
  * Phase 9: service notification sweep. Driven ONLY by the cron-triggered
- * `scheduled` handler (or tests with an explicit now). Two independent legs:
+ * `scheduled` handler (or tests with an explicit now). Independent legs:
  *
  *  1. expiring — pure D1 bookkeeping (service_expires_at is authoritative
  *     local record, forward-only); the 3-day window is evaluated locally;
- *     the panel is NEVER required for this leg.
+ *     the panel is NEVER required for this leg. PAID ONLY.
  *  2. Phase 15 free-test expiry — a dedicated once-only notice for a claimed
- *     test order in its final 2 hours (see the leg below); the paid legs
- *     structurally skip claimed orders so these never cross over.
- *  3. usage90 — needs one live panel read per service (used vs total bytes);
- *     strictly bounded: ≤ USAGE_CHECK_LIMIT GETs per run + ≥ 60-min
- *     per-service backoff. Fail-closed when the panel is unconfigured.
+ *     test order in its final 2 hours (+30-min post-expiry catch-up grace);
+ *     the paid legs structurally skip claimed orders so these never cross
+ *     over.
+ *  3. usage90 — PAID ONLY; needs one live panel read per service (used vs
+ *     total bytes); strictly bounded: ≤ USAGE_CHECK_LIMIT GETs per run +
+ *     ≥ 60-min per-service backoff. Fail-closed when the panel is
+ *     unconfigured.
+ *  4. Phase 15b free_test_usage90 — TEST ONLY, isolated leg/budget mirroring
+ *     usage90 at >=90% with MB-level remaining.
+ *  5. Phase 15b free_test_exhausted — TEST ONLY, isolated leg/budget at
+ *     used >= limit. Distinct PK row from usage90, so both can fire
+ *     independently for one service.
  *
  * Exactly-once mechanics: the (order_id, kind) PK row is birthed by
  * `ensurePending`, claimed as a single lease-guarded UPDATE, sent, and only
@@ -29,18 +36,24 @@ import { fa } from '../telegram/texts.ts';
 import { FA_UI, uiFor } from '../telegram/i18n.ts';
 import { serviceNoticeKeyboard } from '../telegram/menu.ts';
 import { GB_BYTES } from '../provision/provision.ts';
+import { MB_BYTES } from '../catalog/freeTest.ts';
 import { markPanelDeleted } from '../db/orders.ts';
 import {
   EXPIRY_NOTICE_DAYS,
   EXPIRY_SWEEP_LIMIT,
+  FREE_TEST_EXHAUSTED_CHECK_LIMIT,
+  FREE_TEST_EXPIRY_GRACE_MINUTES,
   FREE_TEST_NOTICE_HOURS,
+  FREE_TEST_USAGE_CHECK_LIMIT,
   USAGE_CHECK_LIMIT,
   USAGE_THRESHOLD_RATIO,
   bookSent,
   claimNotice,
   ensurePending,
   listExpiryCandidates,
+  listFreeTestExhaustedCandidates,
   listFreeTestExpiryCandidates,
+  listFreeTestUsageCandidates,
   listUsageCandidates,
   markSkipped,
   releaseFailedSend,
@@ -53,8 +66,12 @@ const DAY_MS = 86_400_000;
 export interface ServiceNoticeSweepResult {
   expirySent: number;
   usageSent: number;
-  /** Phase 15: free-test dedicated expiry notices (own 2h window, paid legs skip tests). */
+  /** Phase 15: free-test dedicated expiry notices (own 2h window + grace, paid legs skip tests). */
   freeTestSent: number;
+  /** Phase 15b: free-test 90% usage notices (isolated leg/budget). */
+  freeTestUsageSent: number;
+  /** Phase 15b: free-test quota-exhausted notices (isolated leg/budget). */
+  freeTestExhaustedSent: number;
   /** Panel answered "this service is gone / usage terminal" (settled). */
   skipped: number;
   /** Claims won whose Telegram send failed (already returned to retry). */
@@ -69,16 +86,26 @@ export function expiryNoticeDue(expiresIso: string | null, nowMs: number): boole
   return expires > nowMs && expires - nowMs <= EXPIRY_NOTICE_DAYS * DAY_MS;
 }
 
-/** Exact gate for the free-test leg: the 2-hour pre-expiry window only. */
+/** Exact gate for the free-test leg: the 2-hour pre-expiry window plus a
+ *  30-minute post-expiry catch-up grace (one missed 5-minute sweep cannot
+ *  lose the notice forever). Upper bound unchanged; paid 3-day leg untouched. */
 export function freeTestExpiryDue(expiresIso: string | null, nowMs: number): boolean {
   if (expiresIso === null) return false;
   const expires = Date.parse(expiresIso);
   if (!Number.isFinite(expires) || !Number.isFinite(nowMs)) return false;
-  return expires > nowMs && expires - nowMs <= FREE_TEST_NOTICE_HOURS * 3_600_000;
+  return (
+    expires > nowMs - FREE_TEST_EXPIRY_GRACE_MINUTES * 60_000 &&
+    expires - nowMs <= FREE_TEST_NOTICE_HOURS * 3_600_000
+  );
 }
 
 export type UsageDecision =
-  | { kind: 'due'; percent: number; remainingGb: number }
+  | { kind: 'due'; percent: number; remainingGb: number; remainingMb: number }
+  | { kind: 'not_yet' }
+  | { kind: 'not_evaluable' }; // unlimited cap / unknown usage
+
+export type ExhaustedDecision =
+  | { kind: 'due' }
   | { kind: 'not_yet' }
   | { kind: 'not_evaluable' }; // unlimited cap / unknown usage
 
@@ -96,7 +123,19 @@ export function usageNoticeDecision(
     kind: 'due',
     percent: Math.min(99, Math.floor(ratio * 100)),
     remainingGb: Math.max(0, Math.round(((limitBytes - usedBytes) / GB_BYTES) * 10) / 10),
+    remainingMb: Math.max(0, Math.round(((limitBytes - usedBytes) / MB_BYTES) * 10) / 10),
   };
+}
+
+/** Binary quota-exhausted gate on live panel bytes (>= counts, above too). */
+export function freeTestExhaustedDue(
+  usedBytes: number | null,
+  limitBytes: number | null,
+): ExhaustedDecision {
+  if (usedBytes === null || limitBytes === null || limitBytes <= 0) {
+    return { kind: 'not_evaluable' };
+  }
+  return usedBytes >= limitBytes ? { kind: 'due' } : { kind: 'not_yet' };
 }
 
 /** «2 روز و 11 ساعت» / «کمتر از یک ساعت» — bounded by the 3-day window.
@@ -174,6 +213,8 @@ export async function runServiceNotificationSweep(
     expirySent: 0,
     usageSent: 0,
     freeTestSent: 0,
+    freeTestUsageSent: 0,
+    freeTestExhaustedSent: 0,
     skipped: 0,
     sendFailed: 0,
   };
@@ -212,10 +253,11 @@ export async function runServiceNotificationSweep(
   }
 
   /* ———— leg 1b: free-test expiry (Phase 15, pure D1, never the panel) ————
-   * A dedicated, once-only notice ~2h before the test's expiry. Fully
-   * separate kind/PK row from the paid set, and the paid legs structurally
-   * skip claimed orders, so a test never double-notifies and a paid service
-   * never sees this copy. Same lease/claim/book mechanics as the other legs. */
+   * A dedicated, once-only notice ~2h before the test's expiry (+30-min
+   * post-expiry catch-up grace). Fully separate kind/PK row from the paid
+   * set, and the paid legs structurally skip claimed orders, so a test
+   * never double-notifies and a paid service never sees this copy. Same
+   * lease/claim/book mechanics as the other legs. */
   let freeTestCandidates: NoticeCandidate[] = [];
   try {
     freeTestCandidates = await listFreeTestExpiryCandidates(db, nowIso, EXPIRY_SWEEP_LIMIT);
@@ -318,6 +360,134 @@ export async function runServiceNotificationSweep(
       const outcome = await sendAndBook(db, api, row, 'usage90', nowIso, text);
       if (outcome === 'sent') {
         result.usageSent += 1;
+      } else {
+        result.sendFailed += 1;
+        console.error(`service_notice_send_failed orderId=${row.order_id.slice(0, 32)}`);
+      }
+    } catch {
+      console.error(`service_notice_row_failed orderId=${row.order_id.slice(0, 32)}`);
+    }
+  }
+
+  /* ———— leg 2b: free_test_usage90 (TEST ONLY, isolated budget) ————
+   * Mirrors usage90 at >=90% with MB-level remaining. Separate candidate
+   * set, PK rows and per-run budget — the paid pool above is never shared,
+   * starved or re-gated. Unexpired test services only. */
+  let freeTestUsageCandidates: NoticeCandidate[] = [];
+  try {
+    freeTestUsageCandidates = await listFreeTestUsageCandidates(db, nowIso, FREE_TEST_USAGE_CHECK_LIMIT);
+  } catch {
+    console.error('service_notice_freetest_usage_query_failed');
+  }
+  for (const row of freeTestUsageCandidates) {
+    const username = row.pasarguard_username;
+    if (username === null) continue;
+    try {
+      const read = await client.getUserByUsername(username);
+      if (!read.ok) {
+        if (read.kind === 'not_found') {
+          await markSkipped(db, { orderId: row.order_id, kind: 'free_test_usage90', nowIso });
+          await markPanelDeleted(db, {
+            orderId: row.order_id,
+            panelUsername: username,
+            via: 'system:notice-sweep',
+          });
+          result.skipped += 1;
+        } else {
+          await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_usage90' });
+        }
+        continue;
+      }
+      if (read.data === null || read.data.status === 'expired') {
+        await markSkipped(db, { orderId: row.order_id, kind: 'free_test_usage90', nowIso });
+        result.skipped += 1;
+        continue;
+      }
+      const decision = usageNoticeDecision(read.data.usedTraffic, read.data.dataLimit);
+      if (decision.kind !== 'due') {
+        await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_usage90' });
+        continue;
+      }
+      await ensurePending(db, row.order_id, 'free_test_usage90');
+      if (
+        !(await claimNotice(db, { orderId: row.order_id, kind: 'free_test_usage90', nowIso }))
+      ) {
+        continue;
+      }
+      const ui = uiFor(row.language);
+      const text = ui.t.freeTestUsageNotice(
+        noticeServiceName(row.selections, ui.t.noticeServiceFallback),
+        ui.f.digits(decision.percent),
+        ui.f.digits(decision.remainingMb),
+      );
+      const outcome = await sendAndBook(db, api, row, 'free_test_usage90', nowIso, text);
+      if (outcome === 'sent') {
+        result.freeTestUsageSent += 1;
+      } else {
+        result.sendFailed += 1;
+        console.error(`service_notice_send_failed orderId=${row.order_id.slice(0, 32)}`);
+      }
+    } catch {
+      console.error(`service_notice_row_failed orderId=${row.order_id.slice(0, 32)}`);
+    }
+  }
+
+  /* ———— leg 2c: free_test_exhausted (TEST ONLY, isolated budget) ————
+   * Binary quota gate (used >= limit) on live panel bytes. Distinct PK row
+   * from usage90, so both can fire independently for one service.
+   * Unexpired test services only; panel-expired stays terminal-skipped. */
+  let freeTestExhaustedCandidates: NoticeCandidate[] = [];
+  try {
+    freeTestExhaustedCandidates = await listFreeTestExhaustedCandidates(
+      db,
+      nowIso,
+      FREE_TEST_EXHAUSTED_CHECK_LIMIT,
+    );
+  } catch {
+    console.error('service_notice_freetest_exhausted_query_failed');
+  }
+  for (const row of freeTestExhaustedCandidates) {
+    const username = row.pasarguard_username;
+    if (username === null) continue;
+    try {
+      const read = await client.getUserByUsername(username);
+      if (!read.ok) {
+        if (read.kind === 'not_found') {
+          await markSkipped(db, { orderId: row.order_id, kind: 'free_test_exhausted', nowIso });
+          await markPanelDeleted(db, {
+            orderId: row.order_id,
+            panelUsername: username,
+            via: 'system:notice-sweep',
+          });
+          result.skipped += 1;
+        } else {
+          await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_exhausted' });
+        }
+        continue;
+      }
+      if (read.data === null || read.data.status === 'expired') {
+        await markSkipped(db, { orderId: row.order_id, kind: 'free_test_exhausted', nowIso });
+        result.skipped += 1;
+        continue;
+      }
+      const decision = freeTestExhaustedDue(read.data.usedTraffic, read.data.dataLimit);
+      if (decision.kind !== 'due') {
+        await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_exhausted' });
+        continue;
+      }
+      await ensurePending(db, row.order_id, 'free_test_exhausted');
+      if (
+        !(await claimNotice(db, { orderId: row.order_id, kind: 'free_test_exhausted', nowIso }))
+      ) {
+        continue;
+      }
+      const ui = uiFor(row.language);
+      const text = ui.t.freeTestExhaustedNotice(
+        noticeServiceName(row.selections, ui.t.noticeServiceFallback),
+      );
+      const outcome = await sendAndBook(db, api, row, 'free_test_exhausted', nowIso, text);
+      if (outcome === 'sent') {
+        result.freeTestExhaustedSent += 1;
       } else {
         result.sendFailed += 1;
         console.error(`service_notice_send_failed orderId=${row.order_id.slice(0, 32)}`);

@@ -603,7 +603,12 @@ test('expiryNoticeDue: exact inclusive upper bound, never past, never NaN', () =
 });
 
 test('usageNoticeDecision: null/zero caps are never-evaluable, the boundary is exact', () => {
-  assert.deepEqual(usageNoticeDecision(9 * GB, 10 * GB), { kind: 'due', percent: 90, remainingGb: 1 });
+  assert.deepEqual(usageNoticeDecision(9 * GB, 10 * GB), {
+    kind: 'due',
+    percent: 90,
+    remainingGb: 1,
+    remainingMb: 1073.7,
+  });
   assert.deepEqual(usageNoticeDecision(Math.floor(0.899 * 10 * GB), 10 * GB), { kind: 'not_yet' });
   assert.deepEqual(usageNoticeDecision(null, 10 * GB), { kind: 'not_evaluable' });
   assert.deepEqual(usageNoticeDecision(9 * GB, null), { kind: 'not_evaluable' });

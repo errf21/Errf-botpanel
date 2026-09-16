@@ -104,7 +104,7 @@ export const fa = {
     `⚠️ این عدد باید بین ${min} تا ${max} باشه.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
   // Phase 8B: flow-specific rejections — each step answers in its own domain.
   rejectedVolumeRange: (got: number, min: number, max: number) =>
-    `📦 دِ آخه مشتی ${got} گیگ؟ 😐 حجم مجاز بین ${min} تا ${max} گیگابایته؛\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن ❤️`,
+    `📦 دِ آخه مشتی ${got} گیگ؟ 😅 حداقل خرید ${min} گیگه زیبا؛\nیه عدد بین ${min} تا ${max} گیگ وارد کن یا «بازگشت» رو بزن ❤️`,
   rejectedDurationRange: (min: number, max: number) =>
     `⏳ مدت سرویس باید بین ${min} تا ${max} روز باشه.\nیه عدد دیگه امتحان کن یا «بازگشت» رو بزن.`,
   rejectedDeviceRange: (min: number, max: number) =>
@@ -166,9 +166,9 @@ export const fa = {
   reminderCustomer1: (id: string) =>
     `⏳ رفیق، فیش سفارشت هنوز در حال بررسیه.\n\nنگران نباش ❤️ بررسی پرداخت دستیه و به محض تأیید، بقیه مراحل خودکار انجام می‌شن. الان یه یادآوری برای ادمین فرستادم که سفارشت از یادش نره. 😄\n\n🆔 سفارش: ${id}`,
   reminderCustomer2: (id: string) =>
-    `⏳ سفارش ${id} هنوز در انتظار بررسی فیشه.\n\nاگه فیش رو اشتباه فرستادی، تصویر/فایل جدیدی بفرست تا جایگزینش کنم.`,
+    `⏳ رفیق، ببخشید بررسی فیش یکم طول کشیده 😅 هنوز در انتظار بررسیه و تأیید یا رد نشده.\n\nدوباره به ادمین یادآوری کردم که سفارشت رو بررسی کنه ❤️\n\n🆔 سفارش: ${id}`,
   reminderCustomer3: (id: string) =>
-    `⏳ فیش سفارش ${id} هنوز در انتظار بررسیه.\n\nبررسی کمی طول کشیده — ممنون که صبر می‌کنی؛ نتیجه به‌زودی میاد.`,
+    `⏳ رفیق، بررسی فیشت طول کشیده و هنوز در انتظار بررسیه 🙏 می‌دونم معطل شدی.\n\nیه یادآوری آخر برای ادمین فرستادم که سفارشت رو بررسی کنه؛ نتیجه رو همین‌جا بهت خبر می‌دم ❤️\n\n🆔 سفارش: ${id}`,
   reminderAdminHeader: '⏰ یادآوری: این فیش‌ها هنوز در انتظار بررسی‌اند',
   reminderAdminEntry: (n: number, shortId: string, minutes: number) =>
     `${n}. 🆔 ${shortId} — ${minutes} دقیقه است در انتظار`,
@@ -540,6 +540,12 @@ export const fa = {
   // the PAID 3-day usage/expiry set is never sent for a test service).
   freeTestExpiryNotice: (name: string, remaining: string, expiresAt: string) =>
     `درود زیبا، ⏳ به تستِ رایگانِ «${name}» فقط ${remaining} مونده — پایان: ${expiresAt}.\n\n🎁 این تست یک‌باره و قابل تمدید نیست؛ اگه راضی بودی، از «🛒 خرید سرویس» سرویس اصلی‌ات رو بردار ❤️`,
+  // Phase 15b: free-test 90% usage notice (MB-honest; GB copy stays paid-only).
+  freeTestUsageNotice: (name: string, percent: string, remainingMb: string) =>
+    `درود زیبا، 📊 تستِ رایگانِ «${name}» به ${percent}٪ رسید — حدود ${remainingMb} مگابایتش باقی مونده.\n\n🎁 این تست یک‌باره و قابل تمدید نیست؛ اگه راضی بودی، از «🛒 خرید سرویس» سرویس اصلی‌ات رو بردار ❤️`,
+  // Phase 15b: free-test quota-exhausted notice (binary event, no volumes).
+  freeTestExhaustedNotice: (name: string) =>
+    `😄 رفیق، حجم سرویس تستت «${name}» تموم شد.\n\nامیدوارم تستش برات خوب بوده باشه ❤️ اگه راضی بودی و خواستی ادامه بدی، می‌تونی از داخل ربات یه سرویس اصلی برای خودت تهیه کنی. 🚀\n\nاز منوی «🛒 خرید سرویس» می‌تونی شروع کنی.`,
 
   // ————— Phase 10: i18n — keyboard labels, the Account row, the selector —————
   // Main-menu labels moved here VERBATIM from menu.ts so the (en) bundle can

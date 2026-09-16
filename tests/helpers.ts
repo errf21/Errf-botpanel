@@ -168,6 +168,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0013_sales_switch.sql',
     'migrations/0014_free_test.sql',
     'migrations/0015_panel_delete.sql',
+    'migrations/0016_free_test_notices.sql',
   ]) {
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
   }

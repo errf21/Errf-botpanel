@@ -45,8 +45,17 @@ export type OrderState = (typeof ORDER_STATES)[number];
  * 'free_test_expiring' and a free test never receives 'usage90'/'expiring'
  * — the classes are separated in the candidate/eligibility SQL, so the
  * (order_id, kind) PK keeps every notice exactly-once per (service, kind).
+ * Phase 15b adds two further test-only kinds ('free_test_usage90' at >=90%
+ * of the live panel quota and 'free_test_exhausted' at used >= limit),
+ * each with its own isolated leg/budget — paid mechanics stay untouched.
  */
-export const NOTICE_KINDS = ['usage90', 'expiring', 'free_test_expiring'] as const;
+export const NOTICE_KINDS = [
+  'usage90',
+  'expiring',
+  'free_test_expiring',
+  'free_test_usage90',
+  'free_test_exhausted',
+] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 

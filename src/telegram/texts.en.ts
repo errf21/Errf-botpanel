@@ -533,6 +533,12 @@ const en: Texts = {
   // the PAID 3-day usage/expiry set is never sent for a test service).
   freeTestExpiryNotice: (name: string, remaining: string, expiresAt: string) =>
     `Hello there, ⏳ your free test "${name}" has only ${remaining} left — it ends at ${expiresAt}.\n\n🎁 This one-time test can't be renewed; if it worked well for you, pick a full service from "🛒 Buy a service" ❤️`,
+  // Phase 15b: free-test 90% usage notice (MB-honest; GB copy stays paid-only).
+  freeTestUsageNotice: (name: string, percent: string, remainingMb: string) =>
+    `Heads up — 📊 your free test "${name}" has used ${percent}% of its data (about ${remainingMb} MB left).\n\n🎁 This one-time test can't be renewed; if it worked well for you, pick a full service from "🛒 Buy a service" ❤️`,
+  // Phase 15b: free-test quota-exhausted notice (binary event, no volumes).
+  freeTestExhaustedNotice: (name: string) =>
+    `😄 Hey friend, your free test "${name}" just ran out of data.\n\nHope you enjoyed trying it ❤️ If you'd like to keep going, you can get a full service right inside the bot. 🚀\n\nStart from the "🛒 Buy a service" menu whenever you're ready.`,
 
   // ————— Phase 10: keyboards, the selector, Account rows —————
   menuBuy: '🛒 Buy a service',
