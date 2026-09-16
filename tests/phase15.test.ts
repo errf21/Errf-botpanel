@@ -563,7 +563,7 @@ test('P15-10 My Services empty-state CTA, MB detail, hidden-and-refused renewal'
   const paid = freshUser();
   await dispatch(messageUpdateAs(paid, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), paid));
-  await dispatch(messageUpdateAs(paid, 'amber forest relay grid', nextId()));
+  await dispatch(messageUpdateAs(paid, 'amberForest7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), paid));
   await dispatch(callbackUpdateAs('dur:30', nextId(), paid));
   await dispatch(callbackUpdateAs('dev:1', nextId(), paid));
@@ -591,7 +591,7 @@ test('P15-11 proof#1: paid legs fire EXACTLY as before for a paid service', asyn
   const user = freshUser();
   await dispatch(messageUpdateAs(user, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), user));
-  await dispatch(messageUpdateAs(user, 'winter ridge relay grid', nextId()));
+  await dispatch(messageUpdateAs(user, 'winterRidge7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), user));
   await dispatch(callbackUpdateAs('dur:30', nextId(), user));
   await dispatch(callbackUpdateAs('dev:1', nextId(), user));
@@ -955,7 +955,7 @@ test('P15-20 class isolation: paid never gets test kinds, tests never get paid k
   const paid = freshUser();
   await dispatch(messageUpdateAs(paid, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), paid));
-  await dispatch(messageUpdateAs(paid, 'quartz dune signal grid', nextId()));
+  await dispatch(messageUpdateAs(paid, 'quartzDune7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), paid));
   await dispatch(callbackUpdateAs('dur:30', nextId(), paid));
   await dispatch(callbackUpdateAs('dev:1', nextId(), paid));

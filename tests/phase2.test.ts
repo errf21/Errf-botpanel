@@ -94,11 +94,11 @@ test('phase2 loop: start → buy → name → volume step → replay → back', 
 
   // valid name → saved into draft AND the real volume step appears (Phase 3)
   stub.reset();
-  await dispatch(messageUpdate('  north valley signal  ', 17));
+  await dispatch(messageUpdate('  northvalley7  ', 17));
   const session = currentSession();
   assert.equal(session?.state, 'WAITING_VOLUME');
-  assert.equal(JSON.parse(String(session?.data)).config_name, 'north valley signal');
-  assert.ok(String(sendCalls()[0]?.text).includes('north valley signal'));
+  assert.equal(JSON.parse(String(session?.data)).config_name, 'northvalley7');
+  assert.ok(String(sendCalls()[0]?.text).includes('northvalley7'));
   const volumeKb = sendCalls()[1]?.payload['reply_markup'] as {
     inline_keyboard: { callback_data: string }[][];
   };
@@ -116,7 +116,7 @@ test('phase2 loop: start → buy → name → volume step → replay → back', 
 
   // webhook replay of update 17: zero new API calls
   stub.reset();
-  await dispatch(messageUpdate('  north valley signal  ', 17));
+  await dispatch(messageUpdate('  northvalley7  ', 17));
   assert.equal(stub.sent.length, 0, 'replay suppressed');
 
   // back-to-menu aborts the draft; order tables untouched

@@ -1,13 +1,12 @@
 /**
- * Config naming (approved Phase 7 rules):
+ * Config naming (approved Phase 7 + space-free rule):
  *
- *  - validateConfigName: the customer's display name — strictly ENGLISH:
- *    6–64 total chars, Latin-letter words (1–20 chars each) separated by
- *    single plain spaces. NO word-count minimum ("Silver" is valid).
- *    The name is DISPLAY
- *    ONLY: it is never sent to PasarGuard — the panel username remains the
- *    deterministic prefix+order-id derivation from Phases 5/6. panelSafeName
- *    therefore stays a SEPARATE, documented shape, not a display gate.
+ *  - validateConfigName: the customer's display name — strictly ASCII:
+ *    6–64 total chars from [A-Za-z0-9_.-] (English letters, digits, and
+ *    "-"/"_"/"."); SPACES are NOT allowed. The name is DISPLAY ONLY: it is
+ *    never sent to PasarGuard — the panel username remains the deterministic
+ *    prefix+order-id derivation from Phases 5/6. panelSafeName therefore
+ *    stays a SEPARATE, documented shape, not a display gate.
  *  - panelSafeName: the conservative username shape the codebase has always
  *    exchanged with the panel (client.ts by-username guard `^[A-Za-z0-9]{3,32}$`
  *    plus real-world observations: 'test'/'test1' rejected, 'test13'
@@ -15,10 +14,11 @@
  *    letters + trailing digits) — NOT a proven panel doctrine; do not treat
  *    its false as a panel rule.
  *  - randomConfigName: exactly 3 curated real English words (adjective +
- *    nature noun + tech noun), Title Cased for readability — like
- *    "Silver Falcon Network". CRYPTO selection; no numeric suffix (the
- *    ~40×40×40 space makes display collisions harmless and rare). Every
- *    generated name is re-validated through validateConfigName.
+ *    nature noun + tech noun), Title Cased and joined WITHOUT spaces — like
+ *    "SilverFalconNetwork" — so every generated name satisfies the
+ *    space-free validator. CRYPTO selection on the ~40×40×40 curated space
+ *    makes display collisions harmless and rare. Every generated name is
+ *    re-validated through validateConfigName.
  */
 import { sanitizeConfigName } from './validate.ts';
 
@@ -33,16 +33,13 @@ export function panelSafeName(value: unknown): value is string {
   );
 }
 
-/** English display-name rule: 6–64 chars, 1–20-letter Latin words, single
- *  spaces; returns the name trimmed, or null. */
+/** English/ASCII display-name rule: 6–64 chars from [A-Za-z0-9_.-]; spaces
+ *  and any other characters are rejected; returns the name trimmed, or null. */
 export function validateConfigName(raw: unknown): string | null {
   const name = sanitizeConfigName(raw); // 1–64 visible, no control chars, no leading '/'
   if (name === null) return null;
   if (name.length < 6) return null; // "at least 6 characters"
-  const words = name.split(' ');
-  for (const word of words) {
-    if (!/^[A-Za-z]{1,20}$/.test(word)) return null; // letters only, natural length
-  }
+  if (!/^[A-Za-z0-9_.-]+$/.test(name)) return null; // letters, digits, "-", "_", "." only
   return name;
 }
 
@@ -114,7 +111,7 @@ function pick<T>(list: readonly T[]): T {
   return value;
 }
 
-/** Exactly 3 real English words, e.g. "Silver Falcon Network". */
+/** Exactly 3 real English words, joined SPACE-FREE — e.g. "SilverFalconNetwork". */
 export function randomConfigName(): string {
   let candidate = '';
   for (let tries = 0; tries < 12; tries++) {
@@ -122,7 +119,7 @@ export function randomConfigName(): string {
       capitalize(pick(CLEAN_ADJECTIVES)),
       capitalize(pick(CLEAN_NATURE)),
       capitalize(pick(CLEAN_TECH)),
-    ].join(' ');
+    ].join('');
     if (validateConfigName(candidate) !== null) return candidate;
   }
   return candidate; // lists make this unreachable; never return empty

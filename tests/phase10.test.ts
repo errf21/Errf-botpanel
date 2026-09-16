@@ -107,7 +107,7 @@ async function englishBuyToSummary(user: typeof USER): Promise<void> {
   stub.reset();
   await dispatch(messageUpdateAs(user, en.menuBuy, nextId()));
   assert.equal(sessionFor(user.id).state, 'WAITING_CONFIG_NAME');
-  await dispatch(messageUpdateAs(user, 'silver falcon network', nextId()));
+  await dispatch(messageUpdateAs(user, 'silverFalcon7', nextId()));
   assert.equal(sessionFor(user.id).state, 'WAITING_VOLUME');
   await dispatch(callbackUpdateAs('vol:10', nextId(), user));
   await dispatch(callbackUpdateAs('dur:30', nextId(), user));
@@ -191,7 +191,7 @@ test('a mid-purchase switch keeps the flow and re-renders keyboards in the new l
   // The confirmation restored the CONFIG-NAME composing keyboard — in English.
   const compose = (replyKbOf(lastBubble(hero.id).payload)?.keyboard ?? []).flat().map((b) => b.text);
   assert.deepEqual(compose, [en.btnAutoPick, en.backToMenu]);
-  await dispatch(messageUpdateAs(hero, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(hero, 'northvalley7', nextId()));
   assert.equal(sessionFor(hero.id).state, 'WAITING_VOLUME');
   assert.ok(String(lastBubble(hero.id).text).includes('GB'), 'English volume prompt');
 });
@@ -233,7 +233,7 @@ test('buy renders English throughout: rejects, composer, auto-pick, reactions', 
   const hero3 = freshUser('buy3');
   await toEnglish(hero3);
   await dispatch(messageUpdateAs(hero3, en.menuBuy, nextId()));
-  await dispatch(messageUpdateAs(hero3, 'quiet harbor relay', nextId()));
+  await dispatch(messageUpdateAs(hero3, 'quietHarbor7', nextId()));
   stub.reset();
   await dispatch(messageUpdateAs(hero3, '5', nextId())); // below minimum volume
   assert.ok(String(lastBubble(hero3.id).text).includes('GB'), 'English volume rejection');

@@ -187,7 +187,7 @@ function markServiceCompleted(tgUserId: number, expireSoon = false): string {
 async function draftToConfirm(tg: typeof USER, device = 'dev:1'): Promise<void> {
   await dispatch(messageUpdateAs(tg, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), tg));
-  await dispatch(messageUpdateAs(tg, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(tg, 'northvalley7', nextId()));
   assert.equal(sessionState(tg.id).state, 'WAITING_VOLUME');
   await dispatch(callbackUpdateAs('vol:10', nextId(), tg));
   assert.equal(sessionState(tg.id).state, 'WAITING_DURATION');
@@ -203,7 +203,7 @@ async function draftToConfirm(tg: typeof USER, device = 'dev:1'): Promise<void> 
 test('0012: ladder keyboard offers exactly presets {1,2,3}, no custom; typed ۲ lands via preset; ≥4 refused', async () => {
   await dispatch(messageUpdateAs(USER, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), USER));
-  await dispatch(messageUpdateAs(USER, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(USER, 'northvalley7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), USER));
 
   // duration ladder is untouched by 0012: 30/60/90, no custom advertised.

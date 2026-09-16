@@ -150,7 +150,7 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
   // 0) create a priced order FIRST with the CURRENT config, for immutability.
   await dispatch(messageUpdate('/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), USER));
-  await dispatch(messageUpdate('  north valley signal  ', nextId()));
+  await dispatch(messageUpdate('  northvalley7  ', nextId()));
   const loaded0 = await loadCatalog(shim);
   assert.equal(loaded0.ok, true);
   if (!loaded0.ok) return;
@@ -223,7 +223,7 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
   const other = { id: 987654999, first_name: 'N', username: 'newp', language_code: 'fa' };
   await dispatch(messageUpdateAs(other, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), other));
-  await dispatch(messageUpdateAs(other, '  south ridge radio  ', nextId()));
+  await dispatch(messageUpdateAs(other, '  southRidge7  ', nextId()));
   await dispatch(callbackUpdateAs('vol:50', nextId(), other));
   await dispatch(callbackUpdateAs('dur:30', nextId(), other));
   await dispatch(callbackUpdateAs('dev:1', nextId(), other));

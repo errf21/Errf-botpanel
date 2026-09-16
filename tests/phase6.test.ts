@@ -192,7 +192,7 @@ const putCalls = () =>
 async function purchaseToCompleted(user: typeof USER = USER): Promise<string> {
   await dispatch(messageUpdateAs(user, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), user));
-  await dispatch(messageUpdateAs(user, `north valley signal`, nextId()));
+  await dispatch(messageUpdateAs(user, `northvalley7`, nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), user));
   await dispatch(callbackUpdateAs('dur:30', nextId(), user));
   await dispatch(callbackUpdateAs('dev:3', nextId(), user));
@@ -423,7 +423,7 @@ test('svc:rnw while busy in another flow is refused (session untouched)', async 
   ).id;
   await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), USER));
-  await dispatch(messageUpdateAs(USER, 'busy config alpha', nextId())); // → WAITING_VOLUME
+  await dispatch(messageUpdateAs(USER, 'busycfg7', nextId())); // → WAITING_VOLUME
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   const toast = stub.sent.find((s) => s.method === 'answerCallbackQuery');

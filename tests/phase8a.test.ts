@@ -288,7 +288,7 @@ test('auto-pick text advances ONLY from the name step; numeric steps reject it a
   assert.equal(sessionFor(hero.id), 'WAITING_VOLUME');
   assert.match(
     String(sessionData(hero.id)['config_name']),
-    /^[A-Z][a-z]{3,11} [A-Z][a-z]{3,11} [A-Z][a-z]{3,11}$/,
+    /^[A-Z][a-z]{3,11}[A-Z][a-z]{3,11}[A-Z][a-z]{3,11}$/,
   );
   // the same text one step later lands in the numeric handler (still text!)
   stub.reset();
@@ -391,7 +391,7 @@ test('admin reject arming uses the composing keyboard; reason text still applies
   const hero = { ...USER, id: 814000002, username: 'p8a_rej' };
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), hero));
-  await dispatch(messageUpdateAs(hero, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(hero, 'northvalley7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), hero));
   await dispatch(callbackUpdateAs('dur:30', nextId(), hero));
   await dispatch(callbackUpdateAs('dev:3', nextId(), hero));
@@ -458,7 +458,7 @@ async function orderInReview(): Promise<string> {
   const hero = { ...USER, id: 814000004, username: 'p8a_rej2' };
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), hero));
-  await dispatch(messageUpdateAs(hero, 'quiet harbor relay', nextId()));
+  await dispatch(messageUpdateAs(hero, 'quietHarbor7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), hero));
   await dispatch(callbackUpdateAs('dur:30', nextId(), hero));
   await dispatch(callbackUpdateAs('dev:3', nextId(), hero));

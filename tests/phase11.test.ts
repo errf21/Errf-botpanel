@@ -201,7 +201,7 @@ test('guide tap from a legacy inline menu mid-purchase: screens appear, flow and
   const hero = { ...USER, id: 911000004, username: 'p11_busy' };
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
   await dispatch(messageUpdateAs(hero, '🛒 خرید سرویس', nextId()));
-  await dispatch(messageUpdateAs(hero, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(hero, 'northvalley7', nextId()));
   const states = stateRowsFor(hero.id);
   assert.equal(states.length, 1, 'purchase created its session row');
   assert.equal(states[0]!.state, 'WAITING_VOLUME');

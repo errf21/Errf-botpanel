@@ -1,9 +1,10 @@
 /**
- * Config-name handling (approved Phase 7 addition): strict English display
- * names (>=6 chars, no word-count minimum), the 🎲 auto-pick button, crypto
- * name generation, the panel-safe observation shape (kept SEPARATE: display
- * names never reach the panel), and the name-rejection notice + safe admin
- * retry — fully offline behind the fetch stub (real network never touched).
+ * Config-name handling (approved Phase 7 + space-free rule): strict 6–64
+ * [A-Za-z0-9_.-] display names (SPACES rejected), the 🎲 auto-pick button,
+ * crypto 3-word SPACE-FREE name generation, the panel-safe observation shape
+ * (kept SEPARATE: display names never reach the panel), and the
+ * name-rejection notice + safe admin retry — fully offline behind the fetch
+ * stub (real network never touched).
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,35 +27,41 @@ import {
 
 // ————————————————————————— pure validation + generation —————————————————————————
 
-test('validateConfigName: English >=6-char matrix (no word-count minimum)', () => {
+test('validateConfigName: 6–64 [A-Za-z0-9_.-] matrix (digits/separators allowed, spaces rejected)', () => {
   assert.equal(validateConfigName('Silver'), 'Silver'); // regression: the 6-letter single word
-  assert.equal(validateConfigName('Aref sp'), 'Aref sp'); // regression: two short words, English, >=6 total
-  assert.equal(validateConfigName('Silent Falcon'), 'Silent Falcon'); // old rule rejected 2 words
-  assert.equal(validateConfigName('Network'), 'Network'); // old rule rejected 1 word
-  assert.equal(validateConfigName('Silver Falcon Network'), 'Silver Falcon Network');
-  assert.equal(validateConfigName('  north valley signal  '), 'north valley signal');
-  assert.equal(validateConfigName('aBc DeF gHi'), 'aBc DeF gHi'); // case is free
-  assert.equal(validateConfigName('one two three four five'), 'one two three four five'); // any word count
-  // word cap (20) x 3 + single spaces — a 62-char name, safely inside the 64 bound:
-  const wide = `${'a'.repeat(20)} ${'b'.repeat(20)} ${'c'.repeat(20)}`;
-  assert.equal(validateConfigName(wide), wide);
+  assert.equal(validateConfigName('Silver1'), 'Silver1'); // 6 letters + a digit
+  assert.equal(validateConfigName('Taha13'), 'Taha13'); // regression: bug-fix acceptance
+  assert.equal(validateConfigName('Ali_ha123'), 'Ali_ha123'); // underscore allowed
+  assert.equal(validateConfigName('Ali-ha123'), 'Ali-ha123'); // hyphen allowed
+  assert.equal(validateConfigName('Ali.ha123'), 'Ali.ha123'); // dot allowed
+  assert.equal(validateConfigName('abc123'), 'abc123'); // 6-char alphanumeric minimum
+  assert.equal(validateConfigName('aBc_9-1.De'), 'aBc_9-1.De'); // case is free, separators mix
+  assert.equal(validateConfigName('  northValley7  '), 'northValley7'); // trimmed
+  assert.equal(validateConfigName('test13'), 'test13'); // 6 chars, digits allowed now
+  const max64 = 'a'.repeat(64);
+  assert.equal(validateConfigName(max64), max64); // 64-char bound stays
+  assert.equal(validateConfigName('x'.repeat(65)), null, '> 64 chars rejected');
 
   assert.equal(validateConfigName('Silve'), null, 'five chars rejected');
-  assert.equal(validateConfigName('abc'), null, 'three chars rejected');
+  assert.equal(validateConfigName('abc12'), null, 'five chars rejected even with a digit');
+  assert.equal(validateConfigName('test'), null, '4 chars < 6');
+  assert.equal(validateConfigName('test1'), null, '5 chars < 6');
   assert.equal(validateConfigName('تست عالی'), null, 'Persian rejected');
-  assert.equal(validateConfigName('_alpha bravo'), null, 'symbol not a letter');
-  assert.equal(validateConfigName('alpha بتا gamma'), null, 'mixed script rejected');
+  assert.equal(validateConfigName('Taha13 تست'), null, 'mixed script rejected');
+  assert.equal(validateConfigName('alpha beta'), null, 'space rejected');
+  assert.equal(validateConfigName('a b c d e f'), null, 'spaces between chars rejected');
+  assert.equal(validateConfigName('123 456 789'), null, 'spaces between digits rejected');
+  assert.equal(validateConfigName('Aref  sp'), null, 'double space rejected');
+  assert.equal(validateConfigName('Aref\tsp'), null, 'tab is not allowed');
   assert.equal(validateConfigName('   '), null, 'blank rejected');
-  assert.equal(validateConfigName('/etc passwd alpha'), null, 'leading slash rejected');
-  assert.equal(validateConfigName('Aref  sp'), null, 'double space = empty word');
-  assert.equal(validateConfigName('Aref\tsp'), null, 'tab is not a normal space');
-  assert.equal(validateConfigName('Alpha Bravo ch\u0001arlie'), null, 'control char rejected');
-  assert.equal(validateConfigName(`short ${'b'.repeat(21)}`), null, 'word > 20 chars');
-  assert.equal(validateConfigName(`${'a'.repeat(13)} `.repeat(4) + 'a'.repeat(13)), null, '> 64 chars');
-  assert.equal(validateConfigName('123 456 789'), null, 'digits are not words');
-  assert.equal(validateConfigName('test'), null, 'regression: 4 chars < 6');
-  assert.equal(validateConfigName('test1'), null, 'regression: too short + digit');
-  assert.equal(validateConfigName('test13'), null, 'regression: digits not allowed');
+  assert.equal(validateConfigName('/etc-pw'), null, 'leading slash rejected');
+  assert.equal(validateConfigName('test@pro'), null, '@ rejected');
+  assert.equal(validateConfigName('test#pro7'), null, '# rejected');
+  assert.equal(validateConfigName('test\\pro7'), null, 'backslash rejected');
+  assert.equal(validateConfigName('test!pro'), null, '! rejected');
+  assert.equal(validateConfigName('تست123'), null, 'non-ASCII script rejected');
+  assert.equal(validateConfigName('Taha۱۳'), null, 'Persian digits rejected');
+  assert.equal(validateConfigName('Alpha7 e\u0001'), null, 'control char rejected');
 });
 
 test('panelSafeName: observed panel shape (kept separate from display rules)', () => {
@@ -76,7 +83,7 @@ test('randomConfigName: 1000 names — exactly 3 clean English words, all valid'
   for (let i = 0; i < 1000; i++) {
     const name = randomConfigName();
     assert.equal(validateConfigName(name), name, `must pass strict validation: ${name}`);
-    const words = name.split(' ');
+    const words = name.split(/(?=[A-Z])/); // three Title-Cased words joined WITHOUT spaces
     assert.equal(words.length, 3, `exactly 3 words: ${name}`);
     for (const w of words) {
       assert.match(w, /^[A-Z][a-z]+$/, `capitalized letters only: ${w}`);
@@ -223,18 +230,18 @@ test('name step: prompt + 🎲 انتخاب خودکار directly below the mess
   const prompt = textsTo(ALICE.id).at(-1) ?? '';
   assert.equal(
     prompt,
-    'زیبا لطفا یه نام انگلیسی حداقل 6 حرفی انتخاب کن یا اگر میخوای من برات رندوم انتخاب کنم',
+    'زیبا لطفا یه نام بین ۶ تا ۶۴ کاراکتری انتخاب کن؛ فقط حروف انگلیسی (A-Z, a-z)، اعداد (0-9)، نقطه (.)، آندرلاین (_) و خط تیره (-) مجازه — بدون فاصله. یا اگر می‌خوای من برات رندوم انتخاب کنم',
   );
   const rows = replyRowsOf(stub.sendCalls().length - 1);
   assert.ok(rows.flat().some((b) => b.text === '🎲 انتخاب خودکار'));
 });
 
-test('typed names: valid English (>=6 chars) continues; invalid refuses without state loss', async () => {
+test('typed names: valid 6–64 [A-Za-z0-9_.-] continues; invalid refuses without state loss', async () => {
   const BOB = { ...USER, id: 610000002, username: 'bob_cfg' };
   await buyToConfigNameStep(BOB);
 
   // refusals keep the customer in WAITING_CONFIG_NAME with the button alive
-  for (const bad of ['  ', 'تست فارسی', 'Silve', 'Aref  sp', 'al/pha bravo', 'a'.repeat(70)]) {
+  for (const bad of ['  ', 'تست فارسی', 'Silve', 'Aref  sp', 'al/pha bravo', 'Silver Falcon', 'Taha 13', 'abc12', 'a'.repeat(70)]) {
     stub.reset();
     await dispatch(messageUpdateAs(BOB, bad, nextId()));
     assert.equal(sessionRow(BOB.id).state, 'WAITING_CONFIG_NAME', `state kept for "${bad}"`);
@@ -246,17 +253,17 @@ test('typed names: valid English (>=6 chars) continues; invalid refuses without 
     'no order rows from refused names',
   );
 
-  // the bug-fix inputs now continue: a 6-letter single word and a short two-word name
-  await dispatch(messageUpdateAs(BOB, '  Silver  ', nextId()));
+  // the bug-fix inputs now continue: digits/separators count toward length
+  await dispatch(messageUpdateAs(BOB, '  Silver1  ', nextId()));
   const silver = sessionRow(BOB.id);
   assert.equal(silver.state, 'WAITING_VOLUME');
-  assert.equal(silver.data['config_name'], 'Silver');
+  assert.equal(silver.data['config_name'], 'Silver1');
   await dispatch(callbackUpdateAs('step:back', nextId(), BOB, BOB.id));
   assert.equal(sessionRow(BOB.id).state, 'WAITING_CONFIG_NAME');
-  await dispatch(messageUpdateAs(BOB, 'Aref sp', nextId()));
+  await dispatch(messageUpdateAs(BOB, 'Taha13', nextId()));
   const s = sessionRow(BOB.id);
   assert.equal(s.state, 'WAITING_VOLUME');
-  assert.equal(s.data['config_name'], 'Aref sp');
+  assert.equal(s.data['config_name'], 'Taha13');
 });
 
 test('cfg:auto end-to-end: advances with a generated 3-word name', async () => {
@@ -267,7 +274,7 @@ test('cfg:auto end-to-end: advances with a generated 3-word name', async () => {
   const s = sessionRow(CYD.id);
   assert.equal(s.state, 'WAITING_VOLUME');
   const name = String(s.data['config_name']);
-  assert.match(name, /^[A-Z][a-z]{3,11} [A-Z][a-z]{3,11} [A-Z][a-z]{3,11}$/);
+  assert.match(name, /^[A-Z][a-z]{3,11}[A-Z][a-z]{3,11}[A-Z][a-z]{3,11}$/); // 3 words, NO spaces
   assert.equal(validateConfigName(name), name);
   assert.ok(textsTo(CYD.id).some((t) => t.includes(name)), 'the saved name is echoed back');
 
@@ -294,13 +301,13 @@ test('cfg:auto is inert out of state, on replay, and forged for strangers', asyn
 
   // mid-volume: the name is ALREADY chosen — a stale button must not overwrite it
   await buyToConfigNameStep(DAVE);
-  await dispatch(messageUpdateAs(DAVE, 'Quiet River Beacon', nextId()));
+  await dispatch(messageUpdateAs(DAVE, 'QuietRiverBeacon', nextId()));
   assert.equal(sessionRow(DAVE.id).state, 'WAITING_VOLUME');
   stub.reset();
   await dispatch(callbackUpdateAs('cfg:auto', nextId(), DAVE));
   const s = sessionRow(DAVE.id);
   assert.equal(s.state, 'WAITING_VOLUME', 'stale tap is inert');
-  assert.equal(s.data['config_name'], 'Quiet River Beacon', 'chosen name untouched');
+  assert.equal(s.data['config_name'], 'QuietRiverBeacon', 'chosen name untouched');
   assert.equal(textsTo(DAVE.id).length, 0);
 
   // immediate replay inside the name step: first tap wins, second can never double-write
@@ -321,7 +328,7 @@ test('cfg:auto is inert out of state, on replay, and forged for strangers', asyn
 test('existing purchase flow intact after strict names (typed 3-word → … → confirmed order)', async () => {
   const FRED = { ...USER, id: 610000006, username: 'fred_cfg' };
   await buyToConfigNameStep(FRED);
-  await dispatch(messageUpdateAs(FRED, 'Golden Shadow Server', nextId()));
+  await dispatch(messageUpdateAs(FRED, 'GoldenShadowServer', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), FRED));
   await dispatch(callbackUpdateAs('dur:30', nextId(), FRED));
   await dispatch(callbackUpdateAs('dev:3', nextId(), FRED));
@@ -334,14 +341,14 @@ test('existing purchase flow intact after strict names (typed 3-word → … →
     .get(customerId(FRED.id)) as Record<string, unknown>;
   assert.equal(order['state'], 'pending_payment');
   const snapshot = JSON.parse(String(order['selections'])) as Record<string, unknown>;
-  assert.equal(snapshot['config_name'], 'Golden Shadow Server');
+  assert.equal(snapshot['config_name'], 'GoldenShadowServer');
 });
 
 // ————————————————————————— panel rejection + safe retry —————————————————————————
 
 async function purchaseToAwaitingReview(user: typeof USER): Promise<string> {
   await buyToConfigNameStep(user);
-  await dispatch(messageUpdateAs(user, 'Crimson Horizon Cloud', nextId()));
+  await dispatch(messageUpdateAs(user, 'CrimsonHorizonCloud', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), user));
   await dispatch(callbackUpdateAs('dur:30', nextId(), user));
   await dispatch(callbackUpdateAs('dev:3', nextId(), user));

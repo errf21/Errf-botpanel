@@ -76,7 +76,7 @@ function sessionFor(tgUserId: number): { state: string; data: Record<string, unk
 async function purchaseToSummary(user: typeof USER): Promise<void> {
   await dispatch(messageUpdateAs(user, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), user));
-  await dispatch(messageUpdateAs(user, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(user, 'northvalley7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), user));
   await dispatch(callbackUpdateAs('dur:30', nextId(), user));
   await dispatch(callbackUpdateAs('dev:3', nextId(), user));

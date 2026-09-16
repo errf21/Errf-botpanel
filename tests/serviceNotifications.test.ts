@@ -136,7 +136,7 @@ const nextId = () => ++counter;
 async function purchaseToCompleted(): Promise<string> {
   await dispatch(messageUpdateAs(USER, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), USER));
-  await dispatch(messageUpdateAs(USER, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(USER, 'northvalley7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), USER));
   await dispatch(callbackUpdateAs('dur:30', nextId(), USER));
   await dispatch(callbackUpdateAs('dev:3', nextId(), USER));
@@ -303,7 +303,7 @@ test('expiry: one notice per service; the 2-day line never re-fires', async () =
   const text = String(sends[0].text);
   assert.ok(text.startsWith('درود زیبا،'));
   assert.ok(text.includes('⏳'));
-  assert.ok(text.includes('«north valley signal»'));
+  assert.ok(text.includes('«northvalley7»'));
   assert.ok(text.includes('2 روز و 12 ساعت'));
   assert.ok(text.includes('تمدید'), 'renewal is the point of the notice');
   assert.equal(/[۰-۹٬]/.test(text), false, 'display uses English digits only');
@@ -447,7 +447,7 @@ test('usage: exact 90% fires once with honest copy; 89.9% stays silent + backs o
   const text = String(sends[0].text);
   assert.ok(text.startsWith('درود زیبا،'));
   assert.ok(text.includes('📊'));
-  assert.ok(text.includes('«north valley signal»'));
+  assert.ok(text.includes('«northvalley7»'));
   assert.ok(text.includes(`${90}٪`));
   assert.ok(text.includes(`${1} گیگ`), 'explicit remaining volume');
   assert.ok(text.includes('محدود (حجم)'), 'panel-contract wording, no invented cutoff promise');
@@ -679,7 +679,7 @@ test('detail & list audit: names in list, expiry time, used/remaining, page note
   resetAll();
   await dispatch(callbackUpdateAs('menu:services', nextId(), USER));
   const list = (stub.sent.find((s) => String(s.text).includes(fa.servicesHeader))?.text) ?? '';
-  assert.ok(String(list).includes('📦 north valley signal'), 'list entries name their service');
+  assert.ok(String(list).includes('📦 northvalley7'), 'list entries name their service');
 
   resetAll();
   await dispatch(callbackUpdateAs(`svc:ref:${svc}`, nextId(), USER)); // live read on first tap
@@ -731,7 +731,7 @@ test('notices for both kinds coexist for one service and never interfere', async
 test('cross-phase isolation: the service sweep never touches payment_reminders', async () => {
   await dispatch(messageUpdateAs(USER, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), USER));
-  await dispatch(messageUpdateAs(USER, 'sunset ridge beacon', nextId()));
+  await dispatch(messageUpdateAs(USER, 'sunsetRidge7', nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), USER));
   await dispatch(callbackUpdateAs('dur:30', nextId(), USER));
   await dispatch(callbackUpdateAs('dev:1', nextId(), USER));

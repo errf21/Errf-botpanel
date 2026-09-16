@@ -66,13 +66,13 @@ const en: Texts = {
     '🛒 Buy a service',
     '',
     'First, choose a name for your config.',
-    'It must be English (Latin letters, up to 20 letters per word, single spaces), 6 to 64 characters.',
+    'The config name must be 6 to 64 characters and may ONLY contain English letters (A-Z, a-z), numbers (0-9), dot (.), underscore (_), and hyphen (-). Spaces, Persian/Arabic letters and digits, and any other character are NOT allowed. For example ERRF01, ERRF_Pro, ERRF-Pro and ERRF.Service are all acceptable.',
     'Change your mind? Press "Back to menu" or /cancel at any time.',
   ].join('\n'),
   buyWaitingConfigName:
-    'Pick an English name with at least 6 characters — or let me choose one for you.',
+    'Pick a name of 6 to 64 characters — English letters (A-Z, a-z), numbers (0-9), dot (.), underscore (_), and hyphen (-) only, no spaces — or let me choose one for you.',
   configNameInvalid:
-    '🙈 That name doesn\'t work — it has to be English with at least 6 characters (like "Silver"). Try again, or press "Auto-pick".',
+    '🙈 That name doesn\'t work — the config name must be 6 to 64 characters and may ONLY contain English letters (A-Z, a-z), numbers (0-9), dot (.), underscore (_), and hyphen (-). Spaces, Persian/Arabic letters and digits, and any other character are NOT allowed. For example ERRF01, ERRF_Pro, ERRF-Pro and ERRF.Service are all acceptable. Try again, or press "Auto-pick".',
   configNameSaved: (name: string) =>
     `✅ Config name set: "${name}".`,
   buyInProgress: '🛒 Your purchase is still in progress — keep going, or press "Back to menu" to cancel.',

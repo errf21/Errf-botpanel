@@ -240,7 +240,7 @@ test('migration 0015 adds the two disposition columns + the terminal partial ind
 
 test('admin delete via username: explicit card, one DELETE + confirm read, guarded stamp, notice', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('delete me river');
+  const orderId = await purchaseToCompleted('deleteMe7');
   const username = provisionUsername(orderId, 'pg');
   assert.ok(users.has(username));
   stub.reset();
@@ -251,7 +251,7 @@ test('admin delete via username: explicit card, one DELETE + confirm read, guard
   const card = textsTo(ADMIN.id).at(-1) ?? '';
   assert.ok(card.includes(orderId), 'card names the order');
   assert.ok(card.includes(username), 'card names the panel username');
-  assert.ok(card.includes('delete me river'), 'card echoes the config name (history visible)');
+  assert.ok(card.includes('deleteMe7'), 'card echoes the config name (history visible)');
   assert.ok(card.includes(fa.adminPdlWarning), 'card carries the explicit warning');
   const btns = buttonsOf(ADMIN.id);
   assert.ok(btns.includes(`pdel:ok:${orderId}`), 'confirm button');
@@ -277,12 +277,12 @@ test('admin delete via username: explicit card, one DELETE + confirm read, guard
   assert.ok(String(retire?.text).includes(fa.adminPdlDone(orderId).slice(0, 12)), 'card retired to done');
   const toasts = stub.sent.filter((s) => s.method === 'answerCallbackQuery');
   assert.ok(toasts.length >= 1);
-  assert.ok(textsTo(USER.id).some((t) => t.includes(fa.serviceRevokedNotice('delete me river').slice(0, 10))), 'customer notified (recipient language, fa here)');
+  assert.ok(textsTo(USER.id).some((t) => t.includes(fa.serviceRevokedNotice('deleteMe7').slice(0, 10))), 'customer notified (recipient language, fa here)');
 });
 
 test('admin delete via order id works identically; unknown ids refused quietly', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('by id lake');
+  const orderId = await purchaseToCompleted('byidLake7');
   stub.reset();
   stub.panel.reset();
   await dispatch(messageUpdateAs(ADMIN, `/panel_del ${orderId}`, nextId()));
@@ -306,7 +306,7 @@ test('admin delete via order id works identically; unknown ids refused quietly',
 
 test('cancel from the confirmation card changes NOTHING', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('cancelled creek');
+  const orderId = await purchaseToCompleted('cancelled7');
   const username = provisionUsername(orderId, 'pg');
   stub.reset();
   stub.panel.reset();
@@ -328,7 +328,7 @@ test('cancel from the confirmation card changes NOTHING', async () => {
 
 test('non-admins cannot delete: command and forged tap both neutral, zero panel traffic', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('guarded gulf');
+  const orderId = await purchaseToCompleted('guarded7');
   const username = provisionUsername(orderId, 'pg');
   assert.ok(users.has(username));
   const OTHER = { id: 424242424, first_name: 'Other', language_code: 'fa' };
@@ -357,7 +357,7 @@ test('non-admins cannot delete: command and forged tap both neutral, zero panel 
 /* ————— 4. fail closed on panel failure / ambiguity ————— */
 
 test('panel 500 on DELETE: alert toast, retryable card, NOTHING booked', async () => {
-  const orderId = await purchaseToCompleted('failing fjord');
+  const orderId = await purchaseToCompleted('failing7');
   const username = provisionUsername(orderId, 'pg');
   await dispatch(messageUpdateAs(ADMIN, `/panel_del ${username}`, nextId()));
   await flush();
@@ -385,7 +385,7 @@ test('panel 500 on DELETE: alert toast, retryable card, NOTHING booked', async (
 });
 
 test('panel answering success while KEEPING the service is never booked', async () => {
-  const orderId = await purchaseToCompleted('lying lagoon');
+  const orderId = await purchaseToCompleted('lying7');
   const username = provisionUsername(orderId, 'pg');
   await dispatch(messageUpdateAs(ADMIN, `/panel_del ${username}`, nextId()));
   await flush();
@@ -403,7 +403,7 @@ test('panel answering success while KEEPING the service is never booked', async 
 
 test('customer live refresh seeing panel 404 stamps the disposition (system:svc-refresh)', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('vanished vale');
+  const orderId = await purchaseToCompleted('vanished7');
   const username = provisionUsername(orderId, 'pg');
   users.delete(username); // deleted directly on the panel by its operator
   sqlite.prepare('UPDATE orders SET state = ?1 WHERE id = ?2').run('completed', orderId);
@@ -432,7 +432,7 @@ test('customer live refresh seeing panel 404 stamps the disposition (system:svc-
 
 test('usage sweep seeing panel 404 stamps the disposition (system:notice-sweep) exactly once', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('swept sea');
+  const orderId = await purchaseToCompleted('sweptSea7');
   const username = provisionUsername(orderId, 'pg');
   const u = users.get(username);
   assert.ok(u, 'service exists pre-delete');
@@ -455,7 +455,7 @@ test('usage sweep seeing panel 404 stamps the disposition (system:notice-sweep) 
 
 test('deleted services refuse renewal, retry, and re-provisioning with ZERO panel writes', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('retired ridge');
+  const orderId = await purchaseToCompleted('retired7');
   const username = provisionUsername(orderId, 'pg');
   await dispatch(messageUpdateAs(ADMIN, `/panel_del ${username}`, nextId()));
   await flush();
@@ -488,7 +488,7 @@ test('deleted services refuse renewal, retry, and re-provisioning with ZERO pane
 
 test('a deleted orphan (failed order + provisioned service) leaves /failed and refuses retry', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('orphan oak');
+  const orderId = await purchaseToCompleted('orphan7');
   const username = provisionUsername(orderId, 'pg');
   // force it to failed while KEEPING the claimed username + panel service
   sqlite.prepare('UPDATE orders SET state = ?1 WHERE id = ?2').run('failed', orderId);
@@ -517,7 +517,7 @@ test('a deleted orphan (failed order + provisioned service) leaves /failed and r
 
 test('concurrent double-taps and stale re-taps collapse to exactly one stamp + one event', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('raced river');
+  const orderId = await purchaseToCompleted('raced7');
   const username = provisionUsername(orderId, 'pg');
   await dispatch(messageUpdateAs(ADMIN, `/panel_del ${username}`, nextId()));
   await flush();
@@ -533,7 +533,7 @@ test('concurrent double-taps and stale re-taps collapse to exactly one stamp + o
   const row = orderById(orderId);
   assert.ok(row['panel_deleted_at'] !== null, 'disposition booked');
   assert.equal(eventsOf(orderId).filter((a) => a === 'service_panel_deleted').length, 1, 'exactly-once audit');
-  assert.equal(textsTo(USER.id).filter((t) => t.includes(fa.serviceRevokedNotice('raced river').slice(0, 10))).length, 1, 'the customer is told exactly once');
+  assert.equal(textsTo(USER.id).filter((t) => t.includes(fa.serviceRevokedNotice('raced7').slice(0, 10))).length, 1, 'the customer is told exactly once');
   stub.reset();
   stub.panel.reset();
   // A later stale tap on an already-deleted card: zero panel traffic, idempotent answer.
@@ -545,7 +545,7 @@ test('concurrent double-taps and stale re-taps collapse to exactly one stamp + o
 
 test('already-deleted service: /panel_del answers pdlAlready with zero panel reads', async () => {
   scenario.deleteMode = 'ok';
-  const orderId = await purchaseToCompleted('twice gone');
+  const orderId = await purchaseToCompleted('twiceGone7');
   const username = provisionUsername(orderId, 'pg');
   await dispatch(messageUpdateAs(ADMIN, `/panel_del ${username}`, nextId()));
   await flush();

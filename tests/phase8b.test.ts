@@ -75,7 +75,7 @@ async function buyToVolume(user: typeof USER): Promise<void> {
   await dispatch(messageUpdateAs(user, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), user));
   assert.equal(sessionFor(user.id).state, 'WAITING_CONFIG_NAME');
-  await dispatch(messageUpdateAs(user, 'north valley signal', nextId()));
+  await dispatch(messageUpdateAs(user, 'northvalley7', nextId()));
   assert.equal(sessionFor(user.id).state, 'WAITING_VOLUME');
 }
 

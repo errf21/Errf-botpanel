@@ -131,7 +131,7 @@ async function inviteWithGetMe(user: typeof USER): Promise<void> {
 async function purchaseToSummary(user: typeof USER): Promise<string> {
   await dispatch(messageUpdateAs(user, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), user));
-  await dispatch(messageUpdateAs(user, `north valley signal`, nextId()));
+  await dispatch(messageUpdateAs(user, `northvalley7`, nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), user)); // base volume: +0
   await dispatch(callbackUpdateAs('dur:30', nextId(), user)); // 1 month = base 45000
   await dispatch(callbackUpdateAs('dev:3', nextId(), user)); // users entry: 50000

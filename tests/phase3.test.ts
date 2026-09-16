@@ -55,9 +55,9 @@ test('full purchase: start → buy → name → custom 12GB → 30d → devices 
 
   // name accepted + volume step rendered with real preset buttons
   stub.reset();
-  await dispatch(messageUpdate('  north valley signal  ', 103));
+  await dispatch(messageUpdate('  northvalley7  ', 103));
   assert.equal(session().state, 'WAITING_VOLUME');
-  assert.equal(session().data['config_name'], 'north valley signal');
+  assert.equal(session().data['config_name'], 'northvalley7');
   const volKb = stub.sendCalls()[1]?.payload['reply_markup'] as {
     inline_keyboard: { callback_data: string }[][];
   };
@@ -99,7 +99,7 @@ test('full purchase: start → buy → name → custom 12GB → 30d → devices 
   // summary: name, 12 GB, 30 days, 3 devices, toman price, token displayed
   const summary = stub.sendCalls().at(-1);
   const summaryText = String(summary?.text);
-  assert.ok(summaryText.includes('north valley signal'));
+  assert.ok(summaryText.includes('northvalley7'));
   assert.ok(summaryText.includes('تومان'));
   assert.ok(summaryText.includes(String(token)));
 
@@ -124,7 +124,7 @@ test('full purchase: start → buy → name → custom 12GB → 30d → devices 
   assert.equal(order?.['currency'], 'IRT');
   assert.equal(order?.['idempotency_key'], token);
   const snapshot = JSON.parse(String(order?.['selections'])) as Record<string, unknown>;
-  assert.equal(snapshot['config_name'], 'north valley signal');
+  assert.equal(snapshot['config_name'], 'northvalley7');
   assert.equal(snapshot['volume_gb'], 12);
   const price = snapshot['price'] as Record<string, unknown>;
   assert.equal(price['schema'], 2);

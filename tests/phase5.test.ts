@@ -164,7 +164,7 @@ function eventsOf(id: string): string[] {
 async function purchaseToApproval(): Promise<string> {
   await dispatch(messageUpdateAs(USER, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), USER));
-  await dispatch(messageUpdateAs(USER, `north valley signal`, nextId()));
+  await dispatch(messageUpdateAs(USER, `northvalley7`, nextId()));
   await dispatch(callbackUpdateAs('vol:10', nextId(), USER));
   await dispatch(callbackUpdateAs('dur:30', nextId(), USER));
   await dispatch(callbackUpdateAs('dev:3', nextId(), USER));
