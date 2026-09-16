@@ -121,7 +121,7 @@ function hasMainLabel(kb: ReplyKeyboard | undefined, label: string): boolean {
 
 // ————————————————————— keyboard shape —————————————————————
 
-test('/start presents a Reply Keyboard: 10 labels in 4 rows (3/2/2/3) — styled trio first', async () => {
+test('/start presents a Reply Keyboard: 10 labels in 4 rows (3/2/2/3) — color groups', async () => {
   const hero = { ...USER, id: 810000001, username: 'p8a_shape' };
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
@@ -140,13 +140,13 @@ test('/start presents a Reply Keyboard: 10 labels in 4 rows (3/2/2/3) — styled
   );
   assert.deepEqual(kb!.keyboard, [
     [
-      { text: '🛒 خرید سرویس', style: 'danger' },
-      { text: '📦 سرویس‌های من', style: 'primary' },
+      { text: '🛒 خرید سرویس', style: 'success' },
+      { text: '📦 سرویس‌های من', style: 'success' },
       { text: '💰 کیف پول', style: 'success' },
     ],
-    [{ text: '💳 سفارش‌های من' }, { text: '👤 حساب کاربری' }],
-    [{ text: '🤝 دعوت از دوستان' }, { text: '🆘 پشتیبانی' }],
-    [{ text: '🎫 ثبت تیکت' }, { text: '📚 راهنمای اتصال' }, { text: '🌐 زبان / Language' }],
+    [{ text: '💳 سفارش‌های من', style: 'primary' }, { text: '👤 حساب کاربری', style: 'primary' }],
+    [{ text: '🤝 دعوت از دوستان', style: 'primary' }, { text: '🆘 پشتیبانی', style: 'primary' }],
+    [{ text: '🎫 ثبت تیکت', style: 'danger' }, { text: '📚 راهنمای اتصال', style: 'danger' }, { text: '🌐 زبان / Language', style: 'danger' }],
   ]);
   // Same ten labels as the routing table — grouping changed, membership didn't.
   assert.deepEqual(
@@ -155,21 +155,31 @@ test('/start presents a Reply Keyboard: 10 labels in 4 rows (3/2/2/3) — styled
   );
 });
 
-test('the styled trio sits alone in row 1 with three DISTINCT styles (danger/primary/success)', async () => {
+test('the color groups sit in rows [3,2,2,3]: green success / blue primary / red danger', async () => {
   const styled = MAIN_MENU_ENTRIES.filter((e) => e.style !== undefined);
-  assert.equal(styled.length, 3);
+  assert.equal(styled.length, 10);
   assert.deepEqual(
     styled.map((e) => [e.label, e.style]),
     [
-      ['🛒 خرید سرویس', 'danger'],
-      ['📦 سرویس‌های من', 'primary'],
+      ['🛒 خرید سرویس', 'success'],
+      ['📦 سرویس‌های من', 'success'],
+      ['💳 سفارش‌های من', 'primary'],
+      ['👤 حساب کاربری', 'primary'],
       ['💰 کیف پول', 'success'],
+      ['🤝 دعوت از دوستان', 'primary'],
+      ['🆘 پشتیبانی', 'primary'],
+      ['🎫 ثبت تیکت', 'danger'],
+      ['📚 راهنمای اتصال', 'danger'],
+      ['🌐 زبان / Language', 'danger'],
     ],
   );
-  assert.equal(new Set(styled.map((e) => e.style)).size, 3, 'no duplicate style in the trio');
+  assert.deepEqual(
+    [...new Set(styled.map((e) => e.style))].sort(),
+    ['danger', 'primary', 'success'],
+  );
 
-  // Wire-level proof: row 0 IS the trio, adjacent and in order; and exactly
-  // three buttons on the whole keyboard carry a `style` key.
+  // Wire-level proof: row 0 IS the green trio, rows 1-2 the blue quartet,
+  // row 3 the red trio; every button on the keyboard carries a `style` key.
   const hero = { ...USER, id: 810000002, username: 'p8a_shape2' };
   stub.reset();
   await dispatch(messageUpdateAs(hero, '/start', nextId()));
@@ -177,29 +187,37 @@ test('the styled trio sits alone in row 1 with three DISTINCT styles (danger/pri
   assert.deepEqual(
     kb.keyboard[0]!.map((b) => [b.text, b.style]),
     [
-      ['🛒 خرید سرویس', 'danger'],
-      ['📦 سرویس‌های من', 'primary'],
+      ['🛒 خرید سرویس', 'success'],
+      ['📦 سرویس‌های من', 'success'],
       ['💰 کیف پول', 'success'],
     ],
   );
   const withStyle = kb.keyboard.flat().filter((b) => Object.prototype.hasOwnProperty.call(b, 'style'));
-  assert.equal(withStyle.length, 3);
+  assert.equal(withStyle.length, 10);
   assert.deepEqual(
     Object.fromEntries(withStyle.map((b) => [b.text, b.style])),
     {
-      '🛒 خرید سرویس': 'danger',
-      '📦 سرویس‌های من': 'primary',
+      '🛒 خرید سرویس': 'success',
+      '📦 سرویس‌های من': 'success',
       '💰 کیف پول': 'success',
+      '💳 سفارش‌های من': 'primary',
+      '👤 حساب کاربری': 'primary',
+      '🤝 دعوت از دوستان': 'primary',
+      '🆘 پشتیبانی': 'primary',
+      '🎫 ثبت تیکت': 'danger',
+      '📚 راهنمای اتصال': 'danger',
+      '🌐 زبان / Language': 'danger',
     },
   );
   // Localization must not move a style: the English keyboard keeps the same
-  // danger/primary/success order in row 0.
+  // success/success/success order in row 0.
   const enHero = { ...USER, id: 810000003, username: 'p8a_shape_en', language_code: 'en' };
   await dispatch(messageUpdateAs(enHero, '/start', nextId()));
   await dispatch(callbackUpdateAs('lang:en', nextId(), enHero));
   const enKb = replyKbOf(sendsTo(enHero.id).filter((s) => s.method === 'sendMessage').at(-1)!.payload)!;
-  assert.deepEqual(enKb.keyboard[0]!.map((b) => b.style), ['danger', 'primary', 'success']);
-  assert.equal(new Set(enKb.keyboard.flat().map((b) => b.style)).size, 4, 'three styles + undefined');
+  assert.deepEqual(enKb.keyboard[0]!.map((b) => b.style), ['success', 'success', 'success']);
+  assert.deepEqual(enKb.keyboard.map((r) => r.length), [3, 2, 2, 3]);
+  assert.equal(new Set(enKb.keyboard.flat().map((b) => b.style)).size, 3, 'three styles, no unstyled');
 });
 
 // ————————————————————— text→action routing —————————————————————

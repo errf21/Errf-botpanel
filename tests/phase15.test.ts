@@ -324,11 +324,11 @@ test('P15-03 first-ever /start carries the offer bubble; the menu contract is un
   assert.deepEqual(
     menu.keyboard[0],
     [
-      { text: fa.menuBuy, style: 'danger' },
-      { text: fa.menuServices, style: 'primary' },
+      { text: fa.menuBuy, style: 'success' },
+      { text: fa.menuServices, style: 'success' },
       { text: fa.menuWallet, style: 'success' },
     ],
-    'styled trio intact as row 1',
+    'green group intact as row 1',
   );
   assert.equal(menu.is_persistent, undefined);
   // Task 1: the pinned menu shape carries the one-time hide semantics too.

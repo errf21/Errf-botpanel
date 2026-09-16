@@ -285,9 +285,9 @@ function urlButton(text: string, url: string): TelegramInlineKeyboardButton {
  * as the exact-match routing table (`menuCallbackForText`) feeding the SAME
  * callback vocabulary the inline buttons historically used. Labels must
  * stay byte-identical to the button text: Telegram echoes them verbatim.
- * Exactly three entries carry a style — `danger`/`primary`/`success`, three
- * DISTINCT values on the three main actions; the rest are rendered by Telegram
- * in the default/basic appearance.
+ * Every entry carries a style — `success` (green) on the wallet/services/buy
+ * group, `primary` (blue) on the account/orders/invite/support group, and
+ * `danger` (red) on the ticket/guide/language group.
  *
  * Phase 10: LABELS ARE LOCALIZED but ROUTING IS NOT. Every keyboard label the
  * bot can ever display is indexed across ALL bundles, so a tap on a stale
@@ -306,26 +306,26 @@ interface MenuCore {
 }
 
 /**
- * The styled trio MUST stay adjacent, in this exact order, and FIRST (the row
- * builder puts every styled entry in row 1 by source order):
- * 🛒 Buy = `danger` (red) · 📦 My Services = `primary` (blue) · 💰 Wallet =
- * `success` (green) — three DISTINCT styles, never a fourth, never split by an
- * unstyled button. Everything below stays neutral.
+ * Main-menu styling groups (visual-only; order, labels and callbacks frozen):
+ * 🟢 `success` (green) = Buy + My Services + Wallet · 🔵 `primary` (blue) =
+ * Orders + Account + Invite + Support · 🔴 `danger` (red) = Ticket + Guide +
+ * Language. The row builder renders each colour group together, so a button
+ * can only change rows by changing groups — never by reordering this list.
  */
 const MAIN_MENU_CORE: readonly MenuCore[] = [
-  { label: (t) => t.menuBuy, callback: CB.MENU_BUY, style: 'danger' },
-  { label: (t) => t.menuServices, callback: CB.MENU_SERVICES, style: 'primary' },
-  { label: (t) => t.menuOrders, callback: CB.MENU_ORDERS },
-  { label: (t) => t.menuAccount, callback: CB.MENU_ACCOUNT },
+  { label: (t) => t.menuBuy, callback: CB.MENU_BUY, style: 'success' },
+  { label: (t) => t.menuServices, callback: CB.MENU_SERVICES, style: 'success' },
+  { label: (t) => t.menuOrders, callback: CB.MENU_ORDERS, style: 'primary' },
+  { label: (t) => t.menuAccount, callback: CB.MENU_ACCOUNT, style: 'primary' },
   { label: (t) => t.menuWallet, callback: CB.MENU_WALLET, style: 'success' },
-  { label: (t) => t.menuInvite, callback: CB.MENU_INVITE },
+  { label: (t) => t.menuInvite, callback: CB.MENU_INVITE, style: 'primary' },
   /** Direct contact with support — never opens a ticket. */
-  { label: (t) => t.menuSupport, callback: CB.MENU_SUPPORT },
-  /** The formal ticket flow; deliberately unstyled, listed after support. */
-  { label: (t) => t.menuTicket, callback: CB.MENU_TICKET },
-  /** Phase 11: the connection guide — deliberately unstyled, next to language. */
-  { label: (t) => t.menuGuide, callback: CB.MENU_GUIDE },
-  { label: () => LANG_LABEL, callback: CB.MENU_LANGUAGE },
+  { label: (t) => t.menuSupport, callback: CB.MENU_SUPPORT, style: 'primary' },
+  /** The formal ticket flow; listed after support. */
+  { label: (t) => t.menuTicket, callback: CB.MENU_TICKET, style: 'danger' },
+  /** Phase 11: the connection guide — next to language. */
+  { label: (t) => t.menuGuide, callback: CB.MENU_GUIDE, style: 'danger' },
+  { label: () => LANG_LABEL, callback: CB.MENU_LANGUAGE, style: 'danger' },
 ];
 
 export interface MainMenuEntry {
@@ -387,39 +387,32 @@ function replyKeyboard(
 /**
  * The bottom main menu.
  *
- * Row 1 is ALWAYS exactly the styled trio — `danger` 🛒 Buy, `primary` 📦 My
- * Services, `success` 💰 Wallet — adjacent, in that order, with nothing between
- * them and never a fourth colour: the styled partition takes every styled entry
- * in MAIN_MENU_CORE source order, so a button can only join row 1 by gaining a
- * style, and only those three have one.
- *
- * The unstyled buttons fill the rows beneath it two per row. An ODD remainder
- * would orphan a single button in its own row, so a trailing solo button joins
- * the previous row instead — 10 buttons therefore render [3,2,2,3], and the
- * guide keeps sitting directly before the language selector (which stays last).
- * Labels, callbacks and styles are untouched; only the grouping differs from the
- * flat MAIN_MENU_CORE order.
+ * Rows follow the colour groups in MAIN_MENU_CORE source order: row 1 is the
+ * green group (`success` 🛒 Buy + 📦 My Services + 💰 Wallet), rows 2-3 are
+ * the blue group (`primary` 💳 Orders + 👤 Account + 🤝 Invite + 🆘 Support,
+ * two per row), and row 4 is the red group (`danger` 🎫 Ticket + 📚 Guide +
+ * 🌐 Language) — 10 buttons therefore render [3,2,2,3], and the guide keeps
+ * sitting directly before the language selector (which stays last).
+ * Labels, callbacks and order are untouched; only the style grouping differs
+ * from the flat MAIN_MENU_CORE order.
  *
  * One-time on purpose (see `replyKeyboard`): every tap collapses the panel back
  * to the full chat screen; the input-field keyboard icon re-summons it.
  */
 export function mainMenuKeyboard(ui: Ui): TelegramReplyKeyboardMarkup {
   const entries = mainMenuEntries(ui.t);
-  const of = (hasStyle: boolean) =>
+  const of = (style: TelegramKeyboardButtonStyle) =>
     entries
-      .filter((entry) => (entry.style !== undefined) === hasStyle)
+      .filter((entry) => entry.style === style)
       .map((entry) => replyButton(entry.label, entry.style));
-  const styled = of(true);
-  const plain = of(false);
-  const rows: TelegramReplyKeyboardButton[][] = [styled];
-  for (let i = 0; i < plain.length; i += 2) {
-    rows.push(plain.slice(i, i + 2));
+  const green = of('success');
+  const blue = of('primary');
+  const red = of('danger');
+  const rows: TelegramReplyKeyboardButton[][] = [green];
+  for (let i = 0; i < blue.length; i += 2) {
+    rows.push(blue.slice(i, i + 2));
   }
-  const tail = rows.at(-1);
-  const previous = rows.at(-2);
-  if (tail !== undefined && previous !== undefined && tail.length === 1) {
-    rows.splice(rows.length - 2, 2, [...previous, ...tail]);
-  }
+  rows.push(red);
   return replyKeyboard(rows, { oneTime: true });
 }
 
