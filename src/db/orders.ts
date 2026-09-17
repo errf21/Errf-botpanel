@@ -371,6 +371,158 @@ export async function listRecentOrdersForCustomer(
   return result.results;
 }
 
+/* ———— Phase 20: /users admin dashboard (migration-free reads) ————
+ * Admin-scoped browsing of ANOTHER user's services/orders. Every query below
+ * stays scoped by customer_id (resolved server-side from the verified
+ * telegram id) and bounded by LIMIT/OFFSET. Snapshot/D1 only — never a
+ * PasarGuard call. Unlike the customer surfaces, the admin service history
+ * deliberately INCLUDES panel_deleted rows (flagged by the caller via
+ * panel_deleted_at) so deletion stays visible instead of hidden. */
+
+/** Paginated full order history for one user, newest-first (admin view). */
+export async function listOrdersForCustomerAdmin(
+  db: D1Database,
+  customerId: number,
+  limit: number,
+  offset: number,
+): Promise<OrderRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM orders WHERE customer_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3`,
+    )
+    .bind(customerId, limit, offset)
+    .all<OrderRow>();
+  return result.results;
+}
+
+/** Total order rows for one user (orders pagination page count). */
+export async function countOrdersForCustomer(
+  db: D1Database,
+  customerId: number,
+): Promise<number> {
+  const row = await db
+    .prepare('SELECT COUNT(*) AS total FROM orders WHERE customer_id = ?1')
+    .bind(customerId)
+    .first<{ total: number }>();
+  return typeof row?.total === 'number' ? row.total : 0;
+}
+
+/** Paginated service history for one user (admin view, includes panel-deleted). */
+export async function listServicesForCustomerAdmin(
+  db: D1Database,
+  customerId: number,
+  limit: number,
+  offset: number,
+): Promise<ServiceRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT o.*, ${SERVICE_AGGREGATES}
+         FROM orders o
+        WHERE o.customer_id = ?1 AND o.kind = 'purchase' AND o.state = 'completed'
+        ORDER BY o.service_created_at DESC, o.created_at DESC, o.id DESC
+        LIMIT ?2 OFFSET ?3`,
+    )
+    .bind(customerId, limit, offset)
+    .all<ServiceRow>();
+  return result.results;
+}
+
+/** Total service rows for one user, including panel-deleted (admin view). */
+export async function countServicesForCustomerAdmin(
+  db: D1Database,
+  customerId: number,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total FROM orders
+        WHERE customer_id = ?1 AND kind = 'purchase' AND state = 'completed'`,
+    )
+    .bind(customerId)
+    .first<{ total: number }>();
+  return typeof row?.total === 'number' ? row.total : 0;
+}
+
+/** Active (panel-alive) service count for one user (dashboard profile line). */
+export async function countActiveServicesForCustomer(
+  db: D1Database,
+  customerId: number,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total FROM orders
+        WHERE customer_id = ?1 AND kind = 'purchase' AND state = 'completed'
+          AND panel_deleted_at IS NULL`,
+    )
+    .bind(customerId)
+    .first<{ total: number }>();
+  return typeof row?.total === 'number' ? row.total : 0;
+}
+
+/** Dashboard S0 overview counts: total services + alive services (bounded scans). */
+export async function countAllServices(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total FROM orders WHERE kind = 'purchase' AND state = 'completed'`,
+    )
+    .first<{ total: number }>();
+  return typeof row?.total === 'number' ? row.total : 0;
+}
+
+/** Dashboard S0 overview: alive services only. */
+export async function countAliveServices(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total FROM orders
+        WHERE kind = 'purchase' AND state = 'completed' AND panel_deleted_at IS NULL`,
+    )
+    .first<{ total: number }>();
+  return typeof row?.total === 'number' ? row.total : 0;
+}
+
+/** Dashboard S0 overview: active repurchase locks (capped, fail-closed pre-0019). */
+export async function countActiveRepurchases(db: D1Database): Promise<number> {
+  try {
+    const row = await db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM orders
+          WHERE kind = 'renewal' AND repurchase_mode IS NOT NULL
+            AND state IN ${ACTIVE_REPURCHASE_STATES}`,
+      )
+      .first<{ total: number }>();
+    return typeof row?.total === 'number' ? row.total : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Active repurchase locks for ONE user (admin per-user repurchase view). */
+export async function listActiveRepurchasesForCustomer(
+  db: D1Database,
+  customerId: number,
+  limit: number,
+): Promise<QueueRow[]> {
+  try {
+    const result = await db
+      .prepare(
+        `SELECT o.*, c.telegram_user_id, c.telegram_username,
+                (SELECT MAX(e.created_at) FROM order_events e
+                  WHERE e.order_id = o.id AND e.action IN ('receipt_uploaded','receipt_replaced')
+                ) AS receipt_uploaded_at
+           FROM orders o
+           JOIN customers c ON c.id = o.customer_id
+          WHERE o.customer_id = ?1 AND o.kind = 'renewal' AND o.repurchase_mode IS NOT NULL
+            AND o.state IN ${ACTIVE_REPURCHASE_STATES}
+          ORDER BY o.created_at DESC
+          LIMIT ?2`,
+      )
+      .bind(customerId, limit)
+      .all<QueueRow>();
+    return result.results;
+  } catch {
+    return [];
+  }
+}
+
 /* ———— Phase 5: guarded provisioning transitions ————
  * Same discipline as the review transitions: one snapshot read for
  * diagnostics, then a SINGLE conditional UPDATE whose affected-row count

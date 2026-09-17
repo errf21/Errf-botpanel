@@ -170,6 +170,39 @@ export async function getCustomerContact(
     .first<CustomerContact>();
 }
 
+/* ———— Phase 20: /users admin dashboard (migration-free reads) ————
+ * Paginated customer browsing for the admin-only /users surface. Snapshot
+ * reads only: safe columns, newest-first, bounded LIMIT/OFFSET. No secrets
+ * live in `customers`, but the column list stays explicit so future columns
+ * can never leak by accident. */
+
+/** Total customer rows (dashboard S0 overview + list page count). */
+export async function countCustomers(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare('SELECT COUNT(*) AS total FROM customers')
+    .first<{ total: number }>();
+  return typeof row?.total === 'number' ? row.total : 0;
+}
+
+/** One page of customers, newest-first. `limit`/`offset` are clamped by callers. */
+export async function listCustomersPage(
+  db: D1Database,
+  limit: number,
+  offset: number,
+): Promise<Array<CustomerRecord & { balance_irt: number }>> {
+  const result = await db
+    .prepare(
+      `SELECT id, telegram_user_id, telegram_username, first_name, last_name,
+              language_code, language, is_admin, created_at, updated_at, balance_irt
+         FROM customers
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?1 OFFSET ?2`,
+    )
+    .bind(limit, offset)
+    .all<CustomerRecord & { balance_irt: number }>();
+  return result.results;
+}
+
 /** Chat ids that receive admin traffic: env admin + every is_admin row. */
 export async function resolveAdminChatIds(env: Env, db: D1Database): Promise<number[]> {
   const ids = new Set<number>();

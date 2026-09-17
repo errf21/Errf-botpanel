@@ -57,7 +57,8 @@ export function isValidCallbackData(data: unknown): data is string {
       TICKET_CALLBACK_PATTERN.test(data) ||
       ANNOUNCE_CALLBACK_PATTERN.test(data) ||
       PANEL_DELETE_CALLBACK_PATTERN.test(data) ||
-      TOPUP_CALLBACK_PATTERN.test(data))
+      TOPUP_CALLBACK_PATTERN.test(data) ||
+      USERS_CALLBACK_PATTERN.test(data))
   );
 }
 
@@ -201,6 +202,101 @@ export function parsePanelDeleteCallback(data: string): PanelDeleteCallback | nu
 }
 
 /* ———— Phase 17: wallet top-up review + amount parsing ———— */
+
+/* ———— Phase 20: /users admin dashboard navigation ————
+ * `usr:` carries ONLY admin navigation state: list modes/pages and numeric
+ * telegram ids (re-resolved server-side on every tap), plus order ids for
+ * per-service/order cards (ownership re-checked via customer_id, never
+ * trusted). Produced ONLY by usersCallback() builders in telegram/menu.ts,
+ * consumed ONLY by parseUsersCallback(). All payloads stay far under
+ * Telegram's 64-byte callback_data limit. */
+
+const USERS_LIST_MODE_PATTERN = '(det|svc|ord|rep|wal)';
+const USERS_TGID_PATTERN = '[0-9]{1,20}';
+const USERS_PAGE_PATTERN = '[0-9]{1,4}';
+
+const USERS_CALLBACK_PATTERN = new RegExp(
+  `^usr:(?:menu|search|list:${USERS_LIST_MODE_PATTERN}:${USERS_PAGE_PATTERN}` +
+    `|det:${USERS_TGID_PATTERN}:${USERS_LIST_MODE_PATTERN}:${USERS_PAGE_PATTERN}` +
+    `|svc:${USERS_TGID_PATTERN}:${USERS_PAGE_PATTERN}` +
+    `|svcd:${USERS_TGID_PATTERN}:[0-9A-HJKMNP-TV-Z]{28}` +
+    `|ord:${USERS_TGID_PATTERN}:${USERS_PAGE_PATTERN}` +
+    `|ordd:${USERS_TGID_PATTERN}:[0-9A-HJKMNP-TV-Z]{28}` +
+    `|wal:${USERS_TGID_PATTERN}|rep:${USERS_TGID_PATTERN})$`,
+);
+
+export type UsersListMode = 'det' | 'svc' | 'ord' | 'rep' | 'wal';
+
+export type UsersCallback =
+  | { action: 'menu' }
+  | { action: 'search' }
+  | { action: 'list'; next: UsersListMode; page: number }
+  | { action: 'det'; tgid: string; next: UsersListMode; page: number }
+  | { action: 'svc'; tgid: string; page: number }
+  | { action: 'svcd'; tgid: string; orderId: string }
+  | { action: 'ord'; tgid: string; page: number }
+  | { action: 'ordd'; tgid: string; orderId: string }
+  | { action: 'wal'; tgid: string }
+  | { action: 'rep'; tgid: string };
+
+function parseUsersPage(raw: string): number | null {
+  if (!/^[0-9]{1,4}$/.test(raw)) return null;
+  const num = Number(raw);
+  return Number.isSafeInteger(num) && num >= 0 && num <= 9999 ? num : null;
+}
+
+function parseUsersTgid(raw: string): string | null {
+  if (!/^[0-9]{1,20}$/.test(raw)) return null;
+  const num = Number(raw);
+  if (!Number.isSafeInteger(num) || num <= 0) return null;
+  return raw;
+}
+
+/** Parses ONLY data that already matched USERS_CALLBACK_PATTERN. */
+export function parseUsersCallback(data: string): UsersCallback | null {
+  if (!USERS_CALLBACK_PATTERN.test(data)) return null;
+  const parts = data.split(':');
+  const action = parts[1];
+  if (action === 'menu') return { action: 'menu' };
+  if (action === 'search') return { action: 'search' };
+  if (action === 'list') {
+    const next = parts[2];
+    const page = parseUsersPage(parts[3] ?? '');
+    if ((next === 'det' || next === 'svc' || next === 'ord' || next === 'rep' || next === 'wal') && page !== null) {
+      return { action: 'list', next, page };
+    }
+    return null;
+  }
+  if (action === 'det') {
+    const tgid = parseUsersTgid(parts[2] ?? '');
+    const next = parts[3];
+    const page = parseUsersPage(parts[4] ?? '');
+    if (tgid !== null && (next === 'det' || next === 'svc' || next === 'ord' || next === 'rep' || next === 'wal') && page !== null) {
+      return { action: 'det', tgid, next, page };
+    }
+    return null;
+  }
+  if (action === 'svc' || action === 'ord') {
+    const tgid = parseUsersTgid(parts[2] ?? '');
+    const page = parseUsersPage(parts[3] ?? '');
+    if (tgid !== null && page !== null) return { action, tgid, page };
+    return null;
+  }
+  if (action === 'svcd' || action === 'ordd') {
+    const tgid = parseUsersTgid(parts[2] ?? '');
+    const orderId = parts[3] ?? '';
+    if (tgid !== null && ORDER_ID_PATTERN.test(orderId)) {
+      return action === 'svcd' ? { action: 'svcd', tgid, orderId } : { action: 'ordd', tgid, orderId };
+    }
+    return null;
+  }
+  if (action === 'wal' || action === 'rep') {
+    const tgid = parseUsersTgid(parts[2] ?? '');
+    if (tgid !== null) return { action, tgid };
+    return null;
+  }
+  return null;
+}
 
 export type TopupReviewAction = 'ok' | 'no';
 

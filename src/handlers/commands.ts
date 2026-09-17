@@ -11,6 +11,8 @@ import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { showPricing } from './pricingAdmin.ts';
 import { showSalesStatus } from './salesAdmin.ts';
+import { handleUsersCommand } from './usersAdmin.ts';
+import { handleMsgCommand } from './msgAdmin.ts';
 import { handlePanelDeleteCommand } from './panelDelete.ts';
 import { maybeOfferFreeTestOnStart } from './freeTest.ts';
 import { parseCommand } from '../lib/validate.ts';
@@ -145,6 +147,18 @@ export async function handleCommand(
       } else {
         await handlePanelDeleteCommand(ctx, parsed.args.join(' '));
       }
+      return;
+    case 'users':
+      // Phase 20: admin-only users dashboard (overview + paginated browsing).
+      // Bare /users opens the dashboard; /users <id|@username> jumps direct
+      // (migration-free search). The admin gate lives inside the handler so
+      // non-admins get the exact cmdAdminOnly denial with zero data leakage.
+      await handleUsersCommand(ctx, parsed.args);
+      return;
+    case 'msg':
+      // Phase 21: admin-only direct message relay (stateless, no D1 writes).
+      // Gate + usage/not-found handling live inside the handler.
+      await handleMsgCommand(ctx, parsed.args);
       return;
     default:
       // Task 1: an unknown command never re-presents the Reply Keyboard —

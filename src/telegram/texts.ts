@@ -468,6 +468,62 @@ export const fa = {
   adminTopupStaleToast: 'این درخواست شارژ قبلاً بررسی شده است.',
   myId: (id: string) => `🆔 Telegram ID: ${id}`,
 
+  // ————— Phase 21: /msg admin direct message (stateless, no D1 writes) —————
+  msgUsage: '✉️ نحوه استفاده:\n/msg <شناسه تلگرام> <متن پیام>\n/msg @username <متن پیام>',
+  msgSent: '✅ پیام ارسال شد.',
+  msgSendFailed: '⚠️ ارسال پیام انجام نشد؛ بعداً دوباره تلاش کنید.',
+  msgFromAdmin: (v: string) => `👑 از طرف ادمین\n\n${v}`,
+
+  // ————— Phase 20: /users admin dashboard (Persian-only operational surface) —————
+  // Clean control-panel copy: short headers, field lines reuse the existing
+  // 🆔/👤/📅/💰/📦 conventions. No separators, no secrets, ASCII digits.
+  usersDashboardHeader: '👑 مدیریت کاربران',
+  usersDashboardUsers: (v: string) => `👥 کاربران: ${v}`,
+  usersDashboardActiveServices: (v: string) => `🟢 سرویس‌های فعال: ${v}`,
+  usersDashboardTotalServices: (v: string) => `📦 کل سرویس‌ها: ${v}`,
+  usersDashboardActiveRepurchases: (v: string) => `🔄 خریدهای مجدد فعال: ${v}`,
+  usersSearchHint:
+    '🔎 برای جست‌وجو بفرستید:\n/users 123456789\n/users @username',
+  usersNotFound: '🚫 کاربری با این مشخصات پیدا نشد.',
+  usersUsage: '👥 نحوه استفاده:\n/users\n/users <شناسه تلگرام>\n/users @username',
+  usersListHeader: '👥 کاربران',
+  usersListEmpty: 'هنوز کاربری ثبت نشده است.',
+  usersListPage: (page: string, pages: string) => `صفحه ${page} از ${pages}`,
+  usersListEntry: (n: number, name: string, balance: string) =>
+    `${n}. ${name} — ${balance}`,
+  usersProfileHeader: (name: string) => `👤 ${name}`,
+  usersProfileId: (v: string) => `🆔 شناسه: ${v}`,
+  usersProfileName: (v: string) => `نام: ${v}`,
+  usersProfileUsername: (v: string) => `یوزرنیم: ${v}`,
+  usersProfileSince: (v: string) => `📅 عضویت: ${v}`,
+  usersProfileBalance: (v: string) => `💰 موجودی: ${v}`,
+  usersProfileServices: (v: string) => `📦 سرویس‌ها: ${v}`,
+  usersServicesHeader: '📦 سرویس‌ها',
+  usersServicesEmpty: 'این کاربر هنوز سرویسی ندارد.',
+  usersServiceEntry: (n: number, name: string, status: string, expires: string) =>
+    `${n}. 📦 ${name} — ${status}\n   انقضا: ${expires}`,
+  usersServiceDetailHeader: (name: string) => `📦 سرویس «${name}»`,
+  usersOrdersHeader: '🧾 سفارش‌ها',
+  usersOrdersEmpty: 'این کاربر هنوز سفارشی ندارد.',
+  usersOrderEntry: (n: number, shortId: string, kind: string, status: string, amount: string, date: string) =>
+    `${n}. 🆔 ${shortId} — ${kind}${status}\n   ${amount} — ${date}`,
+  usersWalletHeader: (name: string) => `💰 کیف پول ${name}`,
+  usersWalletHint: 'برای شارژ یا کسر موجودی از /credit و /debit استفاده کنید.',
+  usersRepurchasesHeader: '🔄 خریدهای مجدد فعال',
+  usersRepurchasesEmpty: 'خرید مجدد فعالی برای این کاربر نیست.',
+  usersBackUsers: '🔙 بازگشت به کاربران',
+  usersBackProfile: '🔙 بازگشت به پروفایل',
+  usersBackDashboard: '🔙 بازگشت',
+  usersBtnUsers: '👥 کاربران',
+  usersBtnSearch: '🔎 جست‌وجو',
+  usersBtnServices: '📦 سرویس‌ها',
+  usersBtnOrders: '🧾 سفارش‌ها',
+  usersBtnRepurchases: '🔄 خریدهای مجدد',
+  usersBtnWallet: '💰 کیف پول',
+  usersBtnPrev: '◀️ قبلی',
+  usersBtnNext: 'بعدی ▶️',
+  usersBtnBackMenu: '🔙 بازگشت به منو',
+
   inviteHeader: '🤝 دعوت از دوستان',
   inviteLinkNone: (link: string) => `🔗 لینک دعوت شما:\n${link}`,
   inviteCount: (n: number) => `دعوت‌های موفق: ${n}`,

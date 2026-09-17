@@ -8,6 +8,7 @@ import type {
 import type { Texts } from './texts.ts';
 import type { Ui } from './i18n.ts';
 import { EN_UI, FA_UI } from './i18n.ts';
+import type { UsersListMode } from '../lib/validate.ts';
 
 /**
  * Callback data vocabulary. Anything not in this exact set is rejected —
@@ -787,4 +788,108 @@ export function salesKeyboard(stopped: boolean): TelegramInlineKeyboardMarkup {
       [button('🔄 نمایش دوباره', 'sal:view')],
     ],
   };
+}
+
+/* ———— Phase 20: /users admin dashboard ————
+ * Persian-only operational surface (same rule as adm:/tsk:/prc:/sal:
+ * keyboards: literal labels via the fa bundle at the call site, never
+ * localized per-admin). Values are produced ONLY by the builders below and
+ * consumed ONLY by parseUsersCallback() in lib/validate.ts. Every tap
+ * re-checks admin + re-resolves the target customer from D1 server-side.
+ * Payloads stay far under Telegram's 64-byte callback_data limit.
+ */
+
+export function usersCallbackList(next: UsersListMode, page: number): string {
+  return `usr:list:${next}:${page}`;
+}
+
+export function usersCallbackDet(tgid: string, next: UsersListMode, page: number): string {
+  return `usr:det:${tgid}:${next}:${page}`;
+}
+
+export function usersCallbackSvc(tgid: string, page: number): string {
+  return `usr:svc:${tgid}:${page}`;
+}
+
+export function usersCallbackSvcd(tgid: string, orderId: string): string {
+  return `usr:svcd:${tgid}:${orderId}`;
+}
+
+export function usersCallbackOrd(tgid: string, page: number): string {
+  return `usr:ord:${tgid}:${page}`;
+}
+
+export function usersCallbackOrdd(tgid: string, orderId: string): string {
+  return `usr:ordd:${tgid}:${orderId}`;
+}
+
+export function usersCallbackWal(tgid: string): string {
+  return `usr:wal:${tgid}`;
+}
+
+export function usersCallbackRep(tgid: string): string {
+  return `usr:rep:${tgid}`;
+}
+
+/** S0 dashboard: overview counts + navigation only (never user rows). */
+export function usersDashboardKeyboard(t: Texts): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button(t.usersBtnUsers, usersCallbackList('det', 0)), button(t.usersBtnSearch, 'usr:search')],
+      [button(t.usersBtnServices, usersCallbackList('svc', 0)), button(t.usersBtnOrders, usersCallbackList('ord', 0))],
+      [button(t.usersBtnRepurchases, usersCallbackList('rep', 0)), button(t.usersBtnWallet, usersCallbackList('wal', 0))],
+      [button(t.usersBtnBackMenu, CB.ACT_BACK_MENU)],
+    ],
+  };
+}
+
+/** Paginated single-column list with prev/next + one Back row. */
+export function usersListKeyboard(
+  t: Texts,
+  entries: Array<{ label: string; callback: string }>,
+  opts: { prev: string | null; next: string | null; back: string },
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = entries.map((entry) => [
+    button(entry.label, entry.callback),
+  ]);
+  const nav: TelegramInlineKeyboardButton[] = [];
+  if (opts.prev !== null) nav.push(button(t.usersBtnPrev, opts.prev));
+  if (opts.next !== null) nav.push(button(t.usersBtnNext, opts.next));
+  if (nav.length > 0) rows.push(nav);
+  rows.push([button(t.usersBackDashboard, opts.back)]);
+  return { inline_keyboard: rows };
+}
+
+/** S2 profile: subsection navigation + Back to the originating list page. */
+export function userProfileKeyboard(
+  t: Texts,
+  tgid: string,
+  origin: { next: UsersListMode; page: number },
+): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button(t.usersBtnServices, usersCallbackSvc(tgid, 0)), button(t.usersBtnOrders, usersCallbackOrd(tgid, 0))],
+      [button(t.usersBtnRepurchases, usersCallbackRep(tgid)), button(t.usersBtnWallet, usersCallbackWal(tgid))],
+      [button(t.usersBackUsers, usersCallbackList(origin.next, origin.page))],
+    ],
+  };
+}
+
+/** Single Back row (subsection screens → parent). */
+export function usersBackKeyboard(label: string, back: string): TelegramInlineKeyboardMarkup {
+  return { inline_keyboard: [[button(label, back)]] };
+}
+
+/** Prev/next + Back rows for subsection lists. */
+export function usersPagedKeyboard(
+  t: Texts,
+  opts: { prev: string | null; next: string | null; back: string; backLabel: string },
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [];
+  const nav: TelegramInlineKeyboardButton[] = [];
+  if (opts.prev !== null) nav.push(button(t.usersBtnPrev, opts.prev));
+  if (opts.next !== null) nav.push(button(t.usersBtnNext, opts.next));
+  if (nav.length > 0) rows.push(nav);
+  rows.push([button(opts.backLabel, opts.back)]);
+  return { inline_keyboard: rows };
 }

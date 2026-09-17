@@ -8,6 +8,7 @@ import {
   parseAnnounceCallback,
   parsePanelDeleteCallback,
   parseTopupCallback,
+  parseUsersCallback,
 } from '../lib/validate.ts';
 import {
   CB,
@@ -209,6 +210,19 @@ export async function handleCallback(
   // ———— Phase 17: wallet top-up review (admin-gated inside the handler too) ————
   if (data.startsWith('tup:')) {
     await handleTopupCallback(ctx, data, callbackQueryId, messageChatId, messageId);
+    return;
+  }
+
+  // ———— Phase 20: /users admin dashboard navigation (strict parser + admin
+  // gate inside the handler; forged taps get a neutral toast, zero writes) ————
+  if (data.startsWith('usr:')) {
+    const parsed = parseUsersCallback(data);
+    if (!parsed || !ctx.isAdmin) {
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
+      return;
+    }
+    const { handleUsersCallback } = await import('./usersAdmin.ts');
+    await handleUsersCallback(ctx, parsed, callbackQueryId);
     return;
   }
 
