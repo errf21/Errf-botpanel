@@ -522,6 +522,8 @@ test('stop blocks RENEWALS outright (entry, confirm, wallet) — panel capacity 
   setStopped(false);
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
   await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME');
+  await dispatch(callbackUpdateAs('vol:0', nextId(), u));
   assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_CONFIRMATION');
   const renewToken = String(sessionState(u.id).data['order_token']);
   setStopped(true);
@@ -548,6 +550,7 @@ test('stop blocks WALLET renewals with zero debits', async () => {
   setStopped(false);
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
   await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  await dispatch(callbackUpdateAs('vol:0', nextId(), u));
   const bal0 = balance(u.id);
   const orders0 = orderCount();
   const ledger0 = walletCount();
@@ -565,6 +568,125 @@ test('stop blocks WALLET renewals with zero debits', async () => {
   await dispatch(callbackUpdateAs('wlt:full', nextId(), u));
   assert.equal(orderCount(), orders0 + 1, 'wallet renewal works again after resume');
   assert.ok(balance(u.id) < bal0);
+});
+
+test('stop blocks renewal dur:* taps mid-draft (preset and skip)', async () => {
+  const u = { id: 900000207, first_name: 'RenD', username: 'rend13', language_code: 'fa' };
+  await draftToConfirm(u, 'dev:1');
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
+  await dispatch(messageUpdateAs(u, '/cancel', nextId()));
+  const serviceId = markServiceCompleted(u.id);
+  assert.ok(serviceId);
+
+  setStopped(false);
+  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_DURATION');
+  const orders0 = orderCount();
+
+  setStopped(true);
+  stub.reset();
+  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'dur preset refused while stopped');
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_DURATION', 'state unchanged');
+  stub.reset();
+  await dispatch(callbackUpdateAs('dur:0', nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'dur skip refused while stopped');
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_DURATION', 'state unchanged');
+  assert.equal(orderCount(), orders0, 'zero new orders');
+
+  setStopped(false);
+  await dispatch(messageUpdateAs(u, '/cancel', nextId()));
+});
+
+test('stop blocks renewal vol:* taps mid-draft (preset and skip)', async () => {
+  const u = { id: 900000208, first_name: 'RenV', username: 'renv13', language_code: 'fa' };
+  await draftToConfirm(u, 'dev:1');
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
+  await dispatch(messageUpdateAs(u, '/cancel', nextId()));
+  const serviceId = markServiceCompleted(u.id);
+  assert.ok(serviceId);
+
+  setStopped(false);
+  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
+  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME');
+  const orders0 = orderCount();
+
+  setStopped(true);
+  stub.reset();
+  await dispatch(callbackUpdateAs('vol:20', nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'vol preset refused while stopped');
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME', 'state unchanged');
+  stub.reset();
+  await dispatch(callbackUpdateAs('vol:0', nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'vol skip refused while stopped');
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME', 'state unchanged');
+  assert.equal(orderCount(), orders0, 'zero new orders');
+
+  setStopped(false);
+  await dispatch(messageUpdateAs(u, '/cancel', nextId()));
+});
+
+test('stop blocks renewal custom-volume text mid-draft', async () => {
+  const u = { id: 900000209, first_name: 'RenC', username: 'renc13', language_code: 'fa' };
+  await draftToConfirm(u, 'dev:1');
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
+  await dispatch(messageUpdateAs(u, '/cancel', nextId()));
+  const serviceId = markServiceCompleted(u.id);
+  assert.ok(serviceId);
+
+  setStopped(false);
+  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
+  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME');
+  const orders0 = orderCount();
+
+  setStopped(true);
+  stub.reset();
+  await dispatch(messageUpdateAs(u, '15', nextId()));
+  assert.ok(sawStoppedNotice(u.id), 'custom volume refused while stopped');
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME', 'no advance to confirmation');
+  assert.equal(orderCount(), orders0, 'zero new orders');
+
+  setStopped(false);
+  await dispatch(messageUpdateAs(u, '/cancel', nextId()));
+});
+
+test('stop blocks volume-bearing renewal confirmation with zero panel writes', async () => {
+  const u = { id: 900000210, first_name: 'RenB', username: 'renb13', language_code: 'fa' };
+  await draftToConfirm(u, 'dev:1');
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
+  await dispatch(messageUpdateAs(u, '/cancel', nextId()));
+  const serviceId = markServiceCompleted(u.id);
+  assert.ok(serviceId);
+
+  setStopped(false);
+  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
+  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  await dispatch(callbackUpdateAs('vol:20', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_CONFIRMATION');
+  assert.equal(sessionState(u.id).data['added_volume_gb'], 20, 'volume-bearing draft');
+  const orders0 = orderCount();
+
+  setStopped(true);
+  stub.reset();
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'volume renewal confirm refused while stopped');
+  assert.equal(orderCount(), orders0, 'zero new orders');
+  assert.equal(stub.panel.calls.length, 0, 'zero PasarGuard PUTs');
+  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_CONFIRMATION', 'draft preserved');
+
+  // resume: the SAME volume-bearing draft confirms cleanly
+  setStopped(false);
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
+  assert.equal(orderCount(), orders0 + 1, 'volume renewal created on resume');
+  const renewals = ordersFor(u.id, 'renewal');
+  assert.equal(renewals.length, 1);
+  assert.equal(
+    JSON.parse(String(renewals[0]!['selections']))['added_volume_gb'],
+    20,
+    'volume survives the resume',
+  );
 });
 
 /* ═════════════════════ checkout backstop (defense in depth) ═════════════════════ */

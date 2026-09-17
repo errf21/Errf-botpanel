@@ -306,17 +306,26 @@ export const fa = {
   renewInProgressNotice: (id: string) =>
     `🔁 یک درخواست تمدید برای این سرویس باز است.\n\n🆔 سفارش تمدید: ${id}\n\nوضعیت آن را از «💳 سفارش‌های من» پیگیری کنید.`,
   renewIntro: (name: string, expires: string) =>
-    `🔁 تمدید سرویس «${name}»\n\n📅 انقضای فعلی: ${expires}\n\nبرای تمدید، مدت رو انتخاب کن.\nقیمت هر مدت از قبل مشخصه؛ پرداختش مثل خرید، با فیش و تأیید دستی.`,
-  renewDurationPrompt: '⏳ مدت تمدید رو انتخاب کن:\n\n1 ماه • 2 ماه • 3 ماه',
+    `🔄 تمدید / افزایش سرویس «${name}»\n\n📅 انقضای فعلی: ${expires}\n\nاول مدت اضافه را انتخاب کن (می‌توانی بدون تمدید رد شوی)، بعد حجم اضافه. قیمت دقیق همان قیمت خرید محاسبه می‌شود؛ پرداخت مثل خرید، با فیش و تأیید دستی یا کیف پول.`,
+  renewDurationPrompt: '⏳ مدت اضافه را انتخاب کن:\n\nبدون تمدید • 1 ماه • 2 ماه • 3 ماه',
+  renewNoDuration: '➖ بدون تمدید زمان',
+  renewVolumePrompt: '📦 حجم اضافه را انتخاب کن:\n\n+10 • +20 • +30 گیگ، یا حجم دلخواه (حداقل 10 گیگ)، یا بدون افزایش حجم.',
+  renewNoVolume: '➖ بدون افزایش حجم',
   renewSummaryHeader: '🧾 خلاصه‌ی تمدید',
   renewSummaryService: (name: string) => `📦 سرویس: «${name}»`,
   renewSummaryAdd: (months: number) => `➕ مدت تمدید: ${months} ماه`,
+  renewSummaryNoTime: '➕ مدت اضافه: بدون تمدید',
+  renewSummaryVolume: (gb: number) => `📦 حجم اضافه: ${gb} گیگابایت`,
+  renewSummaryNoVolume: '📦 حجم اضافه: بدون افزایش',
   renewSummaryFrom: (v: string) => `📅 انقضای فعلی: ${v}`,
   renewSummaryUntil: (v: string) => `📅 انقضای جدید (تقریبی): ${v}`,
   renewConfirmed: (id: string) =>
     `✅ درخواست تمدید ثبت شد!\n\n🆔 کد: ${id}\n\n👇 اطلاعات واریز رو توی پیام بعدی می‌فرستم.`,
   renewApplied: (id: string, expiresDate: string) =>
     `🎉 سرویس شما تمدید شد!\n\n🆔 سفارش: ${id}\n📅 انقضای جدید: ${expiresDate}\n\nاز «📦 سرویس‌های من» می‌توانید وضعیت را ببینید.`,
+  renewVolumeApplied: (id: string, addedGb: string) =>
+    `🎉 حجم سرویس شما افزایش یافت!\n\n🆔 سفارش: ${id}\n📦 حجم اضافه‌شده: ${addedGb} گیگ\n\nاز «📦 سرویس‌های من» می‌توانید وضعیت را ببینید.`,
+  renewEmptyError: '⚠️ لطفاً حداقل یکی را انتخاب کنید: تمدید زمان یا افزایش حجم.',
   renewFailedNotice: (id: string) =>
     `⚠️ تمدید سرویسِ این سفارش چند بار به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nبچه‌ها در جریانی و دارن پیگیری می‌کنن؛ لازم نیست دوباره پرداخت کنی.`,
   adminRenewalFailed: (id: string, reason: string) =>
@@ -604,7 +613,7 @@ export const fa = {
   btnAutoPick: '🎲 انتخاب خودکار',
   btnSkipReject: '❌ ثبت رد بدون دلیل',
   btnCancelInline: '❌ لغو',
-  btnRenewService: '🔁 تمدید سرویس',
+  btnRenewService: '🔄 تمدید / افزایش سرویس',
   btnRefreshStatus: '🔄 بروزرسانی وضعیت',
   // Language picker + confirmation (each bundle names ITS OWN language —
   // the confirmation is sent in the newly selected language).

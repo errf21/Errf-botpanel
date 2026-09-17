@@ -25,6 +25,8 @@ export interface OrderRow {
   service_expires_at: string | null;
   renews_order_id: string | null;
   renew_target_unix: number | null;
+  /** Claimed absolute panel quota target (bytes) for volume add-ons; null = none. */
+  renew_target_data_limit_bytes: number | null;
   provision_attempts: number;
   failure_reason: string | null;
   created_at: string;
@@ -486,7 +488,7 @@ export async function completeProvisionedOrder(
  */
 export async function completeRenewedOrder(
   db: D1Database,
-  opts: { orderId: string; targetUnix: number | null },
+  opts: { orderId: string; targetUnix: number | null; quotaBytes?: number | null },
 ): Promise<ProvisionFinalizeOutcome> {
   const updated = await db
     .prepare(
@@ -507,7 +509,7 @@ export async function completeRenewedOrder(
       `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
        VALUES (?1, 'system', 'renewal_succeeded', 'provisioning', 'completed', ?2)`,
     )
-    .bind(opts.orderId, JSON.stringify({ new_target_unix: opts.targetUnix }))
+    .bind(opts.orderId, JSON.stringify({ new_target_unix: opts.targetUnix, new_quota_bytes: opts.quotaBytes ?? null }))
     .run();
   const after = await getOrderById(db, opts.orderId);
   if (!after) return { ok: false, error: 'not_found' };
@@ -675,6 +677,47 @@ export async function claimRenewalTarget(
   if (!fresh) return { ok: false, error: 'not_found' };
   if (fresh.state !== 'provisioning') return { ok: false, error: 'state_changed' };
   return { ok: true, targetUnix: fresh.renew_target_unix }; // someone (an earlier attempt) won — adopt
+}
+
+export type RenewalQuotaClaimOutcome =
+  | { ok: true; quotaBytes: number | null }
+  | { ok: false; error: 'not_found' | 'state_changed' };
+
+/**
+ * Claim the ABSOLUTE panel quota target (bytes) BEFORE the panel PUT — the
+ * quota twin of `claimRenewalTarget`. Retries adopt the stored target instead
+ * of adding the delta again, so a volume increase applies at most once.
+ */
+export async function claimRenewalQuotaTarget(
+  db: D1Database,
+  opts: { orderId: string; quotaBytes: number },
+): Promise<RenewalQuotaClaimOutcome> {
+  let updated: unknown;
+  try {
+    updated = await db
+      .prepare(
+        `UPDATE orders
+            SET renew_target_data_limit_bytes = ?2,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = ?1 AND kind = 'renewal' AND state = 'provisioning' AND renew_target_data_limit_bytes IS NULL`,
+      )
+      .bind(opts.orderId, opts.quotaBytes)
+      .run();
+  } catch {
+    // Column missing on databases predating the 0018 migration: surface as a
+    // state error so provisioning fails closed instead of double-adding.
+    return { ok: false, error: 'state_changed' };
+  }
+  if (changeCount(updated) > 0) return { ok: true, quotaBytes: opts.quotaBytes };
+  let fresh: OrderRow | null = null;
+  try {
+    fresh = await getOrderById(db, opts.orderId);
+  } catch {
+    return { ok: false, error: 'not_found' };
+  }
+  if (!fresh) return { ok: false, error: 'not_found' };
+  if (fresh.state !== 'provisioning') return { ok: false, error: 'state_changed' };
+  return { ok: true, quotaBytes: fresh.renew_target_data_limit_bytes ?? null };
 }
 
 /**

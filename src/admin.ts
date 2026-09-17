@@ -71,6 +71,20 @@ export function orderSummaryLines(order: OrderRow): string[] {
     const serviceId =
       typeof snapshot['renews_order_id'] === 'string' ? snapshot['renews_order_id'] : '—';
     lines.push(fa.adminRenewalKind(serviceId));
+    const days = snapshot['duration_days'];
+    const addedGb = snapshot['added_volume_gb'];
+    const cfgName = snapshot['config_name'];
+    if (typeof days === 'number') {
+      const price = snapshot['price'];
+      const months =
+        price && typeof price === 'object'
+          ? (price as Record<string, unknown>)['months']
+          : undefined;
+      lines.push(fa.summaryDuration(days, typeof months === 'number' ? months : 0));
+    }
+    if (typeof addedGb === 'number' && addedGb > 0) lines.push(fa.summaryVolume(addedGb));
+    if (typeof cfgName === 'string') lines.push(fa.summaryName(cfgName));
+    return lines;
   }
   const name = snapshot['config_name'];
   const gb = snapshot['volume_gb'];

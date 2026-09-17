@@ -29,7 +29,7 @@ import { acceptsTextInput, isBusy } from '../state/machine.ts';
 import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { submitReceipt } from './payment.ts';
 import { handleTopupAmountText, resumeTopup, submitTopupReceiptInput } from './topup.ts';
-import { resumeRenewal } from './renewal.ts';
+import { resumeRenewal, applyRenewalCustomVolume } from './renewal.ts';
 import { deliverTicketReply, submitSupportText } from './support.ts';
 import { saveAnnounceDraft } from './announcements.ts';
 import { completeArmedWalletAction } from './wallet.ts';
@@ -261,7 +261,8 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       await ctx.api.sendMessage(ctx.chatId, t.paymentWaitNotice, backToMenuKeyboard(ctx.ui));
       return;
     }
-    // Phase 6: renewal ladder steps never accept free text (months only).
+    // Phase 6: renewal duration/confirmation steps never accept free text
+    // (buttons only); the VOLUME step accepts a typed custom add-on number.
     if (
       session.state === 'WAITING_RENEWAL_DURATION' ||
       session.state === 'WAITING_RENEWAL_CONFIRMATION'
@@ -309,6 +310,17 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       return;
     }
     await applyStepChoice(ctx, session, loaded.catalog, numericKind, value);
+    return;
+  }
+
+  // Renewal custom add-on volume (typed GB, purchase `acceptVolume` limits).
+  if (session.state === 'WAITING_RENEWAL_VOLUME') {
+    const loaded = await loadCatalog(ctx.db);
+    if (!loaded.ok) {
+      await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
+      return;
+    }
+    await applyRenewalCustomVolume(ctx, session, loaded.catalog, text);
     return;
   }
 

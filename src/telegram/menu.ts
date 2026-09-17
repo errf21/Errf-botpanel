@@ -210,12 +210,13 @@ export function serviceReadyKeyboard(ui: Ui, serviceUrl: string | null): Telegra
   };
 }
 
-/** Renewal duration: preset buttons only (labels month-aware upstream). */
+/** Renewal duration: no-extension row + month presets (labels month-aware upstream). */
 export function renewalDurationKeyboard(
   ui: Ui,
   presets: number[],
 ): TelegramInlineKeyboardMarkup {
   const rows: TelegramInlineKeyboardButton[][] = [];
+  rows.push([button(ui.t.renewNoDuration, 'dur:0')]);
   for (let i = 0; i < presets.length; i += 2) {
     const row: TelegramInlineKeyboardButton[] = [];
     for (const value of presets.slice(i, i + 2)) {
@@ -224,6 +225,28 @@ export function renewalDurationKeyboard(
     rows.push(row);
   }
   rows.push([button(ui.t.btnCancelInline, CB.ACT_CANCEL)]);
+  return { inline_keyboard: rows };
+}
+
+/** Renewal add-on volume: fixed presets + custom entry + no-increase row. */
+export function renewalVolumeKeyboard(
+  ui: Ui,
+  presets: number[],
+  allowCustom: boolean,
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [];
+  for (let i = 0; i < presets.length; i += 2) {
+    const row: TelegramInlineKeyboardButton[] = [];
+    for (const value of presets.slice(i, i + 2)) {
+      row.push(button(`+${String(value)}GB`, `vol:${value}`));
+    }
+    rows.push(row);
+  }
+  if (allowCustom) {
+    rows.push([button(ui.t.customVolumeLabel, 'vol:custom')]);
+  }
+  rows.push([button(ui.t.renewNoVolume, 'vol:0')]);
+  rows.push([button(ui.t.stepBack, CB.STEP_BACK), button(ui.t.btnCancelInline, CB.ACT_CANCEL)]);
   return { inline_keyboard: rows };
 }
 

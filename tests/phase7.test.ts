@@ -779,6 +779,8 @@ test('W2: wallet-full renewal checkout hard-fail refunds exactly once', async ()
     await dispatch(callbackUpdateAs(`svc:rnw:${service.id}`, nextId(), USER));
     assert.equal(sessionFor(USER.id).state, 'WAITING_RENEWAL_DURATION');
     await dispatch(callbackUpdateAs('dur:30', nextId(), USER));
+    assert.equal(sessionFor(USER.id).state, 'WAITING_RENEWAL_VOLUME');
+    await dispatch(callbackUpdateAs('vol:0', nextId(), USER));
     assert.equal(sessionFor(USER.id).state, 'WAITING_RENEWAL_CONFIRMATION');
     const token = String(sessionFor(USER.id).data['order_token']);
     sqlite.exec(`CREATE TRIGGER orders_boom_r AFTER INSERT ON orders BEGIN SELECT RAISE(ABORT, 'orders_boom_r'); END`);

@@ -70,6 +70,28 @@ function safeInt(value: unknown, max: number): value is number {
   );
 }
 
+/**
+ * Shared volume-price component: the purchase rate for GB beyond the base.
+ * `calculatePrice` uses it as `extraGb = max(0, volumeGb - baseGb)`; renewal
+ * add-ons call it directly with the ADDED gb (an add-on is 100% extra — the
+ * service already owns its base). Same `product()` overflow semantics, same
+ * `usableConfig` gate, so purchase and renewal can never drift apart.
+ */
+export function volumeExtraCost(
+  pricing: PricingConfig,
+  extraGb: number,
+): { ok: true; cost: number } | { ok: false; error: string } {
+  if (!usableConfig(pricing)) {
+    return { ok: false, error: 'pricing_config' };
+  }
+  if (!safeInt(extraGb, 1_000_000)) {
+    return { ok: false, error: 'selection_range' };
+  }
+  const cost = product(extraGb, pricing.pricePerGb);
+  if (cost === null) return { ok: false, error: 'overflow' };
+  return { ok: true, cost };
+}
+
 /** Validate a whole live config against the calculator's own boundaries. */
 function usableConfig(pricing: PricingConfig): boolean {
   return (
@@ -135,8 +157,9 @@ export function calculatePrice(
   }
 
   const extraGb = Math.max(0, selection.volumeGb - pricing.baseGb);
-  const volumeCost = product(extraGb, pricing.pricePerGb);
-  if (volumeCost === null) return { ok: false, error: 'overflow' };
+  const volume = volumeExtraCost(pricing, extraGb);
+  if (!volume.ok) return { ok: false, error: volume.error };
+  const volumeCost = volume.cost;
   const total = time.price + volumeCost + userPrice;
   if (!Number.isSafeInteger(total)) return { ok: false, error: 'overflow' };
 
@@ -190,13 +213,16 @@ export function catalogLimits(catalog: {
   };
 }
 
-/* ———— Phase 6 + 12: renewals ————
- * A renewal extends the SAME service (same volume/users) by additional
- * months. Only the TIME component is re-charged: the exact admin entry for
- * the requested duration (1 month renews at the base product price — the
- * same table the purchase ladder uses; no multipliers here either). The
- * applied inputs are snapshotted exactly like a purchase so a later price
- * edit cannot retroactively change a placed renewal.
+/* ———— Phase 6 + 12: renewals, extended with additive volume ————
+ * A renewal extends the SAME service by additional months and/or additional
+ * GB. The TIME component reuses `durationEntry` exactly like a purchase (1
+ * month renews at the base product price); the VOLUME component reuses the
+ * shared `volumeExtraCost` purchase rate applied to the ADDED gb (an add-on
+ * is 100% extra — the service already owns its base, so no base deduction).
+ * `durationDays == 0` means "no time extension", `addedVolumeGb == 0` means
+ * "no volume increase"; both zero is rejected by the caller ladder (and here
+ * as a degraded backstop). Snapshotted exactly like a purchase so a later
+ * price edit cannot retroactively change a placed renewal.
  */
 export interface RenewalBreakdown {
   schema: 2;
@@ -204,27 +230,50 @@ export interface RenewalBreakdown {
   currency: string;
   inputs: {
     base_product_price: number;
-    duration_key: 'base' | number;
+    base_gb: number;
+    price_per_gb: number;
+    duration_key: 'base' | number | 'none';
     duration_price: number;
     days_per_month: number;
   };
-  /** Days being added (the selected renewal duration). */
+  /** Days being added (0 = no time extension). */
   duration_days: number;
   months: number;
   time_cost: number;
+  /** Added GB (0 = no volume increase). */
+  added_volume_gb: number;
+  volume_cost: number;
   total: number;
 }
 
 export function calculateRenewalPrice(
   pricing: PricingConfig,
-  selection: { durationDays: number },
+  selection: { durationDays: number; addedVolumeGb?: number },
 ): { ok: true; breakdown: RenewalBreakdown } | { ok: false; error: string } {
   if (!usableConfig(pricing)) {
     return { ok: false, error: 'pricing_config' };
   }
-  const time = durationEntry(pricing, selection.durationDays);
-  if (!time.ok) return { ok: false, error: time.error };
-  if (!Number.isSafeInteger(time.price)) return { ok: false, error: 'overflow' };
+  const addedGb = selection.addedVolumeGb ?? 0;
+  if (!safeInt(selection.durationDays, 1_000_000) || !safeInt(addedGb, 1_000_000)) {
+    return { ok: false, error: 'selection_range' };
+  }
+  if (selection.durationDays === 0 && addedGb === 0) {
+    return { ok: false, error: 'selection_range' };
+  }
+  let months = 0;
+  let timeKey: 'base' | number | 'none' = 'none';
+  let timePrice = 0;
+  if (selection.durationDays > 0) {
+    const time = durationEntry(pricing, selection.durationDays);
+    if (!time.ok) return { ok: false, error: time.error };
+    months = time.months;
+    timeKey = time.key;
+    timePrice = time.price;
+  }
+  const volume = volumeExtraCost(pricing, addedGb);
+  if (!volume.ok) return { ok: false, error: volume.error };
+  const total = timePrice + volume.cost;
+  if (!Number.isSafeInteger(total) || total < 1) return { ok: false, error: 'overflow' };
   return {
     ok: true,
     breakdown: {
@@ -233,14 +282,18 @@ export function calculateRenewalPrice(
       currency: pricing.currency,
       inputs: {
         base_product_price: pricing.baseProductPrice,
-        duration_key: time.key,
-        duration_price: time.price,
+        base_gb: pricing.baseGb,
+        price_per_gb: pricing.pricePerGb,
+        duration_key: timeKey,
+        duration_price: timePrice,
         days_per_month: pricing.daysPerMonth,
       },
       duration_days: selection.durationDays,
-      months: time.months,
-      time_cost: time.price,
-      total: time.price,
+      months,
+      time_cost: timePrice,
+      added_volume_gb: addedGb,
+      volume_cost: volume.cost,
+      total,
     },
   };
 }

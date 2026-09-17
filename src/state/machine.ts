@@ -22,6 +22,7 @@ export type ConversationEvent =
   | 'receipt_received'
   | 'renew_start'
   | 'renew_duration_chosen'
+  | 'renew_volume_chosen'
   | 'renew_confirmed'
   | 'support_start'
   | 'support_message_sent'
@@ -47,10 +48,12 @@ const FORWARD: Partial<
   devices_chosen: [['WAITING_DEVICE_LIMIT', 'WAITING_ORDER_CONFIRMATION']],
   order_confirmed: [['WAITING_ORDER_CONFIRMATION', 'WAITING_PAYMENT_RECEIPT']],
   receipt_received: [['WAITING_PAYMENT_RECEIPT', 'WAITING_PAYMENT_RECEIPT']],
-  // Phase 6 renewals: a compact two-step ladder that hands over to the SAME
-  // WAITING_PAYMENT_RECEIPT state, so receipt/admin/provisioning reuse it all.
+  // Phase 6 renewals + volume add-on: duration → volume → confirmation,
+  // handing over to the SAME WAITING_PAYMENT_RECEIPT state, so
+  // receipt/admin/provisioning reuse it all.
   renew_start: [['IDLE', 'WAITING_RENEWAL_DURATION']],
-  renew_duration_chosen: [['WAITING_RENEWAL_DURATION', 'WAITING_RENEWAL_CONFIRMATION']],
+  renew_duration_chosen: [['WAITING_RENEWAL_DURATION', 'WAITING_RENEWAL_VOLUME']],
+  renew_volume_chosen: [['WAITING_RENEWAL_VOLUME', 'WAITING_RENEWAL_CONFIRMATION']],
   renew_confirmed: [['WAITING_RENEWAL_CONFIRMATION', 'WAITING_PAYMENT_RECEIPT']],
   // Phase 7 support: a one-message ladder. The ticket itself lives in D1
   // (open until closed), so after the message is sent the conversation is
@@ -84,8 +87,9 @@ const BACK_MAP: Partial<Record<ConversationState, ConversationState>> = {
   WAITING_DEVICE_LIMIT: 'WAITING_DURATION',
   WAITING_ORDER_CONFIRMATION: 'WAITING_DEVICE_LIMIT',
   WAITING_PAYMENT_RECEIPT: 'WAITING_PAYMENT_RECEIPT',
-  // Renewal ladder back (its duration step backs out to IDLE via the map miss).
-  WAITING_RENEWAL_CONFIRMATION: 'WAITING_RENEWAL_DURATION',
+  // Renewal ladder back: confirmation → volume → duration → IDLE (map miss).
+  WAITING_RENEWAL_VOLUME: 'WAITING_RENEWAL_DURATION',
+  WAITING_RENEWAL_CONFIRMATION: 'WAITING_RENEWAL_VOLUME',
   // Top-up receipt is durable-adjacent (request row exists): frozen like payment.
   WAITING_TOPUP_RECEIPT: 'WAITING_TOPUP_RECEIPT',
   WAITING_TOPUP_AMOUNT: 'IDLE',
@@ -121,6 +125,9 @@ const TEXT_ACCEPTING_STATES: readonly ConversationState[] = [
   'WAITING_VOLUME',
   'WAITING_DURATION',
   'WAITING_DEVICE_LIMIT',
+  // Renewal custom add-on volume is typed free-text in its own step (purchase
+  // WAITING_VOLUME precedent); duration/confirmation steps stay button-only.
+  'WAITING_RENEWAL_VOLUME',
   // Phase 7: support body and announcement text are free-text by design.
   'WAITING_SUPPORT_MESSAGE',
   'WAITING_ANNOUNCE_TEXT',

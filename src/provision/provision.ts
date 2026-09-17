@@ -39,6 +39,7 @@ import {
   bookRenewalOnService,
   claimOrderForProvisioning,
   claimOrderUsername,
+  claimRenewalQuotaTarget,
   claimRenewalTarget,
   completeProvisionedOrder,
   completeRenewedOrder,
@@ -429,8 +430,9 @@ async function finalizeCreate(
 }
 
 /** Parse the renewal-only fields of a renewal order's selections snapshot. */
-function parseRenewalSelections(order: OrderRow): {
+export function parseRenewalSelections(order: OrderRow): {
   durationDays: number;
+  addedVolumeGb: number;
   serviceOrderId: string | null;
 } | null {
   let snapshot: Record<string, unknown>;
@@ -445,18 +447,44 @@ function parseRenewalSelections(order: OrderRow): {
   if (
     typeof days !== 'number' ||
     !Number.isSafeInteger(days) ||
-    days < 1 ||
+    days < 0 ||
     days > MAX_DAYS
   ) {
     return null;
   }
+  // Legacy time-only snapshots predate the volume key — default to 0 (no
+  // increase), preserving existing duration-only renewals byte-for-byte.
+  const addedRaw = snapshot['added_volume_gb'] ?? 0;
+  if (
+    typeof addedRaw !== 'number' ||
+    !Number.isSafeInteger(addedRaw) ||
+    addedRaw < 0 ||
+    addedRaw > MAX_GB
+  ) {
+    return null;
+  }
+  if (days === 0 && addedRaw === 0) return null;
   const link = snapshot['renews_order_id'];
   const serviceOrderId =
     typeof link === 'string' && isValidOrderId(link) ? link : order.renews_order_id;
   return {
     durationDays: days,
+    addedVolumeGb: addedRaw,
     serviceOrderId: serviceOrderId !== null && isValidOrderId(serviceOrderId) ? serviceOrderId : null,
   };
+}
+
+/**
+ * Quota delta for a renewal add-on, reusing the purchase conversion: the SAME
+ * `gb * GB_BYTES` expression as `parseSelections` (provision.ts:212) with the
+ * SAME `GB_BYTES` constant — never a second formula, never SI MB, never a
+ * rounded approximation. Returns null when unrepresentable.
+ */
+export function quotaDeltaBytesForAddedGb(addedGb: number): number | null {
+  if (!Number.isSafeInteger(addedGb) || addedGb < 0 || addedGb > MAX_GB) return null;
+  if (addedGb === 0) return 0;
+  const delta = addedGb * GB_BYTES;
+  return Number.isSafeInteger(delta) ? delta : null;
 }
 
 /** ISO (D1 format) → unix seconds, or null when absent/meaningless. */
@@ -469,9 +497,12 @@ function isoToUnix(iso: string | null): number | null {
 
 /**
  * Renewal provisioning on an ALREADY-CLAIMED order (state = provisioning).
- * Idempotency contract: the absolute target is claimed on the renewal row
+ * Idempotency contract: absolute targets are claimed on the renewal row
  * before the panel PUT and never recomputed once stored — retries verify
- * instead of extending again (mirrors the purchase username-claim discipline).
+ * instead of extending/adding again (mirrors the purchase username-claim
+ * discipline). Supports duration-only (legacy), volume-only, and both.
+ * Volume is strictly additive: newQuota = panel.dataLimit + purchase-
+ * equivalent delta; used_traffic is never sent and never reset.
  */
 export async function provisionRenewal(
   deps: ProvisionDeps,
@@ -516,8 +547,11 @@ export async function provisionRenewal(
     return finalizeFailure(deps, order.id, 'renewal_service_missing', true);
   }
 
-  let target = order.renew_target_unix;
-  if (target === null) {
+  // ———— expiry target (duration dimension; null = no time extension) ————
+  let target: number | null = order.renew_target_unix;
+  if (selections.durationDays === 0) {
+    target = null;
+  } else if (target === null) {
     const local = isoToUnix(service.service_expires_at) ?? isoToUnix(service.service_created_at);
     const base = Math.max(nowUnix, precheck.data.expire ?? 0, local ?? 0);
     const candidate = base + selections.durationDays * DAY_SECONDS;
@@ -531,27 +565,82 @@ export async function provisionRenewal(
     target = claimed.targetUnix ?? candidate;
   }
 
-  // Already extended to/through the target (earlier ambiguous attempt, or a
-  // manual panel edit that overshot): adopt — NO second PUT, no stacking.
-  if (precheck.data.expire !== null && precheck.data.expire >= target) {
-    return finalizeRenewalSuccess(deps, order, service.id, target);
+  // ———— quota target (volume dimension; null = no increase) ————
+  // Additive: existing panel data_limit + purchase-equivalent delta. Fail
+  // CLOSED when the current quota is unknown (null/Unlimited) — never guess.
+  let quotaTarget: number | null = null;
+  try {
+    quotaTarget = (order as OrderRow).renew_target_data_limit_bytes ?? null;
+  } catch {
+    quotaTarget = null;
+  }
+  if (selections.addedVolumeGb === 0) {
+    quotaTarget = null;
+  } else {
+    if (quotaTarget === null) {
+      const baseLimit = precheck.data.dataLimit;
+      if (baseLimit === null) {
+        return finalizeFailure(deps, order.id, 'renewal_quota_unknown', true);
+      }
+      const delta = quotaDeltaBytesForAddedGb(selections.addedVolumeGb);
+      if (delta === null) {
+        return finalizeFailure(deps, order.id, 'renewal_quota_overflow', true);
+      }
+      const candidate = baseLimit + delta;
+      if (!Number.isSafeInteger(candidate) || candidate < 1) {
+        return finalizeFailure(deps, order.id, 'renewal_quota_overflow', true);
+      }
+      const claimed = await claimRenewalQuotaTarget(db, { orderId: order.id, quotaBytes: candidate });
+      if (!claimed.ok) {
+        return { ok: false, error: claimed.error === 'not_found' ? 'not_found' : 'state_changed' };
+      }
+      quotaTarget = claimed.quotaBytes ?? candidate;
+    }
   }
 
-  const applied = await client.modifyUserByUsername(username, { expire: target });
+  const expirySatisfied =
+    target === null || (precheck.data.expire !== null && precheck.data.expire >= target);
+  const quotaSatisfied =
+    quotaTarget === null || (precheck.data.dataLimit !== null && precheck.data.dataLimit >= quotaTarget);
+  // Already extended/increased to/through the targets (earlier ambiguous
+  // attempt, or a manual panel edit that overshot): adopt — NO second PUT.
+  if (expirySatisfied && quotaSatisfied) {
+    return finalizeRenewalSuccess(deps, order, service.id, target, quotaTarget, selections.addedVolumeGb);
+  }
+
+  // Single partial PUT with ONLY dirty fields — never used_traffic, never a
+  // new user. used_traffic is preserved by the panel on partial writes.
+  const patch: { expire?: number; data_limit?: number } = {};
+  if (target !== null && !expirySatisfied) patch.expire = target;
+  if (quotaTarget !== null && !quotaSatisfied) patch.data_limit = quotaTarget;
+  if (Object.keys(patch).length === 0) {
+    return finalizeRenewalSuccess(deps, order, service.id, target, quotaTarget, selections.addedVolumeGb);
+  }
+  const applied = await client.modifyUserByUsername(username, patch);
   if (!applied.ok) {
     return finalizeFailure(deps, order.id, panelReason(applied), true);
   }
-  let confirmed = applied.data?.expire ?? null;
-  if (confirmed === null || confirmed < target) {
+  let confirmedExpire = applied.data?.expire ?? null;
+  let confirmedLimit = applied.data?.dataLimit ?? null;
+  if (
+    (target !== null && !expirySatisfied && (confirmedExpire === null || confirmedExpire < target)) ||
+    (quotaTarget !== null && !quotaSatisfied && (confirmedLimit === null || confirmedLimit < quotaTarget))
+  ) {
     const verified = await client.getUserByUsername(username);
-    if (verified.ok && verified.data !== null) confirmed = verified.data.expire;
+    if (verified.ok && verified.data !== null) {
+      confirmedExpire = verified.data.expire;
+      confirmedLimit = verified.data.dataLimit;
+    }
   }
-  if (confirmed === null || confirmed < target) {
+  if (target !== null && !expirySatisfied && (confirmedExpire === null || confirmedExpire < target)) {
     // Panel accepted the write but the read does not confirm it yet: fail
     // CLOSED. The stored target makes the admin retry converge (adopt path).
     return finalizeFailure(deps, order.id, 'renewal_unverified', true);
   }
-  return finalizeRenewalSuccess(deps, order, service.id, target);
+  if (quotaTarget !== null && !quotaSatisfied && (confirmedLimit === null || confirmedLimit < quotaTarget)) {
+    return finalizeFailure(deps, order.id, 'renewal_quota_unverified', true);
+  }
+  return finalizeRenewalSuccess(deps, order, service.id, target, quotaTarget, selections.addedVolumeGb);
 }
 
 /** Close out a successful RENEWAL: complete order → book service → notify. */
@@ -559,28 +648,38 @@ async function finalizeRenewalSuccess(
   deps: ProvisionDeps,
   order: OrderRow,
   serviceOrderId: string,
-  targetUnix: number,
+  targetUnix: number | null,
+  quotaBytes: number | null = null,
+  addedGb = 0,
 ): Promise<ProvisionOutcome> {
-  const result = await completeRenewedOrder(deps.db, { orderId: order.id, targetUnix });
+  const result = await completeRenewedOrder(deps.db, { orderId: order.id, targetUnix, quotaBytes });
   if (!result.ok) {
     console.error(`renewal_finalize_race orderId=${order.id.slice(0, 32)}`);
     return { ok: false, error: result.error === 'not_found' ? 'not_found' : 'provision_failed' };
   }
-  const expiresIso = new Date(targetUnix * 1000).toISOString();
-  const booked = await bookRenewalOnService(deps.db, {
-    serviceOrderId,
-    renewalOrderId: order.id,
-    expiresIso,
-  });
-  if (!booked) {
-    // The renewal IS applied (panel says so) — only local bookkeeping raced.
-    console.error(`renewal_booking_skipped service=${serviceOrderId.slice(0, 32)}`);
+  let expiresIso: string | null = targetUnix === null ? null : new Date(targetUnix * 1000).toISOString();
+  if (expiresIso !== null) {
+    const booked = await bookRenewalOnService(deps.db, {
+      serviceOrderId,
+      renewalOrderId: order.id,
+      expiresIso,
+    });
+    if (!booked) {
+      // The renewal IS applied (panel says so) — only local bookkeeping raced.
+      console.error(`renewal_booking_skipped service=${serviceOrderId.slice(0, 32)}`);
+    }
+  } else {
+    const service = await getOrderById(deps.db, serviceOrderId);
+    expiresIso = service?.service_expires_at ?? null;
   }
-  await notifyCustomer(deps, result.order, (ui) => ({
+  await notifyCustomer(deps, result.order, (ui) => {
     // The date stays the raw ISO slice exactly as today (ASCII in fa too —
     // byte-frozen Phase 6 behavior; ISO is equally correct English output).
-    text: ui.t.renewApplied(result.order.id, expiresIso.slice(0, 10)),
-  }));
+    if (targetUnix !== null && expiresIso !== null) {
+      return { text: ui.t.renewApplied(result.order.id, expiresIso.slice(0, 10)) };
+    }
+    return { text: ui.t.renewVolumeApplied(result.order.id, String(addedGb)) };
+  });
   return { ok: true, order: result.order, attempted: true };
 }
 

@@ -144,6 +144,7 @@ export function buildRenewalSnapshot(
     renews_order_id: draft.serviceOrderId,
     config_name: serviceConfigName,
     duration_days: draft.breakdown.duration_days,
+    added_volume_gb: draft.breakdown.added_volume_gb,
     price: draft.breakdown,
     limits: catalogLimits(draft.catalog),
     ...(wallet ? { wallet: { mode: wallet.mode, credit_irt: wallet.creditIrt } } : {}),

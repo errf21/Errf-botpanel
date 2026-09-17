@@ -197,10 +197,14 @@ test('renewal pricing: 1m renews at the base price; other months exact entries',
   if (r60.ok) {
     assert.deepEqual(r60.breakdown.inputs, {
       base_product_price: 45000,
+      base_gb: 10,
+      price_per_gb: 4500,
       duration_key: 2,
       duration_price: 80000,
       days_per_month: 30,
     });
+    assert.equal(r60.breakdown.added_volume_gb, 0);
+    assert.equal(r60.breakdown.volume_cost, 0);
   }
 });
 

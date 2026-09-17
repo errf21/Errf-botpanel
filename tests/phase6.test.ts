@@ -262,9 +262,11 @@ const quietDeps = {
 test('machine: renewal ladder transitions and back map', () => {
   assert.equal(reduce('IDLE', 'renew_start'), 'WAITING_RENEWAL_DURATION');
   assert.equal(reduce('BUYING', 'renew_start'), 'BUYING'); // busy never hijacks
-  assert.equal(reduce('WAITING_RENEWAL_DURATION', 'renew_duration_chosen'), 'WAITING_RENEWAL_CONFIRMATION');
+  assert.equal(reduce('WAITING_RENEWAL_DURATION', 'renew_duration_chosen'), 'WAITING_RENEWAL_VOLUME');
+  assert.equal(reduce('WAITING_RENEWAL_VOLUME', 'renew_volume_chosen'), 'WAITING_RENEWAL_CONFIRMATION');
   assert.equal(reduce('WAITING_RENEWAL_CONFIRMATION', 'renew_confirmed'), 'WAITING_PAYMENT_RECEIPT');
-  assert.equal(reduce('WAITING_RENEWAL_CONFIRMATION', 'step_back'), 'WAITING_RENEWAL_DURATION');
+  assert.equal(reduce('WAITING_RENEWAL_CONFIRMATION', 'step_back'), 'WAITING_RENEWAL_VOLUME');
+  assert.equal(reduce('WAITING_RENEWAL_VOLUME', 'step_back'), 'WAITING_RENEWAL_DURATION');
   assert.equal(reduce('WAITING_RENEWAL_DURATION', 'step_back'), 'IDLE');
   assert.equal(reduce('WAITING_RENEWAL_DURATION', 'cancel'), 'IDLE');
 });
@@ -526,6 +528,7 @@ test('UI renewal: ladder → priced renewal → receipt → approve → panel PU
   const prompt = textsTo(USER.id).at(-1) ?? '';
   assert.ok(prompt.includes('تمدید'));
   const buttons = buttonsTo(USER.id);
+  assert.ok(buttons.includes('dur:0'), 'skip row offered');
   assert.ok(buttons.includes('dur:30') && buttons.includes('dur:60') && buttons.includes('dur:90'));
   assert.ok(!buttons.includes('dur:custom'), 'renewal ladder has no custom option');
 
@@ -549,8 +552,16 @@ test('UI renewal: ladder → priced renewal → receipt → approve → panel PU
   assert.ok((textsTo(USER.id).at(-1) ?? '').includes(fa.servicesHeader));
 
   // re-enter + choose 2 months: the EXACT 2-month entry (not 2 × the base)
+  // → volume step; choose no increase → duration-only summary (legacy path)
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   await dispatch(callbackUpdateAs('dur:60', nextId(), USER));
+  state = sqlite
+    .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
+    .get(customerIdOf(USER)) as { state: string };
+  assert.equal(state.state, 'WAITING_RENEWAL_VOLUME');
+  const volButtons = buttonsTo(USER.id);
+  assert.ok(volButtons.includes('vol:0'), 'no-increase row offered');
+  await dispatch(callbackUpdateAs('vol:0', nextId(), USER));
   const summary = textsTo(USER.id).at(-1) ?? '';
   assert.ok(summary.includes('2 ماه'), 'month-label in summary');
   assert.ok(summary.includes('80000') || summary.includes('80,000'), 'price shown');

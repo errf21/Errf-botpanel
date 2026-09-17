@@ -308,17 +308,26 @@ const en: Texts = {
   renewInProgressNotice: (id: string) =>
     `🔁 There\'s already an open renewal for this service.\n\n🆔 Renewal order: ${id}\n\nTrack its status under "💳 My Orders".`,
   renewIntro: (name: string, expires: string) =>
-    `🔁 Renew "${name}"\n\n📅 Current expiry: ${expires}\n\nPick a duration to renew.\nThe price is the exact number set for that duration; payment works like a purchase: send a receipt, manual confirmation.`,
-  renewDurationPrompt: '⏳ Choose the renewal length:\n\n1 month • 2 months • 3 months',
+    `🔄 Extend / add volume for "${name}"\n\n📅 Current expiry: ${expires}\n\nFirst pick an added duration (or skip), then an added volume. Pricing matches the purchase rates; payment works like a purchase: receipt + manual review, or wallet.`,
+  renewDurationPrompt: '⏳ Choose added time:\n\nNo extension • 1 month • 2 months • 3 months',
+  renewNoDuration: '➖ No time extension',
+  renewVolumePrompt: '📦 Choose added volume:\n\n+10 • +20 • +30 GB, custom (min 10 GB), or no increase.',
+  renewNoVolume: '➖ No volume increase',
   renewSummaryHeader: '🧾 Renewal summary',
   renewSummaryService: (name: string) => `📦 Service: "${name}"`,
   renewSummaryAdd: (months: number) => `➕ Adding: ${months} month${months === 1 ? '' : 's'}`,
+  renewSummaryNoTime: '➕ Added time: none',
+  renewSummaryVolume: (gb: number) => `📦 Added volume: ${gb} GB`,
+  renewSummaryNoVolume: '📦 Added volume: none',
   renewSummaryFrom: (v: string) => `📅 Current expiry: ${v}`,
   renewSummaryUntil: (v: string) => `📅 New expiry (approx.): ${v}`,
   renewConfirmed: (id: string) =>
     `✅ Renewal requested!\n\n🆔 ID: ${id}\n\n👇 Payment details are coming up next.`,
   renewApplied: (id: string, expiresDate: string) =>
     `🎉 Your service has been renewed!\n\n🆔 Order: ${id}\n📅 New expiry: ${expiresDate}\n\nYou can check the status under "📦 My Services".`,
+  renewVolumeApplied: (id: string, addedGb: string) =>
+    `🎉 Service volume increased!\n\n🆔 Order: ${id}\n📦 Added volume: ${addedGb} GB\n\nYou can check the status under "📦 My Services".`,
+  renewEmptyError: '⚠️ Please choose at least one: a time extension or a volume increase.',
   renewFailedNotice: (id: string) =>
     `⚠️ Renewing this order ran into repeated problems.\n\n🆔 Order: ${id}\n\nThe team has been alerted and is on it — you do NOT need to pay again.`,
   adminRenewalFailed: (id: string, reason: string) =>
@@ -592,7 +601,7 @@ const en: Texts = {
   btnAutoPick: '🎲 Auto-pick',
   btnSkipReject: '❌ Reject without reason',
   btnCancelInline: '❌ Cancel',
-  btnRenewService: '🔁 Renew service',
+  btnRenewService: '🔄 Extend / add volume',
   btnRefreshStatus: '🔄 Refresh status',
   languageIntro:
     '🌐 Choose the language this bot should use.\n\nYou can switch back anytime.',

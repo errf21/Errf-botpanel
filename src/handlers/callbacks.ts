@@ -32,6 +32,7 @@ import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { refreshOwnedService, viewOwnedService } from './services.ts';
 import {
   applyRenewalDuration,
+  applyRenewalVolume,
   confirmRenewal,
   confirmRenewalWithWallet,
   renewalGoBack,
@@ -233,7 +234,8 @@ export async function handleCallback(
       route.namespace === 'vol' ? 'volume' : route.namespace === 'dur' ? 'duration' : 'device';
 
     // Phase 6: the same `dur:` vocabulary powers the renewal ladder; the
-    // session state alone decides which tap belongs to what.
+    // session state alone decides which tap belongs to what. Duration `0`
+    // is the "no extension" skip row (validated in the renewal handler).
     if (kind === 'duration' && session.state === 'WAITING_RENEWAL_DURATION') {
       if (route.value === 'custom') {
         await ctx.api.answerCallbackQuery(callbackQueryId, t.invalidChoice);
@@ -245,6 +247,22 @@ export async function handleCallback(
         return;
       }
       await applyRenewalDuration(ctx, session, loaded.catalog, route.value, callbackQueryId);
+      return;
+    }
+
+    // Renewal add-on volume reuses the `vol:` namespace (shortcuts + custom
+    // entry tap + `0` skip row); typed custom numbers arrive via handleText.
+    if (kind === 'volume' && session.state === 'WAITING_RENEWAL_VOLUME') {
+      const loaded = await loadCatalog(ctx.db);
+      if (!loaded.ok) {
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
+        return;
+      }
+      if (route.value === 'custom') {
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.customHint, true);
+        return;
+      }
+      await applyRenewalVolume(ctx, session, loaded.catalog, route.value, callbackQueryId);
       return;
     }
 

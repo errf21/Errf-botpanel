@@ -241,6 +241,7 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
   await dispatch(messageUpdate('/start', nextId())); // reset session to IDLE
   await dispatch(callbackUpdateAs(`svc:rnw:${svc.id}`, nextId(), USER));
   await dispatch(callbackUpdateAs('dur:60', nextId(), USER, USER.id));
+  await dispatch(callbackUpdateAs('vol:0', nextId(), USER, USER.id));
   const renewSummary = sendTexts(USER.id).at(-1) ?? '';
   assert.ok(renewSummary.includes('80,000'), 'renewal priced at the live 2-month entry');
   await dispatch(callbackUpdateAs('prc:e_d2', nextId(), ADMIN, ADMIN.id));

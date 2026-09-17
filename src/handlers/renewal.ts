@@ -1,25 +1,31 @@
 /**
- * Phase 6 renewal ladder: WAITING_RENEWAL_DURATION → WAITING_RENEWAL_CONFIRMATION
- * → (via the SHARED receipt/provisioning pipeline) WAITING_PAYMENT_RECEIPT.
+ * Renewal / service-increase ladder:
+ *   WAITING_RENEWAL_DURATION → WAITING_RENEWAL_VOLUME → WAITING_RENEWAL_CONFIRMATION
+ *   → (via the SHARED receipt/provisioning pipeline) WAITING_PAYMENT_RECEIPT.
+ *
+ * Supports duration-only, volume-only, and duration + volume. Duration `0`
+ * means "no time extension", volume `0` means "no increase"; both zero is
+ * rejected. Volume pricing reuses the shared purchase rate
+ * (`volumeExtraCost`); quota reuses the purchase `GB_BYTES` conversion
+ * additively in provisioning (never here).
  *
  * Hard rules inherited from the purchase flow:
- *  - Keyboard values are never trusted: the renewal duration is re-validated
- *    against the FRESH catalog on every tap, and ONLY month presets pass
- *    (custom values are structurally impossible in this ladder).
+ *  - Keyboard values are never trusted: every tap is re-validated against
+ *    the FRESH catalog (duration presets, `acceptVolume` for add-ons).
  *  - Ownership, "one active renewal at a time" and the renewal kill switch
- *    are re-checked at START, at SUMMARY render and at CONFIRM.
+ *    are re-checked at START, at each STEP, at SUMMARY render and at CONFIRM.
  *  - Confirmation is idempotent (token → checkout): a replay delivers the
  *    same renewal order, never a second one.
  */
 import type { Session } from '../db/states.ts';
 import type { UpdateContext } from '../types.ts';
 import type { Catalog } from '../catalog/catalog.ts';
-import { enabledDurationDays, loadCatalog } from '../catalog/catalog.ts';
+import { acceptVolume, enabledDurationDays, loadCatalog } from '../catalog/catalog.ts';
 import { isSalesStopped } from '../catalog/sales.ts';
 import { calculateRenewalPrice } from '../catalog/pricing.ts';
 import { checkoutRenewalOrder } from '../orders/checkout.ts';
 import { newOrderId } from '../lib/security.ts';
-import { isValidOrderId } from '../lib/validate.ts';
+import { isValidOrderId, parsePositiveInt } from '../lib/validate.ts';
 import { setSession, clearSession } from '../db/states.ts';
 import { findActiveRenewalForService, getOwnedService } from '../db/orders.ts';
 import type { OrderRow } from '../db/orders.ts';
@@ -43,7 +49,7 @@ async function findOrderByIdempotencyKeySoft(db: D1Database, token: string) {
   }
 }
 import { loadRenewalViewConfig, serviceSnapshotData, effectiveExpiryIso, expiryDisplay, showMyServices } from './services.ts';
-import { renewalDurationKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard } from '../telegram/menu.ts';
+import { renewalDurationKeyboard, renewalVolumeKeyboard, confirmKeyboard, backToMenuKeyboard, walletPayKeyboard } from '../telegram/menu.ts';
 import { payableWalletBalance } from './wallet.ts';
 import { payOrderWithWallet, refundOrderWalletPayment, setPaidLedgerOrder } from '../db/wallet.ts';
 import { planWalletPayment, type WalletPlan } from '../orders/checkout.ts';
@@ -52,6 +58,9 @@ import { sendPaymentInstructions } from './payment.ts';
 import { reduce } from '../state/machine.ts';
 
 const DAY_MS = 86_400_000;
+
+/** Shortcut add-on buttons; each is still validated via `acceptVolume`. */
+const RENEWAL_VOLUME_SHORTCUTS = [10, 20, 30];
 
 /** Reusable guard: owned completed service + renewals enabled + none active. */
 async function renewableService(
@@ -85,6 +94,10 @@ async function renewableService(
   return { ok: true, service };
 }
 
+export function renewalVolumePresets(catalog: Catalog): number[] {
+  return RENEWAL_VOLUME_SHORTCUTS.filter((gb) => acceptVolume(catalog, gb).ok);
+}
+
 export async function sendRenewalDurationPrompt(
   ctx: UpdateContext,
   service: OrderRow,
@@ -97,6 +110,20 @@ export async function sendRenewalDurationPrompt(
     ctx.chatId,
     `${intro}\n\n${ctx.ui.t.renewDurationPrompt}`,
     renewalDurationKeyboard(ctx.ui, presets),
+  );
+}
+
+export async function sendRenewalVolumePrompt(
+  ctx: UpdateContext,
+  service: OrderRow,
+  catalog: Catalog,
+): Promise<void> {
+  const name = serviceSnapshotData(service).name ?? ctx.ui.t.accountNone;
+  const intro = ctx.ui.t.renewIntro(name, expiryDisplay(ctx.ui, effectiveExpiryIso(service)));
+  await ctx.api.sendMessage(
+    ctx.chatId,
+    `${intro}\n\n${ctx.ui.t.renewVolumePrompt}`,
+    renewalVolumeKeyboard(ctx.ui, renewalVolumePresets(catalog), catalog.volume.allowCustom),
   );
 }
 
@@ -131,7 +158,7 @@ export async function startRenewal(
   await sendRenewalDurationPrompt(ctx, guard.service, loaded.catalog);
 }
 
-/** `dur:` choice while WAITING_RENEWAL_DURATION — preset months only. */
+/** `dur:` choice while WAITING_RENEWAL_DURATION — presets plus `0` (skip). */
 export async function applyRenewalDuration(
   ctx: UpdateContext,
   session: Session,
@@ -148,7 +175,7 @@ export async function applyRenewalDuration(
     await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice, true);
     return;
   }
-  if (!enabledDurationDays(catalog).includes(days)) {
+  if (days !== 0 && !enabledDurationDays(catalog).includes(days)) {
     await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.rejectedPresetDisabled, true);
     return;
   }
@@ -159,10 +186,105 @@ export async function applyRenewalDuration(
     return;
   }
   const next = reduce(session.state, 'renew_duration_chosen');
-  if (next !== 'WAITING_RENEWAL_CONFIRMATION') return;
+  if (next !== 'WAITING_RENEWAL_VOLUME') return;
   const data: Session['data'] = { ...session.data, duration_days: days };
+  await ctx.api.answerCallbackQuery(callbackQueryId);
+  await setSession(ctx.db, ctx.customerId, next, data);
+  await sendRenewalVolumePrompt(ctx, guard.service, catalog);
+}
+
+/** `vol:` choice while WAITING_RENEWAL_VOLUME — shortcuts plus `0` (skip). */
+export async function applyRenewalVolume(
+  ctx: UpdateContext,
+  session: Session,
+  catalog: Catalog,
+  gb: number,
+  callbackQueryId: string,
+): Promise<void> {
+  const serviceOrderId = session.data['renews_order_id'];
+  const days = session.data['duration_days'];
+  if (
+    session.state !== 'WAITING_RENEWAL_VOLUME' ||
+    typeof serviceOrderId !== 'string' ||
+    !isValidOrderId(serviceOrderId) ||
+    typeof days !== 'number'
+  ) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice, true);
+    return;
+  }
+  if (gb !== 0 && !acceptVolume(catalog, gb).ok) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.rejectedPresetDisabled, true);
+    return;
+  }
+  if (days === 0 && gb === 0) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.renewEmptyError, true);
+    return;
+  }
+  const guard = await renewableService(ctx, serviceOrderId);
+  if (!guard.ok) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, guard.toast, true);
+    if (guard.clearSession) await clearSession(ctx.db, ctx.customerId);
+    return;
+  }
+  const next = reduce(session.state, 'renew_volume_chosen');
+  if (next !== 'WAITING_RENEWAL_CONFIRMATION') return;
+  const data: Session['data'] = { ...session.data, added_volume_gb: gb };
   if (typeof data['order_token'] !== 'string') data['order_token'] = newOrderId();
   await ctx.api.answerCallbackQuery(callbackQueryId);
+  await setSession(ctx.db, ctx.customerId, next, data);
+  await sendRenewalSummary(ctx, { state: next, data }, catalog, guard.service);
+}
+
+/** Typed custom add-on volume while WAITING_RENEWAL_VOLUME (purchase limits). */
+export async function applyRenewalCustomVolume(
+  ctx: UpdateContext,
+  session: Session,
+  catalog: Catalog,
+  rawText: string,
+): Promise<void> {
+  const serviceOrderId = session.data['renews_order_id'];
+  const days = session.data['duration_days'];
+  if (
+    session.state !== 'WAITING_RENEWAL_VOLUME' ||
+    typeof serviceOrderId !== 'string' ||
+    !isValidOrderId(serviceOrderId) ||
+    typeof days !== 'number'
+  ) {
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.staleChoice, backToMenuKeyboard(ctx.ui));
+    return;
+  }
+  const value = parsePositiveInt(rawText);
+  if (value === null) {
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.rejectedNotWhole, backToMenuKeyboard(ctx.ui));
+    return;
+  }
+  const check = acceptVolume(catalog, value);
+  if (!check.ok) {
+    if (check.reason === 'range') {
+      await ctx.api.sendMessage(
+        ctx.chatId,
+        ctx.ui.t.rejectedVolumeRange(value, catalog.volume.minGb, catalog.volume.maxGb),
+        backToMenuKeyboard(ctx.ui),
+      );
+    } else {
+      await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.rejectedPresetDisabled, backToMenuKeyboard(ctx.ui));
+    }
+    return;
+  }
+  if (days === 0 && value === 0) {
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.renewEmptyError, backToMenuKeyboard(ctx.ui));
+    return;
+  }
+  const guard = await renewableService(ctx, serviceOrderId);
+  if (!guard.ok) {
+    await ctx.api.sendMessage(ctx.chatId, guard.toast, backToMenuKeyboard(ctx.ui));
+    if (guard.clearSession) await clearSession(ctx.db, ctx.customerId);
+    return;
+  }
+  const next = reduce(session.state, 'renew_volume_chosen');
+  if (next !== 'WAITING_RENEWAL_CONFIRMATION') return;
+  const data: Session['data'] = { ...session.data, added_volume_gb: value };
+  if (typeof data['order_token'] !== 'string') data['order_token'] = newOrderId();
   await setSession(ctx.db, ctx.customerId, next, data);
   await sendRenewalSummary(ctx, { state: next, data }, catalog, guard.service);
 }
@@ -175,12 +297,17 @@ export async function sendRenewalSummary(
   service: OrderRow,
 ): Promise<void> {
   const days = session.data['duration_days'];
+  const addedGb = session.data['added_volume_gb'] ?? 0;
   const token = session.data['order_token'];
-  if (typeof days !== 'number' || typeof token !== 'string') {
+  if (typeof days !== 'number' || typeof addedGb !== 'number' || typeof token !== 'string') {
     await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.missingDraftData, backToMenuKeyboard(ctx.ui));
     return;
   }
-  const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days });
+  if (days === 0 && addedGb === 0) {
+    await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.renewEmptyError, backToMenuKeyboard(ctx.ui));
+    return;
+  }
+  const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days, addedVolumeGb: addedGb });
   if (!computed.ok) {
     await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     return;
@@ -191,16 +318,17 @@ export async function sendRenewalSummary(
     Date.now(),
     localExpiry === null ? 0 : Date.parse(localExpiry),
   );
-  const newExpiryIso = new Date(baseMs + b.duration_days * DAY_MS).toISOString();
+  const newExpiryIso = days > 0 ? new Date(baseMs + b.duration_days * DAY_MS).toISOString() : null;
   const name = serviceSnapshotData(service).name ?? ctx.ui.t.accountNone;
   const balance = await payableWalletBalance(ctx.db, ctx.customerId);
   const lines = [
     ctx.ui.t.renewSummaryHeader,
     ctx.ui.t.renewSummaryService(name),
-    ctx.ui.t.renewSummaryAdd(b.months),
+    b.months > 0 ? ctx.ui.t.renewSummaryAdd(b.months) : ctx.ui.t.renewSummaryNoTime,
+    addedGb > 0 ? ctx.ui.t.renewSummaryVolume(addedGb) : ctx.ui.t.renewSummaryNoVolume,
     ctx.ui.t.summaryPrice(ctx.ui.f.price(b.total, b.currency)),
     ctx.ui.t.renewSummaryFrom(expiryDisplay(ctx.ui, localExpiry)),
-    ctx.ui.t.renewSummaryUntil(expiryDisplay(ctx.ui, newExpiryIso)),
+    ...(newExpiryIso !== null ? [ctx.ui.t.renewSummaryUntil(expiryDisplay(ctx.ui, newExpiryIso))] : []),
     ctx.ui.t.summaryId(token),
   ];
   if (balance !== null && balance > 0) {
@@ -229,15 +357,21 @@ export async function confirmRenewal(
 ): Promise<void> {
   const token = session.data['order_token'];
   const days = session.data['duration_days'];
+  const addedGb = session.data['added_volume_gb'] ?? 0;
   const serviceOrderId = session.data['renews_order_id'];
   if (
     session.state !== 'WAITING_RENEWAL_CONFIRMATION' ||
     typeof token !== 'string' ||
     typeof days !== 'number' ||
+    typeof addedGb !== 'number' ||
     typeof serviceOrderId !== 'string' ||
     !isValidOrderId(serviceOrderId)
   ) {
     await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice);
+    return;
+  }
+  if (days === 0 && addedGb === 0) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.renewEmptyError, true);
     return;
   }
   const guard = await renewableService(ctx, serviceOrderId);
@@ -246,7 +380,7 @@ export async function confirmRenewal(
     if (guard.clearSession) await clearSession(ctx.db, ctx.customerId);
     return;
   }
-  const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days });
+  const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days, addedVolumeGb: addedGb });
   if (!computed.ok) {
     await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     await ctx.api.answerCallbackQuery(callbackQueryId);
@@ -390,11 +524,12 @@ export async function confirmRenewalWithWallet(
     return;
   }
   const days = session.data['duration_days'];
-  if (session.state !== 'WAITING_RENEWAL_CONFIRMATION' || typeof days !== 'number') {
+  const addedGb = session.data['added_volume_gb'] ?? 0;
+  if (session.state !== 'WAITING_RENEWAL_CONFIRMATION' || typeof days !== 'number' || typeof addedGb !== 'number') {
     await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.staleChoice, true);
     return;
   }
-  const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days });
+  const computed = calculateRenewalPrice(catalog.pricing, { durationDays: days, addedVolumeGb: addedGb });
   if (!computed.ok) {
     await ctx.api.sendMessage(ctx.chatId, ctx.ui.t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
     return;
@@ -407,7 +542,7 @@ export async function confirmRenewalWithWallet(
   await confirmRenewal(ctx, session, catalog, callbackQueryId, plan);
 }
 
-/** `step:back` from the renewal confirmation → duration ladder step. */
+/** `step:back` inside the renewal ladder (volume → duration → services list). */
 export async function renewalGoBack(
   ctx: UpdateContext,
   session: Session,
@@ -421,7 +556,9 @@ export async function renewalGoBack(
     await showMyServices(ctx);
     return 'handled';
   }
-  if (session.state !== 'WAITING_RENEWAL_CONFIRMATION') return 'not-renewal';
+  if (session.state !== 'WAITING_RENEWAL_VOLUME' && session.state !== 'WAITING_RENEWAL_CONFIRMATION') {
+    return 'not-renewal';
+  }
   const serviceOrderId = session.data['renews_order_id'];
   await ctx.api.answerCallbackQuery(callbackQueryId);
   if (typeof serviceOrderId !== 'string' || !isValidOrderId(serviceOrderId)) {
@@ -437,7 +574,11 @@ export async function renewalGoBack(
   }
   const next = reduce(session.state, 'step_back');
   await setSession(ctx.db, ctx.customerId, next, { ...session.data });
-  await sendRenewalDurationPrompt(ctx, service, catalog);
+  if (next === 'WAITING_RENEWAL_DURATION') {
+    await sendRenewalDurationPrompt(ctx, service, catalog);
+  } else {
+    await sendRenewalVolumePrompt(ctx, service, catalog);
+  }
   return 'handled';
 }
 
@@ -464,6 +605,10 @@ export async function resumeRenewal(
   }
   if (session.state === 'WAITING_RENEWAL_DURATION') {
     await sendRenewalDurationPrompt(ctx, service, catalog);
+    return;
+  }
+  if (session.state === 'WAITING_RENEWAL_VOLUME') {
+    await sendRenewalVolumePrompt(ctx, service, catalog);
     return;
   }
   if (session.state === 'WAITING_RENEWAL_CONFIRMATION') {

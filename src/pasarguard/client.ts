@@ -117,12 +117,16 @@ export interface CreateUserPayload {
 }
 
 /**
- * Phase 6 renewal patch: an ABSOLUTE expiry in unix seconds. Partial bodies
- * are supported by the panel (its own edit dialog sends only dirty fields),
- * so extension touches `expire` — and nothing else.
+ * Renewal / increase patch: absolute `expire` (unix seconds) and/or absolute
+ * `data_limit` (bytes). Partial bodies are supported by the panel (its own
+ * edit dialog sends only dirty fields). Callers send ONLY dirty fields:
+ * duration-only renewals send `expire` exactly as before; volume add-ons add
+ * `data_limit` (additively computed upstream); both send both. `used_traffic`
+ * is NEVER part of this payload — the panel preserves usage on partial PUTs.
  */
 export interface ModifyUserPayload {
-  expire: number;
+  expire?: number;
+  data_limit?: number;
   status?: 'active' | 'on_hold' | 'disabled';
 }
 
@@ -276,10 +280,11 @@ export class PasarGuardClient {
   }
 
   /**
-   * PUT /api/user/by-username/{name} — partial modify (Phase 6 renewals set
-   * an absolute `expire`). NEVER auto-retried blindly: callers pre-check the
-   * stored target and post-verify with getUserByUsername, and absolute expiry
-   * re-application is a no-op by construction.
+   * PUT /api/user/by-username/{name} — partial modify (renewals set an
+   * absolute `expire` and/or an absolute `data_limit`). NEVER auto-retried
+   * blindly: callers pre-check the stored targets and post-verify with
+   * getUserByUsername, and absolute re-application is a no-op by
+   * construction. At least one of expire/data_limit must be present.
    */
   modifyUserByUsername(
     username: string,
@@ -288,8 +293,22 @@ export class PasarGuardClient {
     if (!/^[A-Za-z0-9]{3,32}$/.test(username)) {
       return Promise.resolve(failure(0, 'username_charset', 'rejected'));
     }
-    if (!Number.isSafeInteger(patch.expire) || patch.expire < 1 || patch.expire > 4_000_000_000) {
+    const hasExpire = patch.expire !== undefined;
+    const hasLimit = patch.data_limit !== undefined;
+    if (!hasExpire && !hasLimit) {
+      return Promise.resolve(failure(0, 'empty_patch', 'rejected'));
+    }
+    if (
+      hasExpire &&
+      (!Number.isSafeInteger(patch.expire) || (patch.expire as number) < 1 || (patch.expire as number) > 4_000_000_000)
+    ) {
       return Promise.resolve(failure(0, 'expire_target_range', 'rejected'));
+    }
+    if (
+      hasLimit &&
+      (!Number.isSafeInteger(patch.data_limit) || (patch.data_limit as number) < 1 || (patch.data_limit as number) > Number.MAX_SAFE_INTEGER)
+    ) {
+      return Promise.resolve(failure(0, 'data_limit_range', 'rejected'));
     }
     return this.#request<PanelUser | null>(
       'PUT',
