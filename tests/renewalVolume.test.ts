@@ -1,12 +1,13 @@
 /**
- * Renewal / service-increase: duration + additive volume — fully offline.
- * Covers the approved scope only:
+ * Renewal / service-increase — fully offline. The renewal UI ladder is
+ * RETIRED (Phase 19: repurchase replaced it for every paid service), so this
+ * file now covers what remains true:
  *  - pricing reuses the purchase rate (volumeExtraCost parity)
  *  - quota delta reuses the purchase GB_BYTES conversion (parity)
- *  - UI ladder supports duration-only / volume-only / both (incl. custom)
- *  - panel PUT modifies the EXISTING user, additively, never used_traffic
- *  - retry/idempotency never double-adds quota
- *  - legacy duration-only behavior preserved
+ *  - no renewal order is creatable from any UI path (retired entry/steps)
+ *  - already-created (in-flight) renewal orders still finish via direct
+ *    checkout + provisioning: retry/idempotency never double-adds quota
+ *  - paid service detail offers repurchase, never a renewal button
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +30,6 @@ import { fa } from '../src/telegram/texts.ts';
 
 const PANEL_KEY = 'PG-SECRET-KEY-77';
 const PANEL_BASE = 'https://panel.test';
-const DAY_SECONDS = 86_400;
 
 interface FakeUser {
   id: string;
@@ -135,8 +135,6 @@ const buttonsTo = (chatId: number): string[] => {
 };
 const putCalls = () =>
   stub.panel.calls.filter((c) => c.method === 'PUT' && c.path.startsWith('/api/user/by-username/'));
-const postCalls = () =>
-  stub.panel.calls.filter((c) => c.method === 'POST' && c.path === '/api/user');
 
 /** buy → receipt → approve → completed service; returns the order id. */
 async function purchaseToCompleted(volumeGb = 10): Promise<string> {
@@ -164,17 +162,32 @@ function customerIdOf(): number {
   return (sqlite.prepare('SELECT id FROM customers WHERE telegram_user_id = ?1').get(String(USER.id)) as { id: number }).id;
 }
 
-/** Drive a renewal ladder to confirmation; returns the renewal order id. */
-async function renewToPending(serviceId: string, dur: string, vol: string | null): Promise<string> {
-  await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
-  await dispatch(callbackUpdateAs(dur, nextId(), USER));
-  if (vol !== null) await dispatch(callbackUpdateAs(vol, nextId(), USER));
-  await dispatch(callbackUpdateAs('ord:confirm', nextId(), USER));
-  const row = sqlite
-    .prepare(`SELECT * FROM orders WHERE kind = 'renewal' ORDER BY created_at DESC LIMIT 1`)
-    .get() as { id: string };
-  return row.id;
+/** Directly create + approve a renewal order for tests (bypass UI — the UI
+ *  ladder is retired; this covers the in-flight finish path only). */
+async function directRenewalOrder(serviceId: string, days: number, addedGb: number): Promise<string> {
+  const loaded = await loadCatalog(db);
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) throw new Error('catalog');
+  const { calculateRenewalPrice: calcRenew } = await import('../src/catalog/pricing.ts');
+  const computed = calcRenew(loaded.catalog.pricing, { durationDays: days, addedVolumeGb: addedGb });
+  assert.equal(computed.ok, true);
+  if (!computed.ok) throw new Error('price');
+  const { checkoutRenewalOrder } = await import('../src/orders/checkout.ts');
+  const { newOrderId } = await import('../src/lib/security.ts');
+  const result = await checkoutRenewalOrder(
+    db,
+    {
+      customerId: customerIdOf(),
+      orderToken: newOrderId(),
+      catalog: loaded.catalog,
+      breakdown: computed.breakdown,
+      serviceOrderId: serviceId,
+    },
+    'direct-cfg',
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) throw new Error('checkout');
+  return result.order.id;
 }
 
 async function approveRenewal(renewalId: string): Promise<void> {
@@ -263,114 +276,34 @@ test('renewal custom volume reuses purchase limits: 5/9 reject, 10+ accept', asy
   assert.equal(acceptVolume(loaded.catalog, 501).ok, false);
 });
 
-/* ================= e2e: duration-only (legacy preserved) ================= */
+/* ================= retired: no renewal order from any UI path ================= */
 
-test('e2e duration-only: PUT expire only, quota untouched, usage kept', async () => {
-  const serviceId = await purchaseToCompleted(10);
-  const username = `pg${serviceId.toLowerCase()}`;
-  users.get(username)!.used_traffic = 32 * GB_BYTES;
-  const before = { ...users.get(username)! };
-  stub.panel.reset();
-  stub.reset();
-
-  const renewalId = await renewToPending(serviceId, 'dur:60', 'vol:0');
-  const row = sqlite.prepare('SELECT * FROM orders WHERE id = ?1').get(renewalId) as Record<string, unknown>;
-  assert.equal(row['amount'], 80000);
-  await approveRenewal(renewalId);
-  const puts = putCalls();
-  assert.equal(puts.length, 1);
-  assert.deepEqual(puts[0]!.body, { expire: before.expire + 60 * DAY_SECONDS });
-  assert.ok(!('data_limit' in (puts[0]!.body ?? {})));
-  assert.equal(users.get(username)!.expire, before.expire + 60 * DAY_SECONDS);
-  assert.equal(users.get(username)!.data_limit, before.data_limit);
-  assert.equal(users.get(username)!.used_traffic, 32 * GB_BYTES);
-  assert.equal(postCalls().length, 0, 'no new panel user');
-});
-
-/* ================= e2e: volume-only (additive) ================= */
-
-test('e2e volume-only: quota 50GB +20GB → 70GB equivalent, usage exactly kept', async () => {
-  const serviceId = await purchaseToCompleted(50);
-  const username = `pg${serviceId.toLowerCase()}`;
-  const baseLimit = users.get(username)!.data_limit;
-  assert.equal(baseLimit, 50 * GB_BYTES, 'purchase quota baseline');
-  users.get(username)!.used_traffic = 32 * GB_BYTES;
-  stub.panel.reset();
-  stub.reset();
-
-  const renewalId = await renewToPending(serviceId, 'dur:0', 'vol:20');
-  const row = sqlite.prepare('SELECT * FROM orders WHERE id = ?1').get(renewalId) as Record<string, unknown>;
-  assert.equal(row['amount'], 20 * 4500);
-  const snapshot = JSON.parse(String(row['selections'])) as Record<string, unknown>;
-  assert.equal(snapshot['added_volume_gb'], 20);
-  await approveRenewal(renewalId);
-  const puts = putCalls();
-  assert.equal(puts.length, 1);
-  assert.deepEqual(puts[0]!.body, { data_limit: baseLimit + 20 * GB_BYTES });
-  assert.ok(!('expire' in (puts[0]!.body ?? {})));
-  assert.equal(users.get(username)!.data_limit, 70 * GB_BYTES);
-  assert.equal(users.get(username)!.used_traffic, 32 * GB_BYTES, 'usage never reset');
-  assert.equal(postCalls().length, 0, 'no new panel user');
-});
-
-/* ================= e2e: both duration + volume ================= */
-
-test('e2e duration + volume: single PUT carries both, single charge', async () => {
-  const serviceId = await purchaseToCompleted(10);
-  const username = `pg${serviceId.toLowerCase()}`;
-  const base = { ...users.get(username)! };
-  stub.panel.reset();
-  stub.reset();
-
-  const renewalId = await renewToPending(serviceId, 'dur:30', 'vol:10');
-  const row = sqlite.prepare('SELECT * FROM orders WHERE id = ?1').get(renewalId) as Record<string, unknown>;
-  assert.equal(row['amount'], 45000 + 10 * 4500);
-  await approveRenewal(renewalId);
-  const puts = putCalls();
-  assert.equal(puts.length, 1, 'one modify call for both dimensions');
-  assert.deepEqual(puts[0]!.body, {
-    expire: base.expire + 30 * DAY_SECONDS,
-    data_limit: base.data_limit + 10 * GB_BYTES,
-  });
-  assert.equal(users.get(username)!.expire, base.expire + 30 * DAY_SECONDS);
-  assert.equal(users.get(username)!.data_limit, base.data_limit + 10 * GB_BYTES);
-});
-
-/* ================= e2e: empty / custom validation ================= */
-
-test('e2e none+none rejected with zero orders; custom 5/9 refused, 15 accepted', async () => {
+test('retired renewal UI creates zero orders across all dimensions', async () => {
   const serviceId = await purchaseToCompleted(10);
   const ordersBefore = (sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number }).n;
 
-  // none + none → stays in volume, no order
   await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
+  stub.reset();
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
+  const entryToast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
+  assert.equal(String(entryToast?.payload['text']), fa.renewRetiredNotice);
+  // every legacy ladder tap is a dead end from here
+  await dispatch(callbackUpdateAs('dur:60', nextId(), USER));
   await dispatch(callbackUpdateAs('dur:0', nextId(), USER));
-  stub.reset();
+  await dispatch(callbackUpdateAs('vol:20', nextId(), USER));
   await dispatch(callbackUpdateAs('vol:0', nextId(), USER));
-  const emptyToast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
-  assert.equal(String(emptyToast?.payload['text']), fa.renewEmptyError);
-  const ordersMid = (sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number }).n;
-  assert.equal(ordersMid, ordersBefore, 'empty choice creates nothing');
-
-  // custom entry tap → hint; typed 5 refused (below min 10)
-  stub.reset();
   await dispatch(callbackUpdateAs('vol:custom', nextId(), USER));
-  await dispatch(messageUpdateAs(USER, '5', nextId()));
-  assert.ok(String(textsTo(USER.id).at(-1)).includes('10'), 'min 10 surfaced');
-
-  // typed 9 refused as well
-  await dispatch(messageUpdateAs(USER, '9', nextId()));
-  assert.ok(String(textsTo(USER.id).at(-1)).includes('10'));
-
-  // typed 15 accepted → confirmation shows the shared-rate total
   await dispatch(messageUpdateAs(USER, '15', nextId()));
-  const summary = textsTo(USER.id).at(-1) ?? '';
-  assert.ok(summary.includes('67500') || summary.includes('67,500'), 'custom total shown: ' + summary.slice(0, 200));
-  const state = sqlite
-    .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
-    .get(customerIdOf()) as { state: string };
-  assert.equal(state.state, 'WAITING_RENEWAL_CONFIRMATION');
+  await dispatch(callbackUpdateAs('ord:confirm', nextId(), USER));
+  await dispatch(callbackUpdateAs('wlt:full', nextId(), USER));
+  const ordersAfter = (sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number }).n;
+  assert.equal(ordersAfter, ordersBefore, 'retired ladder creates nothing');
+  const renewals = (
+    sqlite.prepare(`SELECT COUNT(*) AS n FROM orders WHERE kind = 'renewal' AND repurchase_mode IS NULL`).get() as {
+      n: number;
+    }
+  ).n;
+  assert.equal(renewals, 0, 'zero legacy renewal rows from UI');
   await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
 });
 
@@ -382,7 +315,10 @@ test('retry after ambiguous PUT adopts stored quota target instead of re-adding'
   const baseLimit = users.get(username)!.data_limit;
   stub.panel.reset();
 
-  const renewalId = await renewToPending(serviceId, 'dur:0', 'vol:20');
+  // in-flight finish path only: the order is created directly (UI retired).
+  // NOTE: approve WITHOUT provisioning (direct db call, like the legacy
+  // test) so the ambiguous first attempt below is genuinely first.
+  const renewalId = await directRenewalOrder(serviceId, 0, 20);
   sqlite.prepare(`UPDATE orders SET state='awaiting_review', receipt_file_id='X' WHERE id = ?1`).run(renewalId);
   const { approveOrderByAdmin } = await import('../src/db/orders.ts');
   await approveOrderByAdmin(db, renewalId, String(ADMIN.id));
@@ -403,13 +339,15 @@ test('retry after ambiguous PUT adopts stored quota target instead of re-adding'
   scenario.putMode = 'ok';
 });
 
-/* ================= legacy guards intact ================= */
+/* ================= retired UI: repurchase entry instead ================= */
 
-test('renewal button renamed and visible for eligible paid service', async () => {
+test('paid service detail offers repurchase, never renewal', async () => {
+  sqlite.prepare(`UPDATE settings SET value = '{"schema":1,"enabled":true,"near_expiry_days":7}' WHERE key = 'repurchase'`).run();
   const serviceId = await purchaseToCompleted(10);
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:det:${serviceId}`, nextId(), USER));
   const detail = textsTo(USER.id).at(-1) ?? '';
   assert.ok(detail.length > 0);
-  assert.equal(fa.btnRenewService, '🔄 تمدید / افزایش سرویس');
+  assert.ok(buttonsTo(USER.id).some((b) => b === `svc:rep:${serviceId}`), 'repurchase entry offered');
+  assert.ok(!buttonsTo(USER.id).some((b) => String(b ?? '').startsWith('svc:rnw:')), 'no renewal button anywhere');
 });

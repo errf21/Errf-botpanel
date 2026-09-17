@@ -36,7 +36,6 @@ import {
   confirmRenewal,
   confirmRenewalWithWallet,
   renewalGoBack,
-  startRenewal,
 } from './renewal.ts';
 import {
   applyRepurchaseMode,
@@ -142,8 +141,12 @@ export async function handleCallback(
       await startRepurchase(ctx, repSession, parsed.orderId, callbackQueryId);
       return;
     }
-    const renewSession = await getSession(ctx.db, ctx.customerId);
-    await startRenewal(ctx, renewSession, parsed.orderId, callbackQueryId);
+    // Phase 19: renewal is RETIRED for every paid service — repurchase
+    // replaced it. Stale `svc:rnw` buttons say so and re-render the detail
+    // from the local snapshot (no panel read — there is nothing to renew);
+    // no renewal flow can start from here.
+    await ctx.api.answerCallbackQuery(callbackQueryId, t.renewRetiredNotice, true);
+    await viewOwnedService(ctx, callbackQueryId, parsed.orderId);
     return;
   }
 

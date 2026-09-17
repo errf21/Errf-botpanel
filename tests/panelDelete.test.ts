@@ -475,7 +475,9 @@ test('deleted services refuse renewal, retry, and re-provisioning with ZERO pane
   await flush();
   await dispatch(callbackUpdateAs(`svc:rnw:${orderId}`, nextId(), OTHER, OTHER.id));
   await flush();
-  const rnwToast = stub.sent.filter((s) => s.method === 'answerCallbackQuery').at(-1);
+  const rnwToasts = stub.sent.filter((s) => s.method === 'answerCallbackQuery');
+  const rnwToast = rnwToasts.at(-1);
+  assert.ok(rnwToasts.some((s) => String(s.payload['text']).includes(fa.renewRetiredNotice.slice(0, 12))), 'retired renewal answered');
   assert.ok(String(rnwToast?.payload['text']).includes(fa.serviceNotFound.slice(0, 6)));
   assert.equal(stub.panel.calls.length, 0, 'not even a renewal read happens');
 

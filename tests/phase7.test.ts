@@ -767,31 +767,30 @@ test('W2: wallet-full purchase checkout hard-fail refunds exactly once', async (
   await dispatch(callbackUpdate('act:cancel', nextId()));
 });
 
-test('W2: wallet-full renewal checkout hard-fail refunds exactly once', async () => {
+test('W2: wallet-full repurchase checkout hard-fail refunds exactly once', async () => {
   const target = customerIdOf(USER.id);
   const service = sqlite
     .prepare(`SELECT id FROM orders WHERE customer_id = ?1 AND kind = 'purchase' AND state = 'approved' ORDER BY created_at DESC LIMIT 1`)
     .get(target) as { id: string } | undefined;
-  assert.ok(service, 'USER owns an approved purchase to renew');
+  assert.ok(service, 'USER owns an approved purchase to repurchase');
   sqlite.prepare(`UPDATE orders SET state = 'completed' WHERE id = ?1`).run(service.id);
   sqlite.prepare('UPDATE customers SET balance_irt = 200000 WHERE id = ?1').run(target);
+  sqlite.prepare(`UPDATE settings SET value = '{"schema":1,"enabled":true,"near_expiry_days":7}' WHERE key = 'repurchase'`).run();
   try {
-    await dispatch(callbackUpdateAs(`svc:rnw:${service.id}`, nextId(), USER));
-    assert.equal(sessionFor(USER.id).state, 'WAITING_RENEWAL_DURATION');
-    await dispatch(callbackUpdateAs('dur:30', nextId(), USER));
-    assert.equal(sessionFor(USER.id).state, 'WAITING_RENEWAL_VOLUME');
-    await dispatch(callbackUpdateAs('vol:0', nextId(), USER));
-    assert.equal(sessionFor(USER.id).state, 'WAITING_RENEWAL_CONFIRMATION');
+    await dispatch(callbackUpdateAs(`svc:rep:${service.id}`, nextId(), USER));
+    assert.equal(sessionFor(USER.id).state, 'WAITING_REPURCHASE_MODE');
+    await dispatch(callbackUpdateAs('rep:same', nextId(), USER));
+    assert.equal(sessionFor(USER.id).state, 'WAITING_REPURCHASE_CONFIRMATION');
     const token = String(sessionFor(USER.id).data['order_token']);
     sqlite.exec(`CREATE TRIGGER orders_boom_r AFTER INSERT ON orders BEGIN SELECT RAISE(ABORT, 'orders_boom_r'); END`);
     try {
       stub.reset();
       await dispatch(callbackUpdateAs('wlt:full', nextId(), USER));
-      assert.equal(balanceOf(target), 200000, 'renewal debit refunded');
+      assert.equal(balanceOf(target), 200000, 'repurchase debit refunded');
       assert.equal(count('SELECT COUNT(*) n FROM orders WHERE idempotency_key = ?1', token), 0);
       assert.equal(count("SELECT COUNT(*) n FROM wallet_entries WHERE kind = 'order_refund' AND order_id = ?1", token), 1);
 
-      // Retry: exactly-once holds on the renewal path too.
+      // Retry: exactly-once holds on the repurchase path too.
       await dispatch(callbackUpdateAs('wlt:full', nextId(), USER));
       assert.equal(balanceOf(target), 200000);
       assert.equal(count("SELECT COUNT(*) n FROM wallet_entries WHERE kind = 'order_refund' AND order_id = ?1", token), 1);

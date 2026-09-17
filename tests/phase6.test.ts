@@ -2,12 +2,13 @@
  * Phase 6 e2e: My Services + status + renewals — fully offline.
  * The panel stub (GET/POST/PUT /api/user...) script an in-memory service
  * store with real expire fields; nothing touches the network. Covers:
- * the services list/detail from the DB, the renewal ladder + priced
- * renewal order through the SHARED payment/review pipeline, the
- * extension-with-absolute-target apply (PUT exactly once), adopted retries
- * after ambiguous writes (no stacking), forward-only booking on the service
- * row, the attempt cap, ownership/forgery gates, the kill switch, and the
- * fail-closed invariant when the panel or renewal doc is unavailable.
+ * the services list/detail from the DB, the RETIRED renewal ladder (entry,
+ * steps and confirm create nothing — repurchase replaced it), renewal
+ * provisioning for already-created (in-flight) orders through direct
+ * checkout (PUT exactly once), adopted retries after ambiguous writes (no
+ * stacking), forward-only booking on the service row, the attempt cap,
+ * ownership/forgery gates, and the fail-closed invariant when the panel or
+ * renewal doc is unavailable.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -107,6 +108,10 @@ const { processTelegramUpdate } = await import('../src/dispatch.ts');
 const { provisionOrder } = await import('../src/provision/provision.ts');
 
 const sqlite = freshDb();
+// Phase 19: repurchase replaces renewal in the UI — enable it for this
+// file's UI-driven tests (the kill-switch test below still exercises the
+// legacy renewal doc, which no longer gates any UI).
+sqlite.prepare(`UPDATE settings SET value = '{"schema":1,"enabled":true,"near_expiry_days":7}' WHERE key = 'repurchase'`).run();
 const shim = makeD1Shim(sqlite);
 const db = shim as unknown as D1Database;
 const envRef: Record<string, unknown> = {
@@ -357,7 +362,10 @@ test('purchase → service appears in list with working detail', async () => {
   assert.ok(detail.includes(username), 'panel username shown');
   assert.ok(detail.includes('https://panel.test/sub/'), 'subscription link shown');
   const buttons = buttonsTo(USER.id);
-  assert.ok(buttons.includes(`svc:rnw:${serviceId}`));
+  // Phase 19: renewal button is gone for every paid service — repurchase
+  // (same service) + buy-new are offered instead, even on active services.
+  assert.ok(buttons.includes(`svc:rep:${serviceId}`));
+  assert.ok(!buttons.includes(`svc:rnw:${serviceId}`));
   assert.ok(buttons.includes(`svc:ref:${serviceId}`));
 });
 
@@ -408,7 +416,7 @@ test('services data never leaks to non-owners', async () => {
   ).id;
   await dispatch(messageUpdateAs(OTHER, '/start', nextId()));
   stub.reset();
-  for (const action of ['det', 'ref', 'rnw'] as const) {
+  for (const action of ['det', 'ref'] as const) {
     await dispatch(callbackUpdateAs(`svc:${action}:${serviceId}`, nextId(), OTHER));
     await flush();
   }
@@ -416,9 +424,19 @@ test('services data never leaks to non-owners', async () => {
     assert.equal(String(s.payload['text']), fa.serviceNotFound);
   }
   assert.equal(stub.sent.filter((x) => x.method === 'sendMessage').length, 0);
+  // Phase 19: a forged/retired renew tap answers the retired notice first,
+  // then the detail re-render still refuses ownership — never a renewal flow.
+  stub.reset();
+  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), OTHER));
+  await flush();
+  const rnwToasts = stub.sent.filter((x) => x.method === 'answerCallbackQuery');
+  assert.ok(rnwToasts.length >= 1);
+  assert.equal(String(rnwToasts[0]?.payload['text']), fa.renewRetiredNotice);
+  assert.equal(String(rnwToasts.at(-1)?.payload['text']), fa.serviceNotFound);
+  assert.equal(stub.sent.filter((x) => x.method === 'sendMessage').length, 0);
 });
 
-test('svc:rnw while busy in another flow is refused (session untouched)', async () => {
+test('svc:rnw is retired even mid-flow: retired notice, session untouched', async () => {
   const serviceId = (
     sqlite.prepare(`SELECT id FROM orders WHERE kind = 'purchase' ORDER BY created_at DESC LIMIT 1`)
       .get() as { id: string }
@@ -429,7 +447,7 @@ test('svc:rnw while busy in another flow is refused (session untouched)', async 
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   const toast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
-  assert.equal(String(toast?.payload['text']), fa.serviceBusyFirst);
+  assert.equal(String(toast?.payload['text']), fa.renewRetiredNotice);
   const state = sqlite
     .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
     .get(customerIdOf(USER)) as { state: string };
@@ -437,7 +455,7 @@ test('svc:rnw while busy in another flow is refused (session untouched)', async 
   await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
 });
 
-test('only one renewal may be in flight per service', async () => {
+test('retired renewal entry cannot start while a renewal is in flight (repurchase cross-guard intact)', async () => {
   const serviceId = (
     sqlite.prepare(`SELECT id FROM orders WHERE kind = 'purchase' ORDER BY created_at DESC LIMIT 1`)
       .get() as { id: string }
@@ -464,21 +482,27 @@ test('only one renewal may be in flight per service', async () => {
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   const toast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
-  assert.ok(String(toast?.payload['text']).includes(fa.renewInProgressNotice(first.order.id.slice(0, 10))));
+  assert.equal(String(toast?.payload['text']), fa.renewRetiredNotice, 'no renewal ladder starts, retired instead');
 
-  // detail shows the in-flight renewal badge and hides the renew button
+  // detail shows the in-flight renewal badge and hides the repurchase entry
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:det:${serviceId}`, nextId(), USER));
   const detail = textsTo(USER.id).at(-1) ?? '';
   assert.ok(detail.includes(fa.svcPendingRenewal(first.order.id.slice(0, 10))));
-  assert.ok(!buttonsTo(USER.id).includes(`svc:rnw:${serviceId}`));
+  assert.ok(!buttonsTo(USER.id).includes(`svc:rep:${serviceId}`), 'repurchase hidden while a renewal is in flight');
+
+  // repurchase entry is server-blocked by the cross-guard while it lasts
+  stub.reset();
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), USER));
+  const repToast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
+  assert.ok(String(repToast?.payload['text']).includes(fa.repInProgressNotice(first.order.id.slice(0, 10))));
 
   forceAwaitingReview(first.order.id);
   const rejected = await rejectOrderByAdmin(db, first.order.id, String(ADMIN.id), 'test cleanup');
   assert.equal(rejected.ok, true);
 });
 
-test('renewal kill switch: disabled and malformed docs behave as unavailable', async () => {
+test('legacy renewal doc no longer gates any UI: svc:rnw is retired whatever the doc says', async () => {
   const serviceId = (
     sqlite.prepare(`SELECT id FROM orders WHERE kind = 'purchase' ORDER BY created_at DESC LIMIT 1`)
       .get() as { id: string }
@@ -489,13 +513,13 @@ test('renewal kill switch: disabled and malformed docs behave as unavailable', a
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   let toast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
-  assert.equal(String(toast?.payload['text']), fa.renewDisabledNotice);
+  assert.equal(String(toast?.payload['text']), fa.renewRetiredNotice, 'retired even with the doc disabled');
 
   sqlite.prepare(`UPDATE settings SET value = '{"garbage": true}' WHERE key = 'renewal'`).run();
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
   toast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
-  assert.equal(String(toast?.payload['text']), fa.renewDisabledNotice);
+  assert.equal(String(toast?.payload['text']), fa.renewRetiredNotice, 'retired even with a malformed doc');
 
   sqlite
     .prepare(`UPDATE settings SET value = json_set(value, '$.enabled', true) WHERE key = 'renewal'`)
@@ -508,123 +532,44 @@ test('renewal kill switch: disabled and malformed docs behave as unavailable', a
     .run();
 });
 
-/* ================= the renewal ladder end-to-end ================= */
+/* ================= retired renewal ladder creates nothing ================= */
 
-test('UI renewal: ladder → priced renewal → receipt → approve → panel PUT once → booked', async () => {
+test('retired renewal: entry/steps/confirm create nothing, repurchase offered instead', async () => {
   const serviceId = (
     sqlite.prepare(`SELECT id FROM orders WHERE kind = 'purchase' ORDER BY created_at DESC LIMIT 1`)
       .get() as { id: string }
   ).id;
-  const username = `pg${serviceId.toLowerCase()}`;
-  const expireBefore = users.get(username)!.expire;
-
-  stub.reset();
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
-  let state = sqlite
-    .prepare('SELECT state, data FROM conversation_states WHERE customer_id = ?1')
-    .get(customerIdOf(USER)) as { state: string; data: string };
-  assert.equal(state.state, 'WAITING_RENEWAL_DURATION');
-  assert.equal(JSON.parse(state.data).renews_order_id, serviceId);
-  const prompt = textsTo(USER.id).at(-1) ?? '';
-  assert.ok(prompt.includes('تمدید'));
-  const buttons = buttonsTo(USER.id);
-  assert.ok(buttons.includes('dur:0'), 'skip row offered');
-  assert.ok(buttons.includes('dur:30') && buttons.includes('dur:60') && buttons.includes('dur:90'));
-  assert.ok(!buttons.includes('dur:custom'), 'renewal ladder has no custom option');
-
-  // text input in the renewal duration step is refused (months only)
-  stub.reset();
-  await dispatch(messageUpdateAs(USER, '45', nextId()));
-  state = sqlite
-    .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
-    .get(customerIdOf(USER)) as { state: string };
-  assert.equal(state.state, 'WAITING_RENEWAL_DURATION');
-  assert.ok((textsTo(USER.id).at(-1) ?? '').includes(fa.renewDurationPrompt));
-
-  // step back from duration → ladder restarts cleanly (IDLE + services)
-  stub.reset();
-  await dispatch(callbackUpdateAs('step:back', nextId(), USER, USER.id));
-  await flush();
-  state = sqlite
-    .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
-    .get(customerIdOf(USER)) as { state: string } | undefined;
-  assert.ok(state === undefined || state.state === 'IDLE', 'ladder exited');
-  assert.ok((textsTo(USER.id).at(-1) ?? '').includes(fa.servicesHeader));
-
-  // re-enter + choose 2 months: the EXACT 2-month entry (not 2 × the base)
-  // → volume step; choose no increase → duration-only summary (legacy path)
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
-  await dispatch(callbackUpdateAs('dur:60', nextId(), USER));
-  state = sqlite
-    .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
-    .get(customerIdOf(USER)) as { state: string };
-  assert.equal(state.state, 'WAITING_RENEWAL_VOLUME');
-  const volButtons = buttonsTo(USER.id);
-  assert.ok(volButtons.includes('vol:0'), 'no-increase row offered');
-  await dispatch(callbackUpdateAs('vol:0', nextId(), USER));
-  const summary = textsTo(USER.id).at(-1) ?? '';
-  assert.ok(summary.includes('2 ماه'), 'month-label in summary');
-  assert.ok(summary.includes('80000') || summary.includes('80,000'), 'price shown');
-  const token = JSON.parse(
-    (
-      sqlite.prepare('SELECT data FROM conversation_states WHERE customer_id = ?1')
-        .get(customerIdOf(USER)) as { data: string }
-    ).data,
-  ).order_token as string;
-  assert.ok(summary.includes(token));
-
-  // forged non-preset duration → refused, ladder intact
-  await dispatch(callbackUpdateAs('dur:45', nextId(), USER));
-  state = sqlite
-    .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
-    .get(customerIdOf(USER)) as { state: string };
-  assert.equal(state.state, 'WAITING_RENEWAL_CONFIRMATION');
-
-  // confirm → durable renewal order, then the SHARED receipt pipeline
-  await dispatch(callbackUpdateAs('ord:confirm', nextId(), USER));
-  const renewalRow = sqlite
-    .prepare(`SELECT * FROM orders WHERE kind = 'renewal' ORDER BY created_at DESC LIMIT 1`)
-    .get() as OrderRow;
-  assert.ok(renewalRow, 'renewal order exists');
-  assert.equal(renewalRow.state, 'pending_payment');
-  assert.equal(renewalRow.renews_order_id, serviceId);
-  assert.equal(renewalRow.amount, 80000);
-  assert.equal(renewalRow.provision_attempts, 0);
-  const snapshot = JSON.parse(renewalRow.selections) as Record<string, unknown>;
-  assert.equal(snapshot['kind'], 'renewal');
-  assert.equal(snapshot['renews_order_id'], serviceId);
-
-  // replay protection: re-tapping confirm creates nothing new
   const ordersBefore = (sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number }).n;
+  const renewalsBefore = (
+    sqlite.prepare(`SELECT COUNT(*) AS n FROM orders WHERE kind = 'renewal' AND repurchase_mode IS NULL`).get() as {
+      n: number;
+    }
+  ).n;
+
+  // stale entry answers retired and re-renders the detail with repurchase
+  stub.reset();
+  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
+  const entryToast = stub.sent.find((s) => s.method === 'answerCallbackQuery');
+  assert.equal(String(entryToast?.payload['text']), fa.renewRetiredNotice);
+  const buttons = buttonsTo(USER.id);
+  assert.ok(buttons.includes(`svc:rep:${serviceId}`), 'detail offers repurchase instead');
+  assert.ok(!buttons.includes(`svc:rnw:${serviceId}`), 'no renewal button anywhere');
+
+  // legacy ladder taps are dead ends: no session advance, no draft, no order
+  await dispatch(callbackUpdateAs('dur:60', nextId(), USER));
+  await dispatch(callbackUpdateAs('vol:20', nextId(), USER));
+  await dispatch(messageUpdateAs(USER, '15', nextId()));
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), USER));
+  await dispatch(callbackUpdateAs('wlt:full', nextId(), USER));
   const ordersAfter = (sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number }).n;
-  assert.equal(ordersAfter, ordersBefore);
-
-  stub.panel.reset();
-  await dispatch(mediaUpdate(nextId(), { kind: 'photo', fileId: 'RNR_RECEIPT' }, USER));
-  await dispatch(
-    callbackUpdateAs(`adm:ok:${renewalRow.id}`, nextId(), ADMIN, ADMIN.id),
-  );
-  await flush();
-
-  const puts = putCalls();
-  assert.equal(puts.length, 1, 'exactly one modify call');
-  assert.equal(puts[0]!.path, `/api/user/by-username/${username}`);
-  assert.equal(puts[0]!.headers['x-api-key'], PANEL_KEY);
-  assert.deepEqual(puts[0]!.body, { expire: expireBefore + 60 * DAY_SECONDS });
-  assert.equal(users.get(username)!.expire, expireBefore + 60 * DAY_SECONDS);
-
-  const applied = orderById(renewalRow.id)!;
-  assert.equal(applied.state, 'completed');
-  assert.equal(applied.renew_target_unix, expireBefore + 60 * DAY_SECONDS);
-  assert.equal(applied.pasarguard_username, null, 'renewal owns no username');
-
-  const svc = orderById(serviceId)!;
-  assert.equal(svc.state, 'completed');
-  assert.equal(svc.service_expires_at, new Date((expireBefore + 60 * DAY_SECONDS) * 1000).toISOString());
-  assert.ok(eventsOf(serviceId).includes('service_extended'));
-  assert.ok(eventsOf(renewalRow.id).includes('renewal_succeeded'));
-  assert.ok(textsTo(USER.id).some((t) => t.includes('تمدید شد')));
+  assert.equal(ordersAfter, ordersBefore, 'zero orders from the retired ladder');
+  const renewalsAfter = (
+    sqlite.prepare(`SELECT COUNT(*) AS n FROM orders WHERE kind = 'renewal' AND repurchase_mode IS NULL`).get() as {
+      n: number;
+    }
+  ).n;
+  assert.equal(renewalsAfter, renewalsBefore, 'zero renewal rows from the retired ladder');
+  await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
 });
 
 test('ambiguous timeout is ADOPTED on retry — no second PUT, no double extension', async () => {

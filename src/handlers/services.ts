@@ -209,8 +209,8 @@ async function renderServiceDetail(
     // Phase 18: one lifecycle operation at a time — an in-flight repurchase
     // hides both entries (the server guards stay authoritative).
     findActiveRepurchaseForService(ctx.db, service.id).catch(() => null),
-    // Phase 13: a commercial stop hides the renew affordance too — the
-    // server-side guard in renewableService stays the authority.
+    // Phase 13: a commercial stop hides the repurchase affordance too — the
+    // server-side guard in repurchasableService stays the authority.
     isSalesStopped(ctx.db),
   ]);
 
@@ -303,7 +303,7 @@ async function renderServiceDetail(
     lines.push(t.svcLinkCode(service.subscription_url));
     lines.push(t.svcPageNote);
   }
-  if (active !== null) {
+  if (active !== null && active.repurchase_mode == null) {
     lines.push(t.svcPendingRenewal(active.id.slice(0, 10)));
   }
   if (activeRepurchase !== null) {
@@ -313,33 +313,20 @@ async function renderServiceDetail(
     lines.push(panelUser !== null ? t.svcLiveNote : t.svcSnapshotNote);
   }
   if (!renewal.enabled) lines.push(t.renewDisabledNotice);
-  // Phase 18: repurchase entry is eligibility-gated (expired-or-finished paid
-  // service). The panel expiry is authoritative when seen, local otherwise —
-  // the same clock the detail bubble above renders.
-  const expiredForRepurchase =
-    !panelGone && expiresIso !== null && Date.parse(expiresIso) - Date.now() <= 0;
-  const finishedForRepurchase =
-    !panelGone &&
-    panelUser !== null &&
-    panelUser.usedTraffic !== null &&
-    panelUser.dataLimit !== null &&
-    panelUser.usedTraffic >= panelUser.dataLimit;
+  // Phase 19: repurchase REPLACES renewal for EVERY paid service (active,
+  // expiring, expired or finished). Fresh expiry/duration starts at
+  // repurchase time, so the guard + summary state the forfeiture rule.
   const canRepurchase =
     repurchaseCfg.enabled &&
     !salesStopped &&
+    active === null &&
     activeRepurchase === null &&
     !snapshot.freeTest &&
-    !panelGone &&
-    (expiredForRepurchase || finishedForRepurchase);
+    !panelGone;
 
   return {
     text: lines.join('\n'),
     keyboard: serviceDetailKeyboard(ctx.ui, service.id, {
-      // Phase 15: a free test can never be renewed (one dashboard, but the
-      // 100 MB/1-day config is not sellable). Phase 16: a panel-deleted
-      // service can never be renewed either (server authority in
-      // renewableService + the getOwnedService filter both say the same).
-      canRenew: renewal.enabled && !salesStopped && active === null && !snapshot.freeTest && !panelGone,
       canRepurchase,
       serviceUrl: panelGone ? null : service.subscription_url,
     }),

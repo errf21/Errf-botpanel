@@ -48,7 +48,7 @@ redeploy.)
 | `/debit <telegram_id> [amount]` | admin | Same as /credit, action `wallet_debit` (guarded, cannot go negative, capped). |
 | `/pricing` | admin | Live pricing doc → field buttons → arm (`pricing`, 15-min TTL once per admin) → stage typed value → ✅ ثبت قیمت → CAS apply + `settings_audit`. Full detail: [Pricing](pricing.md). |
 | `/sales` | admin | Sales-stop surface: state display (+malformed warning), 🛑 توقف سرویس / 🟢 فعال‌سازی سرویس / 🔄 نمایش دوباره. CAS+audit. [Pricing](pricing.md). |
-| `/panel_del <panel_username \| order_id>` | admin | **Delete a provisioned service from the panel (Phase 16).** Resolves the target, shows a confirmation card with full order summary + `🔴` delete / `↔️` cancel (`pdel:ok|no`). Delete = ONE `DELETE /api/user/by-username/<u>` + read-back confirmation; only on confirmed absence D1 stamps the terminal `panel_deleted` disposition (`panel_deleted_at/by` + audit event + customer notice). Failed/ambiguous panel result = NO local change, card stays for retry. Double taps / concurrent admins converge (single stamp). Deleted services and their usernames retire from reuse: never listed, never renewable, never re-provisionable. History (order, payment, renewals) untouched. Manual panel-side deletions are reconciled automatically (refresh tap / usage sweep 404 → `system:*` actor). |
+| `/panel_del <panel_username \| order_id>` | admin | **Delete a provisioned service from the panel (Phase 16).** Resolves the target, shows a confirmation card with full order summary + `🔴` delete / `↔️` cancel (`pdel:ok|no`). Delete = ONE `DELETE /api/user/by-username/<u>` + read-back confirmation; only on confirmed absence D1 stamps the terminal `panel_deleted` disposition (`panel_deleted_at/by` + audit event + customer notice). Failed/ambiguous panel result = NO local change, card stays for retry. Double taps / concurrent admins converge (single stamp). Deleted services and their usernames retire from reuse: never listed, never renewable, never repurchasable, never re-provisionable. History (order, payment, renewals) untouched. Manual panel-side deletions are reconciled automatically (refresh tap / usage sweep 404 → `system:*` actor). |
 | `/start` `/help` `/cancel` | everyone (customer UX) | Menu / help / session reset. Admins also use them; they are not admin operations. |
 
 Unlisted commands → «unknown command» reply + main menu.
@@ -91,7 +91,7 @@ both audiences' chats — write bilingually if your customer base is mixed.
 
 ### Suspend new sales (panel maintenance / exhausted capacity)
 
-`/sales` → 🛑. New purchases + renewals refuse politely; everything customers
+`/sales` → 🛑. New purchases + repurchases refuse politely; everything customers
 already have keeps working; pending receipts keep being approvable (no stranded
 money). To reopen: 🟢 — then optionally `/announce` the resume.
 

@@ -303,6 +303,8 @@ export const fa = {
   svcLiveNote: '🖥 وضعیت لحظه‌ای از پنل',
 
   renewDisabledNotice: '🔧 امکان تمدید فعلاً غیرفعال است.',
+  renewRetiredNotice:
+    '🔄 تمدید جدا حذف شده؛ برای همین سرویس از «🔄 خرید سرویس با مشخصات قبلی» استفاده کن.',
   renewInProgressNotice: (id: string) =>
     `🔁 یک درخواست تمدید برای این سرویس باز است.\n\n🆔 سفارش تمدید: ${id}\n\nوضعیت آن را از «💳 سفارش‌های من» پیگیری کنید.`,
   renewIntro: (name: string, expires: string) =>

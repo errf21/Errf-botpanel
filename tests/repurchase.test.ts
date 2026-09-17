@@ -8,8 +8,8 @@
  *  - reset is exactly one POST .../by-username/{u}/reset; usage becomes 0
  *  - ONE combined PUT {data_limit, expire, hwid_limit}; zero POST create,
  *    zero DELETE; same user/id retained; subscription rotation tolerated
- *  - guards: active / free-test / panel-deleted / sales-stop / ownership /
- *    kill-switch / concurrent repurchase
+ *  - guards: free-test / panel-deleted / sales-stop / ownership /
+ *    kill-switch / concurrent repurchase (active services ARE allowed)
  *  - payment: full + partial wallet, receipt/admin review, reject/refund,
  *    idempotent replays and duplicate approvals
  *  - provisioning: exact GET verification, failed verification, retry/adopt,
@@ -306,18 +306,22 @@ test('migration 0019 seeds the kill-switch DISABLED and keeps 0018 history', () 
 
 /* ================= entry UI ================= */
 
-test('expired service detail shows repurchase entry + buy-new; active does not', async () => {
+test('active AND expired service detail shows repurchase entry + buy-new; never renewal', async () => {
   const serviceId = await purchaseToCompleted(10, 30, 2);
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:det:${serviceId}`, nextId(), USER));
-  assert.ok(!buttonsTo(USER.id).some((b) => b === `svc:rep:${serviceId}`), 'active service hides repurchase');
+  let buttons = buttonsTo(USER.id);
+  assert.ok(buttons.some((b) => b === `svc:rep:${serviceId}`), 'active service offers repurchase');
+  assert.ok(buttons.includes('menu:buy'), 'active service keeps normal buy-new entry');
+  assert.ok(!buttons.some((b) => String(b ?? '').startsWith('svc:rnw')), 'no renewal button on active service');
 
   expireService(serviceId);
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:det:${serviceId}`, nextId(), USER));
-  const buttons = buttonsTo(USER.id);
+  buttons = buttonsTo(USER.id);
   assert.ok(buttons.some((b) => b === `svc:rep:${serviceId}`), 'expired service shows repurchase entry');
   assert.ok(buttons.includes('menu:buy'), 'expired service keeps normal buy-new entry');
+  assert.ok(!buttons.some((b) => String(b ?? '').startsWith('svc:rnw')), 'no renewal button on expired service');
   await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
 });
 
@@ -453,12 +457,16 @@ test('custom validation reuses purchase limits: bad numbers rejected, state kept
 
 /* ================= guards ================= */
 
-test('guards: active / free-test / panel-deleted / stop / kill-switch / ownership / concurrent', async () => {
-  // active service blocked
+test('guards: free-test / panel-deleted / stop / kill-switch / ownership / concurrent (active allowed)', async () => {
+  // active services are repurchasable now: entry opens the mode picker
   const activeId = await purchaseToCompleted(10);
   await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
   await dispatch(callbackUpdateAs(`svc:rep:${activeId}`, nextId(), USER));
-  assert.ok(toastsTo().at(-1)?.length, 'toast on blocked entry');
+  const activeState = sqlite
+    .prepare('SELECT state FROM conversation_states WHERE customer_id = ?1')
+    .get(customerIdOf()) as { state: string };
+  assert.equal(activeState.state, 'WAITING_REPURCHASE_MODE', 'active service enters repurchase');
+  await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
   const before = repurchaseRows().length;
 
   // free-test blocked (claims-table authoritative)
@@ -693,16 +701,47 @@ test('missing panel user fails closed: zero POST create, zero DELETE, service un
 
 /* ================= regression: legacy renewal intact ================= */
 
-test('legacy renewal flow + history rows untouched by repurchase', async () => {
+test('retired renewal entry creates nothing; history rows stay readable', async () => {
   const serviceId = await purchaseToCompleted(10);
-  // Legacy renewal entry still works on a non-expired service.
+  const ordersBefore = (sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number }).n;
+  // Legacy renewal entry is retired even though the service is paid.
   await dispatch(messageUpdateAs(USER, '/cancel', nextId()));
   await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), USER));
+  const toast = toastsTo().find((t) => t.includes('حذف شده')) ?? '';
+  assert.ok(toast.length > 0, 'retired notice surfaced');
   await dispatch(callbackUpdateAs('dur:30', nextId(), USER));
   await dispatch(callbackUpdateAs('vol:0', nextId(), USER));
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), USER));
-  const renewal = sqlite.prepare(`SELECT * FROM orders WHERE kind = 'renewal' AND repurchase_mode IS NULL ORDER BY created_at DESC LIMIT 1`).get() as Record<string, unknown>;
-  assert.ok(renewal, 'legacy renewal order created');
+  assert.equal(
+    (sqlite.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number }).n,
+    ordersBefore,
+    'no renewal order from retired UI',
+  );
+  // A historical renewal row (created directly, as in-flight orders exist)
+  // still parses and renders as renewal, distinct from repurchase rows.
+  const { checkoutRenewalOrder } = await import('../src/orders/checkout.ts');
+  const { calculateRenewalPrice } = await import('../src/catalog/pricing.ts');
+  const { newOrderId } = await import('../src/lib/security.ts');
+  const loaded = await loadCatalog(db);
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  const rprice = calculateRenewalPrice(loaded.catalog.pricing, { durationDays: 30 });
+  assert.equal(rprice.ok, true);
+  if (!rprice.ok) return;
+  const created = await checkoutRenewalOrder(
+    db,
+    {
+      customerId: customerIdOf(),
+      orderToken: newOrderId(),
+      catalog: loaded.catalog,
+      breakdown: rprice.breakdown,
+      serviceOrderId: serviceId,
+    },
+    'history-cfg',
+  );
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const renewal = sqlite.prepare(`SELECT * FROM orders WHERE id = ?1`).get(created.order.id) as Record<string, unknown>;
   const snapshot = JSON.parse(String(renewal['selections'])) as Record<string, unknown>;
   assert.equal(snapshot['kind'], 'renewal');
   // Admin rendering distinguishes the two products.

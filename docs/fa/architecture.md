@@ -164,12 +164,13 @@ D1 تنها منبع حقیقت: هویت (`customers`)، اسناد کسب‌و
 | دعوت/کد/پاداش | `src/db/referrals.ts`, `src/lib/referralPayout.ts`, `src/handlers/referrals.ts` |
 | تیکت پشتیبانی | `src/db/support.ts`, `src/handlers/support.ts` |
 | اطلاعیهٔ انبوه | `src/db/announcements.ts`, `src/handlers/announcements.ts` |
-| تمدید (نردبان، اعمال، booking فقط-رو به جلو) | `src/handlers/renewal.ts`, `src/catalog/renewal.ts`, `src/provision/provision.ts` |
+| تمدید (بازنشسته در فاز ۱۹: ورودی UI حذف شد؛ سفارش‌های در جریان تمام می‌شوند) | `src/handlers/renewal.ts`, `src/catalog/renewal.ts`, `src/provision/provision.ts` |
+| خرید مجدد (بازنشانی + پیکربندی همان کاربر برای همهٔ سرویس‌های پولی) | `src/handlers/repurchase.ts`, `src/catalog/repurchase.ts`, `src/provision/provision.ts` |
 | پروژن + کلاینت پنل | `src/provision/provision.ts`, `src/pasarguard/client.ts`, `src/catalog/provisioning.ts` |
 | سرویس‌های من (لیست/جزئیات/غنی‌سازی زنده) | `src/handlers/services.ts` |
 | جاروب یادآور 8C | `src/handlers/paymentReminders.ts`, `src/db/paymentReminders.ts` |
 | جاروب اعلان فاز ۹ | `src/handlers/serviceNotifications.ts`, `src/db/serviceNotifications.ts` |
-| کلید توقف فروش | `src/handlers/salesAdmin.ts`, `src/catalog/sales.ts`, `src/db/sales.ts`, گیت‌ها در `purchase/renewal` + `checkout.ts` |
+| کلید توقف فروش | `src/handlers/salesAdmin.ts`, `src/catalog/sales.ts`, `src/db/sales.ts`, گیت‌ها در `purchase/repurchase` + `checkout.ts` |
 | مرز i18n و باندل‌ها | `src/telegram/i18n.ts`, `texts.ts`, `texts.en.ts` |
 | کیبورد + واژگان callback | `src/telegram/menu.ts` |
 | راهنمای اتصال (ثابت، بدون حالت) | `src/telegram/guide.ts`, `src/handlers/guide.ts` |

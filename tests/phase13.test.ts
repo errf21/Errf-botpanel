@@ -13,9 +13,9 @@
  *  - the CAS writer: 'applied' appends exactly one settings_audit row; a stale
  *    oldJson yields 'conflict' and leaves the winner's document byte-identical.
  *  - the commercial stop blocks EVERY create/extend path (fresh entry, mid-draft
- *    purchase confirmation, wallet full/partial, renewal receipt + wallet) with
+ *    purchase confirmation, wallet full/partial, repurchase receipt + wallet) with
  *    NO order row and NO wallet debit.
- *  - resume restores purchase and renewal on the SAME preserved draft token.
+ *  - resume restores purchase and repurchase on the SAME preserved draft token.
  *  - existing-service management, admin approval of a pre-stop order, support,
  *    wallet/account, guide, language, /start and announcements keep working
  *    while stopped.
@@ -99,6 +99,19 @@ function salesSetRaw(raw: string | null): void {
 }
 function setStopped(stopped: boolean): void {
   salesSetRaw(`{"schema":${SALES_SCHEMA},"stopped":${stopped ? 'true' : 'false'}}`);
+}
+/** Repurchase kill-switch (seeded disabled by 0019): these tests drive the
+ *  repurchase ladder, so they enable it explicitly and self-containedly. */
+function setRepurchaseEnabled(enabled: boolean): void {
+  sqlite
+    .prepare("UPDATE settings SET value = ?1 WHERE key = 'repurchase'")
+    .run(`{"schema":1,"enabled":${enabled ? 'true' : 'false'},"near_expiry_days":7}`);
+}
+/** Repurchase rows share kind='renewal' with history — mode column tells them apart. */
+function repurchasesFor(tgUserId: number): Array<Record<string, unknown>> {
+  return sqlite
+    .prepare('SELECT * FROM orders WHERE customer_id = ?1 AND repurchase_mode IS NOT NULL ORDER BY created_at DESC')
+    .all(String(cidSync(tgUserId))) as never;
 }
 
 function cidSync(tgUserId: number): number {
@@ -491,66 +504,72 @@ test('stop blocks wallet PURCHASES even when the summary was rendered before the
   setStopped(false);
 });
 
-test('stop blocks RENEWALS outright (entry, confirm, wallet) — panel capacity may be exhausted', async () => {
+test('stop blocks REPURCHASES outright (entry, confirm, wallet) — panel capacity may be exhausted', async () => {
   const u = { id: 900000205, first_name: 'Ren', username: 'ren13a', language_code: 'fa' };
+  setRepurchaseEnabled(true);
   await draftToConfirm(u, 'dev:1');
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
   const serviceId = markServiceCompleted(u.id);
   assert.ok(serviceId);
 
-  // the renewal button itself is gone from the detail view while stopped
+  // neither affordance is shown while stopped (renewal never, repurchase gated)
   setStopped(true);
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:det:${serviceId}`, nextId(), u));
   const detailButtons = keyboardButtons(lastKeyboard(u.id));
   assert.equal(
+    detailButtons.some((b) => b.startsWith('svc:rep:')),
+    false,
+    'no repurchase affordance while stopped: ' + detailButtons.join(' '),
+  );
+  assert.equal(
     detailButtons.some((b) => b.startsWith('svc:rnw:')),
     false,
-    'no renew affordance while stopped: ' + detailButtons.join(' '),
+    'no renewal affordance ever: ' + detailButtons.join(' '),
   );
 
-  // forged/racing taps fall to the server-side guard in renewableService:
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
-  assert.ok(sawStoppedNotice(u.id), 'renewal entry refused server-side');
+  // forged/racing taps fall to the server-side repurchase guard:
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'repurchase entry refused server-side');
   assert.equal(sessionState(u.id).state, 'IDLE', 'ladder never entered');
   const orders0 = orderCount();
   assert.equal(ordersFor(u.id, 'purchase').length, 1, 'only the original purchase for this user');
-  assert.equal(ordersFor(u.id, 'renewal').length, 0, 'no renewal while stopped');
+  assert.equal(repurchasesFor(u.id).length, 0, 'no repurchase while stopped');
 
   // a draft built BEFORE the stop cannot be confirmed
   setStopped(false);
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
-  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME');
-  await dispatch(callbackUpdateAs('vol:0', nextId(), u));
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_CONFIRMATION');
-  const renewToken = String(sessionState(u.id).data['order_token']);
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_MODE');
+  await dispatch(callbackUpdateAs('rep:same', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_CONFIRMATION');
+  const repToken = String(sessionState(u.id).data['order_token']);
   setStopped(true);
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
-  assert.equal(orderCount(), orders0, 'no renewal order while stopped');
+  assert.equal(orderCount(), orders0, 'no repurchase order while stopped');
   assert.ok(sawStoppedNotice(u.id));
 
-  // resume: the SAME renewal draft confirms cleanly
+  // resume: the SAME repurchase draft confirms cleanly
   setStopped(false);
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
-  assert.equal(orderCount(), orders0 + 1, 'renewal created on resume');
-  const renewals = ordersFor(u.id, 'renewal');
-  assert.equal(renewals.length, 1);
-  assert.equal(String(sessionState(u.id).data['order_token']), renewToken, 'same draft token');
+  assert.equal(orderCount(), orders0 + 1, 'repurchase created on resume');
+  const repurchases = repurchasesFor(u.id);
+  assert.equal(repurchases.length, 1);
+  assert.equal(String(sessionState(u.id).data['order_token']), repToken, 'same draft token');
 });
 
-test('stop blocks WALLET renewals with zero debits', async () => {
+test('stop blocks WALLET repurchases with zero debits', async () => {
   const u = { id: 900000206, first_name: 'RenW', username: 'renw13', language_code: 'fa' };
+  setRepurchaseEnabled(true);
   await draftToConfirm(u, 'dev:1');
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
   const serviceId = markServiceCompleted(u.id);
   setBalance(u.id, 300000);
   setStopped(false);
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
-  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
-  await dispatch(callbackUpdateAs('vol:0', nextId(), u));
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), u));
+  await dispatch(callbackUpdateAs('rep:same', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_CONFIRMATION');
   const bal0 = balance(u.id);
   const orders0 = orderCount();
   const ledger0 = walletCount();
@@ -559,19 +578,20 @@ test('stop blocks WALLET renewals with zero debits', async () => {
   stub.reset();
   await dispatch(callbackUpdateAs('wlt:full', nextId(), u));
   await dispatch(callbackUpdateAs('wlt:part', nextId(), u));
-  assert.equal(balance(u.id), bal0, 'wallet renewal: no debit');
-  assert.equal(orderCount(), orders0, 'no renewal order');
+  assert.equal(balance(u.id), bal0, 'wallet repurchase: no debit');
+  assert.equal(orderCount(), orders0, 'no repurchase order');
   assert.equal(walletCount(), ledger0, 'no ledger claim');
   assert.ok(sawStoppedNotice(u.id));
 
   setStopped(false);
   await dispatch(callbackUpdateAs('wlt:full', nextId(), u));
-  assert.equal(orderCount(), orders0 + 1, 'wallet renewal works again after resume');
+  assert.equal(orderCount(), orders0 + 1, 'wallet repurchase works again after resume');
   assert.ok(balance(u.id) < bal0);
 });
 
-test('stop blocks renewal dur:* taps mid-draft (preset and skip)', async () => {
+test('stop blocks repurchase dur:* taps mid-draft (state unchanged, zero orders)', async () => {
   const u = { id: 900000207, first_name: 'RenD', username: 'rend13', language_code: 'fa' };
+  setRepurchaseEnabled(true);
   await draftToConfirm(u, 'dev:1');
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
@@ -579,27 +599,31 @@ test('stop blocks renewal dur:* taps mid-draft (preset and skip)', async () => {
   assert.ok(serviceId);
 
   setStopped(false);
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_DURATION');
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_MODE');
+  await dispatch(callbackUpdateAs('rep:custom', nextId(), u));
+  await dispatch(callbackUpdateAs('vol:10', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_DURATION');
   const orders0 = orderCount();
 
   setStopped(true);
   stub.reset();
   await dispatch(callbackUpdateAs('dur:30', nextId(), u));
   assert.ok(sawStoppedNotice(u.id), 'dur preset refused while stopped');
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_DURATION', 'state unchanged');
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_DURATION', 'state unchanged');
   stub.reset();
-  await dispatch(callbackUpdateAs('dur:0', nextId(), u));
-  assert.ok(sawStoppedNotice(u.id), 'dur skip refused while stopped');
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_DURATION', 'state unchanged');
+  await dispatch(callbackUpdateAs('dur:60', nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'second dur preset refused while stopped');
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_DURATION', 'state unchanged');
   assert.equal(orderCount(), orders0, 'zero new orders');
 
   setStopped(false);
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
 });
 
-test('stop blocks renewal vol:* taps mid-draft (preset and skip)', async () => {
+test('stop blocks repurchase vol:* taps mid-draft (state unchanged, zero orders)', async () => {
   const u = { id: 900000208, first_name: 'RenV', username: 'renv13', language_code: 'fa' };
+  setRepurchaseEnabled(true);
   await draftToConfirm(u, 'dev:1');
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
@@ -607,28 +631,29 @@ test('stop blocks renewal vol:* taps mid-draft (preset and skip)', async () => {
   assert.ok(serviceId);
 
   setStopped(false);
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
-  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME');
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), u));
+  await dispatch(callbackUpdateAs('rep:custom', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_VOLUME');
   const orders0 = orderCount();
 
   setStopped(true);
   stub.reset();
   await dispatch(callbackUpdateAs('vol:20', nextId(), u));
   assert.ok(sawStoppedNotice(u.id), 'vol preset refused while stopped');
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME', 'state unchanged');
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_VOLUME', 'state unchanged');
   stub.reset();
-  await dispatch(callbackUpdateAs('vol:0', nextId(), u));
-  assert.ok(sawStoppedNotice(u.id), 'vol skip refused while stopped');
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME', 'state unchanged');
+  await dispatch(callbackUpdateAs('vol:10', nextId(), u));
+  assert.ok(sawStoppedNotice(u.id), 'second vol preset refused while stopped');
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_VOLUME', 'state unchanged');
   assert.equal(orderCount(), orders0, 'zero new orders');
 
   setStopped(false);
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
 });
 
-test('stop blocks renewal custom-volume text mid-draft', async () => {
+test('stop blocks repurchase custom-volume text mid-draft', async () => {
   const u = { id: 900000209, first_name: 'RenC', username: 'renc13', language_code: 'fa' };
+  setRepurchaseEnabled(true);
   await draftToConfirm(u, 'dev:1');
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
@@ -636,24 +661,25 @@ test('stop blocks renewal custom-volume text mid-draft', async () => {
   assert.ok(serviceId);
 
   setStopped(false);
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
-  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME');
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), u));
+  await dispatch(callbackUpdateAs('rep:custom', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_VOLUME');
   const orders0 = orderCount();
 
   setStopped(true);
   stub.reset();
   await dispatch(messageUpdateAs(u, '15', nextId()));
   assert.ok(sawStoppedNotice(u.id), 'custom volume refused while stopped');
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_VOLUME', 'no advance to confirmation');
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_VOLUME', 'no advance to duration');
   assert.equal(orderCount(), orders0, 'zero new orders');
 
   setStopped(false);
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
 });
 
-test('stop blocks volume-bearing renewal confirmation with zero panel writes', async () => {
+test('stop blocks customized repurchase confirmation with zero panel writes', async () => {
   const u = { id: 900000210, first_name: 'RenB', username: 'renb13', language_code: 'fa' };
+  setRepurchaseEnabled(true);
   await draftToConfirm(u, 'dev:1');
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
   await dispatch(messageUpdateAs(u, '/cancel', nextId()));
@@ -661,31 +687,33 @@ test('stop blocks volume-bearing renewal confirmation with zero panel writes', a
   assert.ok(serviceId);
 
   setStopped(false);
-  await dispatch(callbackUpdateAs(`svc:rnw:${serviceId}`, nextId(), u));
-  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  await dispatch(callbackUpdateAs(`svc:rep:${serviceId}`, nextId(), u));
+  await dispatch(callbackUpdateAs('rep:custom', nextId(), u));
   await dispatch(callbackUpdateAs('vol:20', nextId(), u));
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_CONFIRMATION');
-  assert.equal(sessionState(u.id).data['added_volume_gb'], 20, 'volume-bearing draft');
+  await dispatch(callbackUpdateAs('dur:30', nextId(), u));
+  await dispatch(callbackUpdateAs('dev:1', nextId(), u));
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_CONFIRMATION');
+  assert.equal(sessionState(u.id).data['volume_gb'], 20, 'absolute-final draft');
   const orders0 = orderCount();
 
   setStopped(true);
   stub.reset();
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
-  assert.ok(sawStoppedNotice(u.id), 'volume renewal confirm refused while stopped');
+  assert.ok(sawStoppedNotice(u.id), 'custom repurchase confirm refused while stopped');
   assert.equal(orderCount(), orders0, 'zero new orders');
   assert.equal(stub.panel.calls.length, 0, 'zero PasarGuard PUTs');
-  assert.equal(sessionState(u.id).state, 'WAITING_RENEWAL_CONFIRMATION', 'draft preserved');
+  assert.equal(sessionState(u.id).state, 'WAITING_REPURCHASE_CONFIRMATION', 'draft preserved');
 
-  // resume: the SAME volume-bearing draft confirms cleanly
+  // resume: the SAME customized draft confirms cleanly
   setStopped(false);
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), u));
-  assert.equal(orderCount(), orders0 + 1, 'volume renewal created on resume');
-  const renewals = ordersFor(u.id, 'renewal');
-  assert.equal(renewals.length, 1);
+  assert.equal(orderCount(), orders0 + 1, 'custom repurchase created on resume');
+  const repurchases = repurchasesFor(u.id);
+  assert.equal(repurchases.length, 1);
   assert.equal(
-    JSON.parse(String(renewals[0]!['selections']))['added_volume_gb'],
+    JSON.parse(String(repurchases[0]!['selections']))['volume_gb'],
     20,
-    'volume survives the resume',
+    'absolute finals survive the resume',
   );
 });
 
@@ -769,7 +797,8 @@ test('while stopped: services view, detail, subscription page, order history, su
   assert.ok(/panel\.example|باز کردن صفحه سرویس/.test(detail), 'subscription page CTA still present');
   const detailButtons = keyboardButtons(lastKeyboard(u.id));
   assert.ok(detailButtons.some((b) => b.startsWith('svc:ref:')), 'status refresh still present');
-  assert.equal(detailButtons.some((b) => b.startsWith('svc:rnw:')), false, 'renew hidden while commercial creation is stopped');
+  assert.equal(detailButtons.some((b) => b.startsWith('svc:rep:')), false, 'repurchase hidden while commercial creation is stopped');
+  assert.equal(detailButtons.some((b) => b.startsWith('svc:rnw:')), false, 'renewal retired: never shown');
   // "refresh status" is a LIVE read (live=true); with only a stub URL and no
   // panel it re-renders/degrades WITHOUT refusing — the point is the stop did
   // not gate a non-commercial existing-service action. It may edit in place

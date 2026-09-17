@@ -546,20 +546,22 @@ test('P15-10 My Services empty-state CTA, MB detail, hidden-and-refused renewal'
   assert.ok(!String(detail.text).includes('گیگ'), 'no GB unit on a test detail');
   const btns = inlineOf(detail.payload).flat();
   assert.ok(!btns.some((b) => String(b.callback_data ?? '').startsWith('svc:rnw')), 'no renew affordance');
+  assert.ok(!btns.some((b) => String(b.callback_data ?? '').startsWith('svc:rep')), 'no repurchase affordance on tests');
   assert.ok(btns.some((b) => String(b.callback_data ?? '').startsWith('svc:ref')), 'refresh stays');
 
-  // Forged renew tap: server-side guard (claims table) refuses BEFORE any write.
+  // Forged renew tap: renewal is retired product-wide — retired notice, no flow.
   stub.reset();
   await dispatch(callbackUpdateAs(`svc:rnw:${orderId}`, nextId(), user));
   const answers = stub.sent.filter((s) => s.method === 'answerCallbackQuery');
   assert.ok(answers.length >= 1);
   assert.ok(
-    stub.sent.some((s) => String(s.text).includes('قابل تمدید نیست') || (s.payload['text'] ?? '').toString().includes('قابل تمدید نیست')),
-    'renewNotForFreeTest surfaced',
+    stub.sent.some((s) => String(s.text).includes('حذف شده') || (s.payload['text'] ?? '').toString().includes('حذف شده')),
+    'renewRetiredNotice surfaced',
   );
   assert.equal(ordersOf(user.id).length, 1, 'no renewal order was created');
 
-  // A PAID service still shows GB + renew — the class split is complete.
+  // A PAID service still shows GB + repurchase — the class split is complete.
+  sqlite.prepare(`UPDATE settings SET value = '{"schema":1,"enabled":true,"near_expiry_days":7}' WHERE key = 'repurchase'`).run();
   const paid = freshUser();
   await dispatch(messageUpdateAs(paid, '/start', nextId()));
   await dispatch(callbackUpdateAs('menu:buy', nextId(), paid));
@@ -579,8 +581,12 @@ test('P15-10 My Services empty-state CTA, MB detail, hidden-and-refused renewal'
   assert.ok(paidDetail.includes('گیگابایت'), 'paid keeps the GB line');
   assert.ok(!paidDetail.includes('مگابایت'), 'GB detail never leaks MB copy');
   assert.ok(
-    inlineOf(lastSend().payload).flat().some((b) => String(b.callback_data ?? '').startsWith('svc:rnw')),
-    'renew button intact for paid',
+    inlineOf(lastSend().payload).flat().some((b) => String(b.callback_data ?? '').startsWith('svc:rep')),
+    'repurchase button offered for paid',
+  );
+  assert.ok(
+    !inlineOf(lastSend().payload).flat().some((b) => String(b.callback_data ?? '').startsWith('svc:rnw')),
+    'renewal button gone for paid',
   );
 });
 

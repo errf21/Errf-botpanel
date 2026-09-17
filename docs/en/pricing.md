@@ -104,7 +104,7 @@ re-frozen via the canonical render round-trip.
 
 **What it is:** a persistent D1 switch — `settings['sales']` =
 `{"schema":1,"stopped":bool}` (seed `0013`) — for a **temporary commercial
-stop** of paid-service creation: **new purchases and renewals**. Not a
+stop** of paid-service creation: **new purchases and repurchases**. Not a
 maintenance kill of the whole bot.
 
 **Admin surface:** `/sales` shows state (🟢/🛑), last-changer line, a
@@ -119,8 +119,9 @@ customer-facing notice):**
 
 - fresh-buy entry (both transports: reply-keyboard label **and** legacy inline),
 - `ord:confirm` (order button), `wlt:full`, `wlt:part` (wallet paths),
-- every renewal path: entry (`svc:rnw`), duration step, receipt confirm, wallet
-  confirm — and the renew button is hidden on the service screen.
+- every repurchase path: entry (`svc:rep`), mode pick, customize steps,
+  receipt confirm, wallet confirm — and the repurchase entry is hidden on the
+  service screen. (Standalone renewal is retired and has no entry at all.)
 
 **The checkout backstop:** the first statement of both `checkoutOrder` and
 `checkoutRenewalOrder` is `isSalesStopped(db) → 'sales_stopped'` —
@@ -149,15 +150,15 @@ business.)
 no worker memory, survives restarts/redeploys by construction; a toggle is
 immediately visible to every request.
 
-## 6. Renewal pricing behavior
+## 6. Renewal pricing behavior (historical — renewal UI retired in Phase 19)
 
 Renewal re-charges **the same admin duration table** and nothing else
 (volume/users of the existing plan are not re-sold); the renewal's own order
 row carries a duration-only breakdown snapshot (`total = time.price`), so a
 later edit to `duration_prices` never changes placed renewal orders or
-their pending reviews. Renewals are refused while sales are stopped and when
-`renewal.enabled=false` (kill switch) or the renewal doc is malformed
-(fail-closed "unavailable").
+their pending reviews. Already-created renewal orders still finish while sales
+are stopped only through the pre-stop approval path; no NEW renewal order can
+be created (entry retired — repurchase replaced it for every paid service).
 
 ## 7. What admins must do
 

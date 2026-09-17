@@ -235,26 +235,29 @@ test('edit flow: arm → type (Persian digits) → staged → confirm → applie
   assert.equal(fresh.amount, 245000);
   assert.notEqual(fresh.amount, frozenAmount);
 
-  // 7) renewals follow the same live table: edit d2 → 90000; old order frozen
+  // 7) repurchase follows the same live table: enable it, edit d2 → 90000; old order frozen
+  sqlite.prepare(`UPDATE settings SET value = '{"schema":1,"enabled":true,"near_expiry_days":7}' WHERE key = 'repurchase'`).run();
   const svc = sqlite.prepare('SELECT id FROM orders WHERE id = ?1').get(order!.id) as { id: string };
   sqlite.prepare("UPDATE orders SET state = 'completed' WHERE id = ?1").run(svc.id);
   await dispatch(messageUpdate('/start', nextId())); // reset session to IDLE
-  await dispatch(callbackUpdateAs(`svc:rnw:${svc.id}`, nextId(), USER));
+  await dispatch(callbackUpdateAs(`svc:rep:${svc.id}`, nextId(), USER));
+  await dispatch(callbackUpdateAs('rep:custom', nextId(), USER, USER.id));
+  await dispatch(callbackUpdateAs('vol:10', nextId(), USER, USER.id));
   await dispatch(callbackUpdateAs('dur:60', nextId(), USER, USER.id));
-  await dispatch(callbackUpdateAs('vol:0', nextId(), USER, USER.id));
-  const renewSummary = sendTexts(USER.id).at(-1) ?? '';
-  assert.ok(renewSummary.includes('80,000'), 'renewal priced at the live 2-month entry');
+  await dispatch(callbackUpdateAs('dev:1', nextId(), USER, USER.id));
+  const repSummary = sendTexts(USER.id).at(-1) ?? '';
+  assert.ok(repSummary.includes('80,000'), 'repurchase priced at the live 2-month entry');
   await dispatch(callbackUpdateAs('prc:e_d2', nextId(), ADMIN, ADMIN.id));
   await dispatch(messageUpdateAs(ADMIN, '۹۰۰۰۰', nextId()));
   await dispatch(callbackUpdateAs('prc:ok', nextId(), ADMIN, ADMIN.id));
   assert.equal(pricingJson().duration_prices['2'], 90000);
-  const firstRenewal = sqlite.prepare("SELECT id, amount FROM orders WHERE kind='renewal'").get() as
+  const firstRepurchase = sqlite.prepare("SELECT id, amount FROM orders WHERE repurchase_mode IS NOT NULL").get() as
     | { id: string; amount: number }
     | undefined;
-  assert.equal(firstRenewal, undefined, 'no renewal row was confirmed yet');
+  assert.equal(firstRepurchase, undefined, 'no repurchase row was confirmed yet');
   await dispatch(callbackUpdateAs('ord:confirm', nextId(), USER));
   const renewed = sqlite
-    .prepare("SELECT amount FROM orders WHERE kind = 'renewal' ORDER BY created_at DESC LIMIT 1")
+    .prepare("SELECT amount FROM orders WHERE repurchase_mode IS NOT NULL ORDER BY created_at DESC LIMIT 1")
     .get() as { amount: number };
   assert.equal(renewed.amount, 90000, 'fresh re-confirmation priced AFTER the edit');
   assert.equal(order!.amount, frozenAmount, 'the ORIGINAL purchase still 45000-basis');

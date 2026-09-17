@@ -16,9 +16,9 @@
  *  - Keyboard values are never trusted: every tap is re-validated against
  *    the FRESH catalog (acceptVolume/acceptDuration/acceptDevice).
  *  - Ownership, free-test exclusion, panel-deleted exclusion, "one active
- *    repurchase at a time", the repurchase kill switch, Sales Stop and
- *    expired-or-finished eligibility are re-checked at START, at each STEP,
- *    at SUMMARY render and at CONFIRM.
+ *    repurchase at a time", the repurchase kill switch and Sales Stop
+ *    are re-checked at START, at each STEP, at SUMMARY render and at CONFIRM.
+ *    Repurchase applies to EVERY paid service (active or expired/finished).
  *  - Pricing is the NORMAL purchase pricing (calculatePrice) over the finals.
  *  - Confirmation is idempotent (token → checkout): a replay delivers the
  *    same repurchase order, never a second one.
@@ -47,13 +47,11 @@ import {
   findActiveRenewalForService,
   findActiveRepurchaseForService,
   getOwnedService,
-  reconcilePanelGone,
   type OrderRow,
 } from '../db/orders.ts';
 import { isFreeTestOrder } from '../db/freeTest.ts';
 import { provisionOrder } from '../provision/provision.ts';
 import { getOrderById, findOrderByIdempotencyKey } from '../db/orders.ts';
-import { loadPanelConfig, PasarGuardClient } from '../pasarguard/client.ts';
 
 async function getOrderByIdForReplay(db: D1Database, orderId: string) {
   try {
@@ -73,7 +71,6 @@ async function findOrderByIdempotencyKeySoft(db: D1Database, token: string) {
 import {
   loadRepurchaseViewConfig,
   serviceSnapshotData,
-  effectiveExpiryIso,
   expiryDisplay,
   showMyServices,
 } from './services.ts';
@@ -127,18 +124,7 @@ export function prevSpecsLine(specs: PrevSpecs): string {
   return `${specs.volumeGb}GB / ${specs.durationDays}d / ${specs.deviceCount}`;
 }
 
-/**
- * Expired-or-finished eligibility. Expired is decided from the local expiry
- * of record; finished (quota exhausted while unexpired) needs a live panel
- * read and is checked by the guard, not here.
- */
-export function isRepurchaseExpired(service: OrderRow): boolean {
-  const expiry = effectiveExpiryIso(service);
-  if (expiry === null) return false;
-  return Date.parse(expiry) - Date.now() <= 0;
-}
-
-/** Reusable guard: owned paid service + enabled + eligible + none active. */
+/** Reusable guard: owned paid service + enabled + none active. */
 async function repurchasableService(
   ctx: UpdateContext,
   serviceOrderId: string,
@@ -176,45 +162,11 @@ async function repurchasableService(
   if (activeRenewal !== null) {
     return { ok: false, toast: ctx.ui.t.repInProgressNotice(activeRenewal.id.slice(0, 10)) };
   }
-  if (!isRepurchaseExpired(service)) {
-    // Not locally expired: only quota-finished services qualify, proven by a
-    // live panel read (used >= limit). Anything else fails closed here.
-    const finished = await isQuotaFinished(ctx, service);
-    if (finished === 'gone') {
-      return { ok: false, toast: ctx.ui.t.serviceNotFound, clearSession: true };
-    }
-    if (!finished) {
-      return { ok: false, toast: ctx.ui.t.repNotEligible };
-    }
-  }
+  // No expiry/finished requirement: repurchase is the replacement for renewal
+  // on EVERY paid service (active, expiring, expired or finished). Fresh
+  // expiry/duration always starts at repurchase time, so remaining time on an
+  // active service is forfeited by design — stated in the confirm summary.
   return { ok: true, service, prev };
-}
-
-/**
- * Live quota-finished probe for services whose local expiry has not passed.
- * 'gone' = the panel confirmed the user missing (reconciled to panel_deleted
- * by the caller-visible serviceNotFound path); false = healthy/active or
- * unverifiable (fail closed to repNotEligible).
- */
-async function isQuotaFinished(
-  ctx: UpdateContext,
-  service: OrderRow,
-): Promise<boolean | 'gone'> {
-  if (service.pasarguard_username === null) return false;
-  const panel = loadPanelConfig(ctx.env);
-  if (!panel.ok) return false;
-  const result = await new PasarGuardClient(panel.config).getUserByUsername(
-    service.pasarguard_username,
-  );
-  if (result.ok && result.data !== null) {
-    const { usedTraffic, dataLimit } = result.data;
-    return usedTraffic !== null && dataLimit !== null && usedTraffic >= dataLimit;
-  }
-  if (!result.ok && result.kind === 'not_found') {
-    await reconcilePanelGone(ctx.db, service, 'svc-refresh');
-    return 'gone';
-  }
-  return false;
 }
 
 export async function sendRepurchaseModePicker(

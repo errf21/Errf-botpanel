@@ -178,12 +178,13 @@ exposes presence booleans only).
 | Referral codes/attribution/payouts | `src/db/referrals.ts`, `src/catalog/referral.ts`, `src/lib/referralPayout.ts`, `src/handlers/referrals.ts` |
 | Support tickets | `src/db/support.ts`, `src/handlers/support.ts` |
 | Announcements broadcast | `src/db/announcements.ts`, `src/handlers/announcements.ts` |
-| Renewals (ladder, apply, forward-only expiry booking) | `src/handlers/renewal.ts`, `src/catalog/renewal.ts`, `src/db/orders.ts` (`renew_target_unix`, `claimRenewalTarget`), `src/provision/provision.ts` (extend path) |
+| Renewals (RETIRED Phase 19: entry UI removed; in-flight orders still finish) | `src/handlers/renewal.ts`, `src/catalog/renewal.ts`, `src/db/orders.ts` (`renew_target_unix`, `claimRenewalTarget`), `src/provision/provision.ts` (extend path) |
+| Repurchase (same-user reset + reconfigure for every paid service) | `src/handlers/repurchase.ts`, `src/catalog/repurchase.ts`, `src/db/orders.ts` (repurchase claims), `src/provision/provision.ts` (reconfigure path) |
 | Provisioning orchestrator + panel client | `src/provision/provision.ts`, `src/pasarguard/client.ts`, policy `src/catalog/provisioning.ts` |
 | My Services (list/detail, live panel enrich, CTAs) | `src/handlers/services.ts` |
 | 8C reminder sweep | `src/handlers/paymentReminders.ts`, `src/db/paymentReminders.ts` |
 | Phase 9 notification sweep | `src/handlers/serviceNotifications.ts`, `src/db/serviceNotifications.ts` |
-| Sales stop | `src/handlers/salesAdmin.ts`, `src/catalog/sales.ts`, `src/db/sales.ts`, gates `src/handlers/{purchase,renewal}.ts` + backstop `src/orders/checkout.ts` |
+| Sales stop | `src/handlers/salesAdmin.ts`, `src/catalog/sales.ts`, `src/db/sales.ts`, gates `src/handlers/{purchase,repurchase}.ts` + backstop `src/orders/checkout.ts` |
 | i18n boundary + bundles | `src/telegram/i18n.ts`, `texts.ts`, `texts.en.ts`; persistence `0010` |
 | Keyboards + callback vocabulary + reply-keyboard routing | `src/telegram/menu.ts` |
 | Connection guide (static registry, stateless) | `src/telegram/guide.ts`, `src/handlers/guide.ts` |

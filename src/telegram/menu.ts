@@ -170,17 +170,16 @@ export function servicesListKeyboard(
 export function serviceDetailKeyboard(
   ui: Ui,
   orderId: string,
-  opts: { canRenew: boolean; canRepurchase: boolean; serviceUrl: string | null },
+  opts: { canRepurchase: boolean; serviceUrl: string | null },
 ): TelegramInlineKeyboardMarkup {
   const t = ui.t;
   const top: TelegramInlineKeyboardButton[] = [];
-  // Phase 18: eligible expired/finished services offer repurchase (same user)
-  // FIRST, then the unchanged normal purchase flow. Legacy renewal stays as
-  // the fallback for services that are not repurchase-eligible.
+  // Phase 19: repurchase REPLACED renewal for every paid service — the legacy
+  // renewal button is gone from the product. `serviceCallback('rnw', …)`
+  // still parses (validate.ts) so stale keyboards get a retired notice
+  // instead of an invalid-choice dead end.
   if (opts.canRepurchase) {
     top.push(button(t.repEntryButton, serviceCallback('rep', orderId)));
-  } else if (opts.canRenew) {
-    top.push(button(t.btnRenewService, serviceCallback('rnw', orderId)));
   }
   const rows: TelegramInlineKeyboardButton[][] = [
     ...(top.length > 0 ? [top] : []),

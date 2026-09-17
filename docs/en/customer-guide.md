@@ -23,7 +23,7 @@ step (never deletes your orders or services).
 | Button | Purpose |
 | --- | --- |
 | 🛒 Buy a service / خرید سرویس | Start a purchase. |
-| 📦 My Services / سرویس‌های من | Active subscriptions, expiry, traffic, renew. |
+| 📦 My Services / سرویس‌های من | Active subscriptions, expiry, traffic, rebuy. |
 | 💳 My Orders / سفارش‌های من | Order history with state + price. |
 | 👤 Account / حساب کاربری | ID, username, wallet balance summary, language display. |
 | 💰 Wallet / کیف پول | Balance + ledger of movements. |
@@ -76,16 +76,20 @@ a sales stop («🛑») new tests are paused along with purchases.
 
 Each **completed purchase** is a service card: status (active / expiring soon /
 expired), used vs total traffic, valid-until date, config name. Refresh pulls
-live panel data when available (never blocks the list). Buttons: renew
-(duration presets only, charged the same table as buying time — wallet can pay
-too), open the panel service page (the official subscription link), and a
+live panel data when available (never blocks the list). Buttons: rebuy with
+previous specs (same service is reset and reconfigured — quota restored,
+usage zeroed, fresh expiry from rebuy time; or customized finals), buy a new
+service, open the panel service page (the official subscription link), and a
 90%-usage reminder + a single expiry reminder are sent proactively per service.
 
-## Renewal details
+## Repurchase details
 
-Renewing can be done before or after expiry; the new period is added to the
-**later** of (now, current expiry). Same receipt/admin-review pipeline (or
-wallet). Renewals are refused exactly while the store is on sales stop.
+Rebuying works on any paid service, active or expired: the SAME service is
+reset (usage back to zero) and reconfigured to the previous specs or to
+customized finals, priced with the normal purchase table. The new period
+starts at rebuy time. Same receipt/admin-review pipeline (or wallet).
+Repurchases are refused exactly while the store is on sales stop. Standalone
+renewal is retired.
 
 ## Wallet
 

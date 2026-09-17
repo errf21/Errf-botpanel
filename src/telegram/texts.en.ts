@@ -305,6 +305,8 @@ const en: Texts = {
   svcLiveNote: '🖥 Live status from the panel',
 
   renewDisabledNotice: '🔧 Renewals are currently disabled.',
+  renewRetiredNotice:
+    '🔄 Standalone renewal is retired; use "🔄 Rebuy with previous specs" for this same service.',
   renewInProgressNotice: (id: string) =>
     `🔁 There\'s already an open renewal for this service.\n\n🆔 Renewal order: ${id}\n\nTrack its status under "💳 My Orders".`,
   renewIntro: (name: string, expires: string) =>
