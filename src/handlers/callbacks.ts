@@ -40,6 +40,7 @@ import {
 import {
   applyRepurchaseMode,
   applyRepurchaseStepChoice,
+  cancelOwnRepurchase,
   confirmRepurchase,
   confirmRepurchaseWithWallet,
   repurchaseGoBack,
@@ -139,6 +140,13 @@ export async function handleCallback(
       // eligibility and all guards re-checked inside the handler.
       const repSession = await getSession(ctx.db, ctx.customerId);
       await startRepurchase(ctx, repSession, parsed.orderId, callbackQueryId);
+      return;
+    }
+    if (parsed.action === 'cancel') {
+      // Customer self-cancel of their OWN active repurchase for this service.
+      // Ownership + cancellability re-checked inside the handler; a forged
+      // tap addressing another customer's service fails closed.
+      await cancelOwnRepurchase(ctx, parsed.orderId, callbackQueryId);
       return;
     }
     // Phase 19: renewal is RETIRED for every paid service — repurchase
@@ -536,6 +544,12 @@ async function handleAdminCallback(
     return;
   }
   const { action, orderId } = parsed;
+
+  if (action === 'cancel') {
+    const { answerRepurchaseCancel } = await import('./repurchaseAdmin.ts');
+    await answerRepurchaseCancel(ctx, orderId, callbackQueryId, messageChatId, messageId);
+    return;
+  }
 
   if (action === 'rt') {
     // Phase 5: retry provisioning a failed order (admin-gated like the rest).

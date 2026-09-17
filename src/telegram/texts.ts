@@ -38,6 +38,7 @@ export const fa = {
     '/cancel — بازگشت به منو و لغو عملیات جاری',
     '/help — همین پیام',
     '/pending — (مدیران) فیش‌های در انتظار بررسی',
+    '/repurchases — (مدیران) خریدهای مجدد فعال و قفل سرویس',
     '/failed — (مدیران) سفارش‌های ناموفقِ راه‌اندازی/تمدید',
     '/tickets — (مدیران) تیکت‌های باز پشتیبانی',
     '/announce — (مدیران) ارسال اطلاعیه برای همه کاربران',
@@ -346,7 +347,7 @@ export const fa = {
   repNotForFreeTest: '🎁 سرویس تستی قابل خرید مجدد نیست؛ از «🛒 خرید سرویس جدید» یک سرویس کامل بگیر.',
   repNotEligible: 'ℹ️ خرید مجدد فقط برای سرویس‌های منقضی‌شده یا تمام‌شده است.',
   repInProgressNotice: (id: string) =>
-    `🔄 یک درخواست خرید مجدد برای این سرویس باز است.\n\n🆔 سفارش خرید مجدد: ${id}\n\nوضعیت آن را از «💳 سفارش‌های من» پیگیری کنید.`,
+    `🔄 یک خرید مجدد برای این سرویس در حال پردازشه.\n\n🆔 سفارش خرید مجدد: ${id}\n\nتا وقتی این سفارش بازه، خرید مجدد دیگه‌ای نمی‌تونی شروع کنی. وضعیتش رو از «💳 سفارش‌های من» ببین؛ اگه ادمین این سفارش رو لغو کنه، خرید مجدد دوباره برات باز می‌شه.`,
   repModeIntro: (name: string, prev: string) =>
     `🔄 خرید مجدد سرویس «${name}»\n\n📦 مشخصات قبلی: ${prev}\n\nهمان سرویس فعلی بازنشانی و پیکربندی می‌شود؛ سرویس جدیدی ساخته نمی‌شود.`,
   repSummaryHeader: '🧾 خلاصه‌ی خرید مجدد',
@@ -366,7 +367,27 @@ export const fa = {
   notifyApprovedRepurchase: (id: string, amount: string) =>
     `🎉 پرداخت خرید مجدد شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nسرویس فعلی به‌زودی بازنشانی و پیکربندی می‌شود.`,
   ordersKindRepurchase: '(خرید مجدد)',
-  svcPendingRepurchase: (shortId: string) => `🔄 خرید مجدد در جریان: سفارش ${shortId}…`,
+  svcPendingRepurchase: (shortId: string) =>
+    `🔄 خرید مجدد در جریانه: سفارش ${shortId}… تا بازه، خرید مجدد دیگه‌ای شروع نمی‌شه؛ با لغو ادمین دوباره باز می‌شه.`,
+  repCancelButton: '❌ بستن/لغو خرید مجدد',
+  repActiveLine: (id: string, status: string) =>
+    `🔄 خرید مجدد در حال پردازش\n🆔 سفارش: ${id}\n📊 وضعیت: ${status}`,
+  repCancelledDone: (id: string) =>
+    `✅ خرید مجدد لغو شد.\n\n🆔 سفارش: ${id}\n\nحالا می‌تونی دوباره خرید مجدد رو شروع کنی رفیق.`,
+  repCancelBlockedProvisioning:
+    '⚠️ این خرید مجدد وارد مرحله‌ی راه‌اندازی شده و دیگه قابل لغو نیست.\n\nوضعیتش رو از «💳 سفارش‌های من» ببین؛ لازم نیست دوباره پرداخت کنی.',
+  repCancelStale: 'ℹ️ این خرید مجدد قبلاً لغو یا بررسی شده.',
+  adminRepurchaseQueueHeader: '🔄 خریدهای مجدد فعال (قفل سرویس)',
+  adminRepurchaseQueueEmpty: '🎉 خرید مجدد فعالی نیست.',
+  adminRepurchaseEntry: (n: number, id: string, status: string, mode: string, serviceId: string) =>
+    `${n}. 🆔 ${id}\n   ${status} — ${mode}\n   🔒 سرویس: ${serviceId}`,
+  adminRepurchaseCancelledToast: '✅ خرید مجدد لغو شد.',
+  adminRepurchaseCancelStale: 'این خرید مجدد قبلاً لغو یا بررسی شده است.',
+  adminRepurchaseProvisioningBlocked: '⚠️ راه‌اندازی شروع شده؛ لغو امن نیست.',
+  adminRepurchaseLockLine: '🔒 این سفارش قفل خرید مجدد سرویس را نگه داشته است.',
+  adminRepurchaseProvisioningLine: '⚠️ راه‌اندازی شروع شده — لغو امن نیست.',
+  adminRepurchaseCancelledMsg: (id: string, adminId: string) =>
+    `🗑 لغو شد\n🆔 ${id}\nلغوکننده: ${adminId}`,
 
   // ————— Phase 7: wallet + referrals + support + announcements (IRT/Toman) —————
   walletUnavailable: '🔧 کیف پول فعلاً در دسترس نیست رفیق؛ کمی بعد دوباره سر بزن.',

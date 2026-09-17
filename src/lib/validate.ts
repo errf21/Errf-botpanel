@@ -16,13 +16,13 @@ const CALLBACK_DATA_PATTERN = /^[a-z]{2,6}:[a-z0-9][a-z0-9_]{0,23}$/;
  * SEPARATE strict pattern; nothing else in the system may contain uppercase.
  */
 const ORDER_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{28}$/;
-const ADMIN_CALLBACK_PATTERN = /^adm:(ok|no|skip|rt):[0-9A-HJKMNP-TV-Z]{28}$/;
+const ADMIN_CALLBACK_PATTERN = /^adm:(ok|no|skip|rt|cancel):[0-9A-HJKMNP-TV-Z]{28}$/;
 
 /**
  * Phase 6: service callbacks embed a full 28-char order id too, so they get
  * their OWN strict pattern (the generic one caps payloads at 24 chars).
  */
-const SERVICE_CALLBACK_PATTERN = /^svc:(det|ref|rnw|rep):[0-9A-HJKMNP-TV-Z]{28}$/;
+const SERVICE_CALLBACK_PATTERN = /^svc:(det|ref|rnw|rep|cancel):[0-9A-HJKMNP-TV-Z]{28}$/;
 
 /**
  * Phase 7: ticket callbacks carry a full ULID ticket id — like `adm:`/`svc:`,
@@ -118,7 +118,7 @@ export function parsePricingAmount(raw: unknown): number | null {
   return Number.isSafeInteger(num) ? num : null;
 }
 
-export type AdminAction = 'ok' | 'no' | 'skip' | 'rt';
+export type AdminAction = 'ok' | 'no' | 'skip' | 'rt' | 'cancel';
 
 export interface AdminCallback {
   action: AdminAction;
@@ -130,11 +130,11 @@ export function parseAdminCallback(data: string): AdminCallback | null {
   if (!ADMIN_CALLBACK_PATTERN.test(data)) return null;
   const [, action, orderId] = /^adm:(\w+):(.+)$/.exec(data) ?? [];
   if (!orderId || !ORDER_ID_PATTERN.test(orderId)) return null;
-  if (action !== 'ok' && action !== 'no' && action !== 'skip' && action !== 'rt') return null;
+  if (action !== 'ok' && action !== 'no' && action !== 'skip' && action !== 'rt' && action !== 'cancel') return null;
   return { action, orderId };
 }
 
-export type ServiceAction = 'det' | 'ref' | 'rnw' | 'rep';
+export type ServiceAction = 'det' | 'ref' | 'rnw' | 'rep' | 'cancel';
 
 export interface ServiceCallback {
   action: ServiceAction;
@@ -146,7 +146,7 @@ export function parseServiceCallback(data: string): ServiceCallback | null {
   if (!SERVICE_CALLBACK_PATTERN.test(data)) return null;
   const [, action, orderId] = /^svc:(\w+):(.+)$/.exec(data) ?? [];
   if (!orderId || !ORDER_ID_PATTERN.test(orderId)) return null;
-  if (action !== 'det' && action !== 'ref' && action !== 'rnw' && action !== 'rep') return null;
+  if (action !== 'det' && action !== 'ref' && action !== 'rnw' && action !== 'rep' && action !== 'cancel') return null;
   return { action, orderId };
 }
 

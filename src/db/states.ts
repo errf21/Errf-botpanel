@@ -66,3 +66,37 @@ export async function clearSession(
     .bind(customerId)
     .run();
 }
+
+/**
+ * Restore IDLE after a repurchase cancellation WITHOUT clobbering unrelated
+ * or newer work: deletes the session only when it is a repurchase-specific
+ * state, or WAITING_PAYMENT_RECEIPT bound to THIS order id. Returns true when
+ * the session was cleared.
+ */
+export async function clearRepurchaseSessionIfMatches(
+  db: D1Database,
+  customerId: number,
+  orderId: string,
+): Promise<boolean> {
+  const session = await getSession(db, customerId);
+  if (session.state === 'IDLE') return false;
+  const repurchaseStates = new Set([
+    'WAITING_REPURCHASE_MODE',
+    'WAITING_REPURCHASE_VOLUME',
+    'WAITING_REPURCHASE_DURATION',
+    'WAITING_REPURCHASE_DEVICE',
+    'WAITING_REPURCHASE_CONFIRMATION',
+  ]);
+  if (repurchaseStates.has(session.state)) {
+    await clearSession(db, customerId);
+    return true;
+  }
+  if (session.state === 'WAITING_PAYMENT_RECEIPT') {
+    const bound = (session.data as Record<string, unknown>)['order_id'];
+    if (bound === orderId) {
+      await clearSession(db, customerId);
+      return true;
+    }
+  }
+  return false;
+}

@@ -3,6 +3,7 @@ import { clearSession } from '../db/states.ts';
 import { mainMenuKeyboard } from '../telegram/menu.ts';
 import { showPendingQueue } from './payment.ts';
 import { showFailedQueue } from './provisioning.ts';
+import { showActiveRepurchases } from './repurchaseAdmin.ts';
 import { captureReferralOnStart, notifyReferralJoined } from './referrals.ts';
 import { handleWalletAdminCommand } from './wallet.ts';
 import { showTopupQueue } from './topup.ts';
@@ -85,6 +86,13 @@ export async function handleCommand(
         await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
       } else {
         await showFailedQueue(ctx);
+      }
+      return;
+    case 'repurchases':
+      if (!ctx.isAdmin) {
+        await ctx.api.sendMessage(ctx.chatId, t.cmdAdminOnly);
+      } else {
+        await showActiveRepurchases(ctx);
       }
       return;
     case 'tickets':

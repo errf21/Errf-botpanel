@@ -822,6 +822,170 @@ export async function bookRenewalOnService(
 export const ACTIVE_REPURCHASE_STATES =
   "('pending_payment','awaiting_review','approved','provisioning')";
 
+/**
+ * Repurchase admin/customer cancellation allow-list. `provisioning` is NEVER
+ * cancellable (blind cancel forbidden); `completed`/`rejected`/`cancelled`
+ * are terminal and converge as idempotent/no-op. `failed` is included ONLY
+ * to release stale/edge-case rows — the cancel path performs ZERO panel
+ * mutations, so a failed row with provisioning signals still refuses.
+ */
+export const CANCELLABLE_REPURCHASE_STATES: readonly string[] = [
+  'pending_payment',
+  'awaiting_review',
+  'approved',
+  'failed',
+];
+
+/** True when the state alone is eligible for repurchase cancellation. */
+export function isRepurchaseCancellableState(state: string): boolean {
+  return CANCELLABLE_REPURCHASE_STATES.includes(state);
+}
+
+/**
+ * True when repurchase provisioning has started or a PasarGuard mutation may
+ * already have happened: any claimed absolute target, the reset flag, a
+ * provisioning attempt, or the `provisioning` state itself. Cancel must
+ * refuse when this is true — use retry/adopt recovery instead.
+ */
+export function isRepurchaseProvisioningStarted(order: OrderRow): boolean {
+  if (order.state === 'provisioning') return true;
+  if (
+    order.repurchase_target_quota_bytes !== null ||
+    order.repurchase_target_unix !== null ||
+    order.repurchase_target_hwid !== null
+  ) {
+    return true;
+  }
+  if (typeof order.repurchase_reset_done === 'number' && order.repurchase_reset_done === 1) {
+    return true;
+  }
+  if (order.provision_attempts > 0) return true;
+  return false;
+}
+
+/** Active (lock-holding) repurchases with customer contact, newest last. */
+export async function listActiveRepurchases(
+  db: D1Database,
+  limit: number,
+): Promise<QueueRow[]> {
+  try {
+    const result = await db
+      .prepare(
+        `SELECT o.*, c.telegram_user_id, c.telegram_username,
+                (SELECT MAX(e.created_at) FROM order_events e
+                  WHERE e.order_id = o.id AND e.action IN ('receipt_uploaded','receipt_replaced')
+                ) AS receipt_uploaded_at
+           FROM orders o
+           JOIN customers c ON c.id = o.customer_id
+          WHERE o.kind = 'renewal' AND o.repurchase_mode IS NOT NULL
+            AND o.state IN ${ACTIVE_REPURCHASE_STATES}
+          ORDER BY o.created_at DESC
+          LIMIT ?1`,
+      )
+      .bind(limit)
+      .all<QueueRow>();
+    return result.results;
+  } catch {
+    return []; // pre-0019 schema: repurchases cannot exist
+  }
+}
+
+export type RepurchaseCancelOutcome =
+  | { ok: true; order: OrderRow; alreadyCancelled: boolean; fromState: string }
+  | {
+      ok: false;
+      error: 'not_found' | 'not_repurchasable' | 'provisioning_started' | 'state_changed';
+    };
+
+/**
+ * Safe repurchase cancellation: repurchase rows in a cancellable pre-provision
+ * state → `cancelled`. Guarded single UPDATE claims the transition (double
+ * taps/retries collapse into `alreadyCancelled`), then one audit event is
+ * appended. Performs ZERO PasarGuard calls — provisioning-started rows
+ * refuse with `provisioning_started`. History rows stay in D1 forever.
+ */
+export async function cancelRepurchaseOrder(
+  db: D1Database,
+  opts: { orderId: string; actorTag: string; reason: string | null },
+): Promise<RepurchaseCancelOutcome> {
+  const before = await getOrderById(db, opts.orderId);
+  if (!before) return { ok: false, error: 'not_found' };
+  if (before.kind !== 'renewal' || before.repurchase_mode === null) {
+    return { ok: false, error: 'not_repurchasable' };
+  }
+  if (before.state === 'cancelled') {
+    return { ok: true, order: before, alreadyCancelled: true, fromState: 'cancelled' };
+  }
+  // Provisioning itself is never cancellable — report it as such (not a
+  // generic state change) so the UI can explain the recovery path.
+  if (before.state === 'provisioning') {
+    return { ok: false, error: 'provisioning_started' };
+  }
+  if (!isRepurchaseCancellableState(before.state)) {
+    return { ok: false, error: 'state_changed' };
+  }
+  if (isRepurchaseProvisioningStarted(before)) {
+    return { ok: false, error: 'provisioning_started' };
+  }
+
+  const reason = opts.reason === null ? null : opts.reason.slice(0, 200);
+  let updated: unknown;
+  try {
+    updated = await db
+      .prepare(
+        `UPDATE orders
+            SET state = 'cancelled',
+                verified_by = ?3,
+                verified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                failure_reason = COALESCE(?4, failure_reason),
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = ?1 AND kind = 'renewal' AND repurchase_mode IS NOT NULL
+            AND state IN ('pending_payment','awaiting_review','approved','failed')
+            AND repurchase_target_quota_bytes IS NULL
+            AND repurchase_target_unix IS NULL
+            AND repurchase_target_hwid IS NULL
+            AND repurchase_reset_done = 0`,
+      )
+      .bind(opts.orderId, before.state, opts.actorTag.slice(0, 64), reason)
+      .run();
+  } catch {
+    return { ok: false, error: 'state_changed' };
+  }
+  if (changeCount(updated) === 0) {
+    const fresh = await getOrderById(db, opts.orderId);
+    if (!fresh) return { ok: false, error: 'not_found' };
+    if (fresh.state === 'cancelled') {
+      return { ok: true, order: fresh, alreadyCancelled: true, fromState: before.state };
+    }
+    if (fresh.kind !== 'renewal' || fresh.repurchase_mode === null) {
+      return { ok: false, error: 'not_repurchasable' };
+    }
+    if (isRepurchaseProvisioningStarted(fresh) || fresh.state === 'provisioning') {
+      return { ok: false, error: 'provisioning_started' };
+    }
+    return { ok: false, error: 'state_changed' };
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
+       VALUES (?1, ?2, 'repurchase_cancelled', ?3, 'cancelled', ?4)`,
+    )
+    .bind(
+      opts.orderId,
+      opts.actorTag.slice(0, 64),
+      before.state,
+      reason === null
+        ? JSON.stringify({ via: 'repurchase_cancel' })
+        : JSON.stringify({ reason }),
+    )
+    .run();
+
+  const after = await getOrderById(db, opts.orderId);
+  if (!after) return { ok: false, error: 'not_found' };
+  return { ok: true, order: after, alreadyCancelled: false, fromState: before.state };
+}
+
 /** In-flight repurchase for a service (blocks starting a second one). */
 export async function findActiveRepurchaseForService(
   db: D1Database,

@@ -50,6 +50,7 @@ const en: Texts = {
     '/cancel — return to the menu and cancel the current operation',
     '/help — this message',
     '/pending — (admins) receipts awaiting review',
+    '/repurchases — (admins) active repurchases and service locks',
     '/failed — (admins) orders with failed setup/renewal',
     '/tickets — (admins) open support tickets',
     '/announce — (admins) send an announcement to all users',
@@ -348,7 +349,7 @@ const en: Texts = {
   repNotForFreeTest: '🎁 Test services cannot be rebought — pick a full service from "Buy a new service".',
   repNotEligible: 'ℹ️ Rebuying is only available for expired or finished services.',
   repInProgressNotice: (id: string) =>
-    `🔄 There\'s already an open repurchase for this service.\n\n🆔 Repurchase order: ${id}\n\nTrack its status under "Orders".`,
+    `🔄 A repurchase for this service is being processed.\n\n🆔 Repurchase order: ${id}\n\nWhile it is open you cannot start another one. Track it under "Orders"; if an admin cancels it, repurchase becomes available again.`,
   repModeIntro: (name: string, prev: string) =>
     `🔄 Rebuy service "${name}"\n\n📦 Previous specs: ${prev}\n\nThe same current service will be reset and reconfigured; no new service is created.`,
   repSummaryHeader: '🧾 Repurchase summary',
@@ -368,7 +369,27 @@ const en: Texts = {
   notifyApprovedRepurchase: (id: string, amount: string) =>
     `🎉 Your repurchase payment is confirmed!\n\n🆔 Order: ${id}\n💰 Amount: ${amount}\n\nThe current service will be reset and reconfigured shortly.`,
   ordersKindRepurchase: '(repurchase)',
-  svcPendingRepurchase: (shortId: string) => `🔄 Repurchase in progress: order ${shortId}…`,
+  svcPendingRepurchase: (shortId: string) =>
+    `🔄 Repurchase in progress: order ${shortId}… While open, no new repurchase can start; an admin cancel reopens it.`,
+  repCancelButton: '❌ Close/cancel repurchase',
+  repActiveLine: (id: string, status: string) =>
+    `🔄 Repurchase in progress\n🆔 Order: ${id}\n📊 Status: ${status}`,
+  repCancelledDone: (id: string) =>
+    `✅ Repurchase cancelled.\n\n🆔 Order: ${id}\n\nYou can start a repurchase again.`,
+  repCancelBlockedProvisioning:
+    '⚠️ This repurchase has entered provisioning and can no longer be cancelled.\n\nCheck its status under "Orders"; you do NOT need to pay again.',
+  repCancelStale: 'ℹ️ This repurchase was already cancelled or reviewed.',
+  adminRepurchaseQueueHeader: '🔄 Active repurchases (service lock)',
+  adminRepurchaseQueueEmpty: '🎉 No active repurchases.',
+  adminRepurchaseEntry: (n: number, id: string, status: string, mode: string, serviceId: string) =>
+    `${n}. 🆔 ${id}\n   ${status} — ${mode}\n   🔒 Service: ${serviceId}`,
+  adminRepurchaseCancelledToast: '✅ Repurchase cancelled.',
+  adminRepurchaseCancelStale: 'This repurchase was already cancelled or reviewed.',
+  adminRepurchaseProvisioningBlocked: '⚠️ Provisioning started; safe cancel is blocked.',
+  adminRepurchaseLockLine: '🔒 This order currently holds the service repurchase lock.',
+  adminRepurchaseProvisioningLine: '⚠️ Provisioning started — unsafe to cancel.',
+  adminRepurchaseCancelledMsg: (id: string, adminId: string) =>
+    `🗑 Cancelled\n🆔 ${id}\nBy: ${adminId}`,
 
   // ————— Phase 7: wallet + referrals + support + announcements (IRT/Toman) —————
   walletUnavailable: '🔧 The wallet isn\'t available at the moment. Please try again shortly.',

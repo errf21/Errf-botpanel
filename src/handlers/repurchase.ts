@@ -768,3 +768,57 @@ export const REPURCHASE_TEXT_STATE_KIND: Record<string, 'volume' | 'duration' | 
   WAITING_REPURCHASE_DURATION: 'duration',
   WAITING_REPURCHASE_DEVICE: 'device',
 };
+
+/**
+ * Customer self-cancel of their OWN active repurchase (`svc:cancel:` carries
+ * the SERVICE id, never the repurchase id). Ownership is enforced by
+ * getOwnedService; the lock holder is re-resolved server-side, so a forged
+ * tap can only ever address the caller's own service. Uses the SAME shared
+ * idempotent core as the admin path (guarded D1 claim, exactly-once wallet
+ * refund, conditional session restore, zero PasarGuard calls).
+ */
+export async function cancelOwnRepurchase(
+  ctx: UpdateContext,
+  serviceOrderId: string,
+  callbackQueryId: string,
+): Promise<void> {
+  const { performRepurchaseCancel } = await import('../admin.ts');
+  const { isRepurchaseProvisioningStarted } = await import('../db/orders.ts');
+  const service = await getOwnedService(ctx.db, ctx.customerId, serviceOrderId);
+  if (!service) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.serviceNotFound, true);
+    return;
+  }
+  const active = await findActiveRepurchaseForService(ctx.db, service.id);
+  if (!active || active.customer_id !== ctx.customerId) {
+    await ctx.api.answerCallbackQuery(callbackQueryId, ctx.ui.t.repCancelStale, true);
+    return;
+  }
+  if (isRepurchaseProvisioningStarted(active)) {
+    await ctx.api.answerCallbackQuery(
+      callbackQueryId,
+      ctx.ui.t.repCancelBlockedProvisioning,
+      true,
+    );
+    return;
+  }
+  const result = await performRepurchaseCancel({
+    db: ctx.db,
+    api: ctx.api,
+    actorTag: `customer:${String(ctx.actor.id)}`,
+    orderId: active.id,
+    reason: 'customer cancelled repurchase',
+  });
+  if (!result.ok) {
+    const toast =
+      result.error === 'provisioning_started'
+        ? ctx.ui.t.repCancelBlockedProvisioning
+        : ctx.ui.t.repCancelStale;
+    await ctx.api.answerCallbackQuery(callbackQueryId, toast, true);
+    return;
+  }
+  await ctx.api.answerCallbackQuery(
+    callbackQueryId,
+    result.alreadyCancelled ? ctx.ui.t.repCancelStale : ctx.ui.t.repCancelledDone(active.id),
+  );
+}

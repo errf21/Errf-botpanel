@@ -74,7 +74,7 @@ export const CB = {
  * no `ui` parameter, so a mis-routed or forged tap can never localize them.
  */
 export function adminCallback(
-  action: 'ok' | 'no' | 'skip' | 'rt',
+  action: 'ok' | 'no' | 'skip' | 'rt' | 'cancel',
   orderId: string,
 ): string {
   return `adm:${action}:${orderId}`;
@@ -85,6 +85,36 @@ export function adminReceiptKeyboard(orderId: string): TelegramInlineKeyboardMar
     inline_keyboard: [
       [button('✅ تأیید پرداخت', adminCallback('ok', orderId)), button('❌ رد', adminCallback('no', orderId))],
     ],
+  };
+}
+
+/* ———— Repurchase lock management ————
+ * Reuses the `adm:` namespace (strict parser in validate.ts); the cancel
+ * action addresses ONLY repurchase rows server-side (guarded by
+ * cancelRepurchaseOrder). Labels stay literal Persian (admin surface rule).
+ */
+export function adminRepurchaseReceiptKeyboard(
+  orderId: string,
+  cancellable: boolean,
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardButton[][] = [
+    [button('✅ تأیید پرداخت', adminCallback('ok', orderId)), button('❌ رد', adminCallback('no', orderId))],
+  ];
+  if (cancellable) {
+    rows.push([button('🗑 لغو خرید مجدد', adminCallback('cancel', orderId))]);
+  }
+  return { inline_keyboard: rows };
+}
+
+export function adminRepurchaseQueueKeyboard(
+  entries: Array<{ orderId: string; cancellable: boolean }>,
+): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: entries.map((entry) =>
+      entry.cancellable
+        ? [button(`🗑 ${entry.orderId.slice(0, 10)}…`, adminCallback('cancel', entry.orderId))]
+        : [button(`ℹ️ ${entry.orderId.slice(0, 10)}…`, adminCallback('rt', entry.orderId))],
+    ),
   };
 }
 
@@ -143,7 +173,7 @@ export function failedQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardM
  * exactly like `adm:` — produced ONLY here, consumed ONLY by
  * `parseServiceCallback()`, and every action re-checks ownership server-side.
  */
-export type ServiceAction = 'det' | 'ref' | 'rnw' | 'rep';
+export type ServiceAction = 'det' | 'ref' | 'rnw' | 'rep' | 'cancel';
 
 export function serviceCallback(action: ServiceAction, orderId: string): string {
   return `svc:${action}:${orderId}`;
@@ -170,7 +200,7 @@ export function servicesListKeyboard(
 export function serviceDetailKeyboard(
   ui: Ui,
   orderId: string,
-  opts: { canRepurchase: boolean; serviceUrl: string | null },
+  opts: { canRepurchase: boolean; serviceUrl: string | null; canCancelRepurchase?: boolean },
 ): TelegramInlineKeyboardMarkup {
   const t = ui.t;
   const top: TelegramInlineKeyboardButton[] = [];
@@ -184,6 +214,9 @@ export function serviceDetailKeyboard(
   const rows: TelegramInlineKeyboardButton[][] = [
     ...(top.length > 0 ? [top] : []),
     ...(opts.canRepurchase ? [[button(t.repBuyNewButton, CB.MENU_BUY)]] : []),
+    ...(opts.canCancelRepurchase === true
+      ? [[button(t.repCancelButton, serviceCallback('cancel', orderId))]]
+      : []),
     ...(opts.serviceUrl !== null ? [[urlButton(t.svcOpenPage, opts.serviceUrl)]] : []),
     [button(t.btnRefreshStatus, serviceCallback('ref', orderId))],
     [button(t.menuServices, CB.MENU_SERVICES)],

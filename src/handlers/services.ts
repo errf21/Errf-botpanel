@@ -306,8 +306,26 @@ async function renderServiceDetail(
   if (active !== null && active.repurchase_mode == null) {
     lines.push(t.svcPendingRenewal(active.id.slice(0, 10)));
   }
+  // Own active repurchase: show order ID + current status, and offer a safe
+  // self-cancel ONLY while provisioning has not started (ownership already
+  // enforced by getOwnedService — a customer never sees another's order).
+  let canCancelRepurchase = false;
   if (activeRepurchase !== null) {
     lines.push(t.svcPendingRepurchase(activeRepurchase.id.slice(0, 10)));
+    lines.push(t.repActiveLine(activeRepurchase.id, t.orderStatus(activeRepurchase.state)));
+    const started =
+      activeRepurchase.state === 'provisioning' ||
+      activeRepurchase.repurchase_target_quota_bytes !== null ||
+      activeRepurchase.repurchase_target_unix !== null ||
+      activeRepurchase.repurchase_target_hwid !== null ||
+      activeRepurchase.repurchase_reset_done === 1 ||
+      activeRepurchase.provision_attempts > 0;
+    canCancelRepurchase =
+      !started &&
+      (activeRepurchase.state === 'pending_payment' ||
+        activeRepurchase.state === 'awaiting_review' ||
+        activeRepurchase.state === 'approved' ||
+        activeRepurchase.state === 'failed');
   }
   if (attemptedPanel && !panelGone) {
     lines.push(panelUser !== null ? t.svcLiveNote : t.svcSnapshotNote);
@@ -329,6 +347,7 @@ async function renderServiceDetail(
     keyboard: serviceDetailKeyboard(ctx.ui, service.id, {
       canRepurchase,
       serviceUrl: panelGone ? null : service.subscription_url,
+      canCancelRepurchase,
     }),
     live: panelUser !== null,
     parseMode: asHtml ? 'HTML' : undefined,

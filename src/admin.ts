@@ -10,17 +10,20 @@ import {
   isAdminUserId,
   resolveAdminChatIds,
 } from './db/customers.ts';
-import { clearSession } from './db/states.ts';
+import { clearRepurchaseSessionIfMatches, clearSession } from './db/states.ts';
 import {
   approveOrderByAdmin,
+  cancelRepurchaseOrder,
   getOrderById,
+  isRepurchaseProvisioningStarted,
   rejectOrderByAdmin,
   type OrderRow,
 } from './db/orders.ts';
+import { refundOrderWalletPayment } from './db/wallet.ts';
 import { provisionOrder } from './provision/provision.ts';
 import { payReferrerIfDue } from './lib/referralPayout.ts';
 import { isValidOrderId, type ReceiptMedia } from './lib/validate.ts';
-import { adminReceiptKeyboard } from './telegram/menu.ts';
+import { adminReceiptKeyboard, adminRepurchaseReceiptKeyboard } from './telegram/menu.ts';
 import { fa, faAdmin } from './telegram/texts.ts';
 import { FA_UI, uiFor } from './telegram/i18n.ts';
 
@@ -93,6 +96,7 @@ export function orderSummaryLines(order: OrderRow): string[] {
     }
     if (typeof devices === 'number') lines.push(fa.summaryDevices(devices));
     if (typeof cfgName === 'string') lines.push(fa.summaryName(cfgName));
+    lines.push(...repurchaseAdminDetailLines(order));
     return lines;
   }
   if (order.kind === 'renewal') {
@@ -133,6 +137,35 @@ export function orderSummaryLines(order: OrderRow): string[] {
 }
 
 /**
+ * Admin-visible repurchase lock detail: order id, mode, status, creation,
+ * payment and provisioning state, plus an explicit lock-holder line.
+ * Reuses the existing `cancelled`-safe vocabulary — no new order status.
+ */
+export function repurchaseAdminDetailLines(order: OrderRow): string[] {
+  const mode = order.repurchase_mode === 'custom' ? 'custom' : order.repurchase_mode === 'same' ? 'same' : '—';
+  const lines = [
+    `🔄 حالت خرید مجدد: ${mode}`,
+    `📊 وضعیت: ${FA_UI.t.orderStatus(order.state)}`,
+    `🕒 ثبت: ${order.created_at.slice(0, 19)}`,
+    `💳 پرداخت: ${FA_UI.f.price(order.amount, order.currency)}${order.verified_by ? ` (${order.verified_by})` : ''}`,
+    `⚙️ تلاش راه‌اندازی: ${order.provision_attempts}`,
+  ];
+  const started = isRepurchaseProvisioningStarted(order);
+  if (started) {
+    lines.push(fa.adminRepurchaseProvisioningLine);
+  } else if (order.state === 'pending_payment' || order.state === 'awaiting_review' || order.state === 'approved') {
+    lines.push(fa.adminRepurchaseLockLine);
+  }
+  return lines;
+}
+
+/** True when the order is a repurchase row (kind + snapshot marker). */
+export function isRepurchaseOrder(order: OrderRow): boolean {
+  if (order.kind !== 'renewal' || order.repurchase_mode === null) return false;
+  return parseSnapshot(order)['kind'] === 'repurchase';
+}
+
+/**
  * Forward a receipt (photo/document) to every admin chat with review buttons.
  * Returns whether at least one admin was reached (DB state is already
  * committed regardless — the queue command is the recovery path).
@@ -154,12 +187,22 @@ export async function forwardReceiptToAdmins(
   ];
   if (order.payment_reference) lines.push(fa.paymentReferenceLine(order.payment_reference));
   const caption = lines.join('\n').slice(0, 1000);
+  const repurchase = isRepurchaseOrder(order);
+  const cancellable =
+    repurchase &&
+    (order.state === 'pending_payment' ||
+      order.state === 'awaiting_review' ||
+      order.state === 'approved') &&
+    !isRepurchaseProvisioningStarted(order);
   let delivered = false;
   for (const chatId of chatIds) {
+    const keyboard = repurchase
+      ? adminRepurchaseReceiptKeyboard(order.id, cancellable)
+      : adminReceiptKeyboard(order.id);
     const send =
       receipt.kind === 'document'
-        ? api.sendDocument(chatId, receipt.fileId, caption, adminReceiptKeyboard(order.id))
-        : api.sendPhoto(chatId, receipt.fileId, caption, adminReceiptKeyboard(order.id));
+        ? api.sendDocument(chatId, receipt.fileId, caption, keyboard)
+        : api.sendPhoto(chatId, receipt.fileId, caption, keyboard);
     // Truthy means Telegram accepted the send (boolean or Message).
     if (await send) delivered = true;
   }
@@ -295,6 +338,93 @@ async function notifyWalletRefunded(
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
   const ui = uiFor(contact?.language);
   await api.sendMessage(chatId, ui.t.notifyWalletRefunded(order.id, ui.f.price(creditIrt, 'IRT')));
+}
+
+export type RepurchaseCancelResult =
+  | { ok: true; order: OrderRow; alreadyCancelled: boolean; refunded: boolean }
+  | {
+      ok: false;
+      error:
+        | 'invalid_id'
+        | 'not_found'
+        | 'not_repurchasable'
+        | 'provisioning_started'
+        | 'state_changed';
+    };
+
+/**
+ * Shared idempotent repurchase-cancellation core (admin + customer paths).
+ * Claim is transaction-safe via cancelRepurchaseOrder's guarded UPDATE;
+ * wallet refund reuses refundOrderWalletPayment (exactly-once claim row);
+ * session restore is conditional (never clobbers unrelated/newer state);
+ * ZERO PasarGuard calls happen here. History rows stay in D1.
+ */
+export async function performRepurchaseCancel(opts: {
+  db: D1Database;
+  api: TelegramApiLike;
+  actorTag: string;
+  orderId: string;
+  reason?: string | null;
+  notifyCustomer?: boolean;
+}): Promise<RepurchaseCancelResult> {
+  if (!isValidOrderId(opts.orderId)) return { ok: false, error: 'invalid_id' };
+  const result = await cancelRepurchaseOrder(opts.db, {
+    orderId: opts.orderId,
+    actorTag: opts.actorTag,
+    reason: opts.reason ?? null,
+  });
+  if (!result.ok) return result;
+
+  const order = result.order;
+  // Wallet safety: refund exactly once when the order carried a wallet
+  // payment (full or partial). No-op for manual-only orders. The claim-row
+  // inside refundOrderWalletPayment makes double taps/retries converge.
+  let refunded = false;
+  try {
+    refunded = await refundOrderWalletPayment(opts.db, {
+      customerId: order.customer_id,
+      orderId: order.id,
+      actor: opts.actorTag,
+    });
+  } catch {
+    refunded = false;
+  }
+
+  // Release the conversation lock only when it is still this repurchase flow.
+  await clearRepurchaseSessionIfMatches(opts.db, order.customer_id, order.id).catch(
+    () => undefined,
+  );
+
+  if (opts.notifyCustomer !== false) {
+    await notifyCustomerOfRepurchaseCancel(opts.db, opts.api, order, refunded).catch(
+      () => undefined,
+    );
+  }
+  return { ok: true, order, alreadyCancelled: result.alreadyCancelled, refunded };
+}
+
+/** Customer notice for a cancelled repurchase (recipient-localized). */
+async function notifyCustomerOfRepurchaseCancel(
+  db: D1Database,
+  api: TelegramApiLike,
+  order: OrderRow,
+  refunded: boolean,
+): Promise<void> {
+  const contact = await getCustomerContact(db, order.customer_id);
+  if (!contact) return;
+  const chatId = Number(contact.telegram_user_id);
+  if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
+  const ui = uiFor(contact.language);
+  await api.sendMessage(chatId, ui.t.repCancelledDone(order.id));
+  if (refunded) {
+    const credit = walletCreditFromOrder(order);
+    if (credit > 0) {
+      await api.sendMessage(
+        chatId,
+        ui.t.notifyWalletRefunded(order.id, ui.f.price(credit, 'IRT')),
+      );
+    }
+  }
 }
 
 /**

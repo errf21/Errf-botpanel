@@ -176,7 +176,9 @@ export async function showMyOrders(ctx: UpdateContext): Promise<void> {
 }
 
 /** `/pending` — recovery view onto the awaiting_review queue, with buttons.
- *  Admin-only surface: always Persian (Phase 10 policy). */
+ *  Admin-only surface: always Persian (Phase 10 policy).
+ *  Repurchase rows carry an explicit lock-holder line pointing at
+ *  `/repurchases` for safe cancellation (same guarded core). */
 export async function showPendingQueue(ctx: UpdateContext): Promise<void> {
   const rows = await listOrdersAwaitingReview(ctx.db, PENDING_QUEUE_LIMIT);
   if (rows.length === 0) {
@@ -197,6 +199,9 @@ export async function showPendingQueue(ctx: UpdateContext): Promise<void> {
         uploader,
       ),
     );
+    if (row.kind === 'renewal' && row.repurchase_mode !== null) {
+      lines.push(`   ${fa.adminRepurchaseLockLine} (/repurchases)`);
+    }
   });
   await ctx.api.sendMessage(
     ctx.chatId,
