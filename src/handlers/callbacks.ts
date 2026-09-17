@@ -39,6 +39,14 @@ import {
   startRenewal,
 } from './renewal.ts';
 import {
+  applyRepurchaseMode,
+  applyRepurchaseStepChoice,
+  confirmRepurchase,
+  confirmRepurchaseWithWallet,
+  repurchaseGoBack,
+  startRepurchase,
+} from './repurchase.ts';
+import {
   STEP_EXPECTED_STATE,
   applyStepChoice,
   confirmPurchase,
@@ -125,6 +133,13 @@ export async function handleCallback(
     }
     if (parsed.action === 'ref') {
       await refreshOwnedService(ctx, callbackQueryId, parsed.orderId, messageChatId, messageId);
+      return;
+    }
+    if (parsed.action === 'rep') {
+      // Phase 18: repurchase entry (same-user reset/reconfigure). Ownership,
+      // eligibility and all guards re-checked inside the handler.
+      const repSession = await getSession(ctx.db, ctx.customerId);
+      await startRepurchase(ctx, repSession, parsed.orderId, callbackQueryId);
       return;
     }
     const renewSession = await getSession(ctx.db, ctx.customerId);
@@ -228,6 +243,21 @@ export async function handleCallback(
 
   const route = routeCallback(data);
 
+  // ———— Phase 18: repurchase mode picker (fixed literals, exact match) ————
+  if (data === 'rep:same' || data === 'rep:custom') {
+    if (session.state !== 'WAITING_REPURCHASE_MODE') {
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.staleChoice, true);
+      return;
+    }
+    const loaded = await loadCatalog(ctx.db);
+    if (!loaded.ok) {
+      await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
+      return;
+    }
+    await applyRepurchaseMode(ctx, session, loaded.catalog, data === 'rep:same' ? 'same' : 'custom', callbackQueryId);
+    return;
+  }
+
   // ———— catalog-driven option steps (vol:/dur:/dev:) ————
   if (route.kind === 'option') {
     const kind: StepKind =
@@ -263,6 +293,29 @@ export async function handleCallback(
         return;
       }
       await applyRenewalVolume(ctx, session, loaded.catalog, route.value, callbackQueryId);
+      return;
+    }
+
+    // Phase 18: repurchase customize steps reuse the SAME `vol:`/`dur:`/`dev:`
+    // vocabulary with the purchase validators; the session state alone
+    // decides which tap belongs to what. Typed custom numbers arrive via
+    // handleText (the `custom` tap itself only hints).
+    if (
+      (kind === 'volume' && session.state === 'WAITING_REPURCHASE_VOLUME') ||
+      (kind === 'duration' && session.state === 'WAITING_REPURCHASE_DURATION') ||
+      (kind === 'device' && session.state === 'WAITING_REPURCHASE_DEVICE')
+    ) {
+      const loaded = await loadCatalog(ctx.db);
+      if (!loaded.ok) {
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
+        return;
+      }
+      if (route.value === 'custom') {
+        await ctx.api.answerCallbackQuery(callbackQueryId, t.customHint, true);
+        return;
+      }
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await applyRepurchaseStepChoice(ctx, session, loaded.catalog, kind, route.value);
       return;
     }
 
@@ -344,6 +397,8 @@ export async function handleCallback(
         await ctx.api.answerCallbackQuery(callbackQueryId, t.catalogUnavailable, true);
         return;
       }
+      // Phase 18 repurchase ladder backs out first, then renewal, then purchase.
+      if (await repurchaseGoBack(ctx, session, loaded.catalog, callbackQueryId) === 'handled') return;
       // Phase 6: renewal confirmation steps back into the duration ladder.
       if (await renewalGoBack(ctx, session, loaded.catalog, callbackQueryId) === 'handled') return;
       await goBack(ctx, session, loaded.catalog, callbackQueryId);
@@ -358,6 +413,10 @@ export async function handleCallback(
       }
       if (session.state === 'WAITING_RENEWAL_CONFIRMATION') {
         await confirmRenewal(ctx, session, loaded.catalog, callbackQueryId);
+        return;
+      }
+      if (session.state === 'WAITING_REPURCHASE_CONFIRMATION') {
+        await confirmRepurchase(ctx, session, loaded.catalog, callbackQueryId);
         return;
       }
       await confirmPurchase(ctx, session, loaded.catalog, callbackQueryId);
@@ -416,6 +475,16 @@ export async function handleCallback(
         }
         await ctx.api.answerCallbackQuery(callbackQueryId);
         await confirmRenewalWithWallet(ctx, session, loaded.catalog, walletMode, callbackQueryId);
+        return;
+      }
+      // Phase 18 repurchase confirmation owns the same wallet taps.
+      if (session.state === 'WAITING_REPURCHASE_CONFIRMATION') {
+        if (typeof session.data['order_token'] !== 'string') {
+          await ctx.api.answerCallbackQuery(callbackQueryId, t.staleChoice, true);
+          return;
+        }
+        await ctx.api.answerCallbackQuery(callbackQueryId);
+        await confirmRepurchaseWithWallet(ctx, session, loaded.catalog, walletMode, callbackQueryId);
         return;
       }
       if (

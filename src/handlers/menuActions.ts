@@ -29,6 +29,7 @@ import { showInvite } from './referrals.ts';
 import { openSupportEntry, showDirectSupport } from './support.ts';
 import { openGuide } from './guide.ts';
 import { resumeRenewal } from './renewal.ts';
+import { resumeRepurchase } from './repurchase.ts';
 import { sendSummary, stepView } from './purchase.ts';
 
 /** The nine main-menu shortcuts (every keyboard button except the language
@@ -79,6 +80,14 @@ async function startPurchase(ctx: UpdateContext, session: Session): Promise<void
       session.state === 'WAITING_RENEWAL_CONFIRMATION'
     ) {
       await resumeRenewal(ctx, session, loaded.catalog);
+    } else if (
+      session.state === 'WAITING_REPURCHASE_MODE' ||
+      session.state === 'WAITING_REPURCHASE_VOLUME' ||
+      session.state === 'WAITING_REPURCHASE_DURATION' ||
+      session.state === 'WAITING_REPURCHASE_DEVICE' ||
+      session.state === 'WAITING_REPURCHASE_CONFIRMATION'
+    ) {
+      await resumeRepurchase(ctx, session, loaded.catalog);
     } else {
       const view = stepView(ctx.ui, session.state, loaded.catalog);
       if (view) await ctx.api.sendMessage(ctx.chatId, view.text, view.keyboard);

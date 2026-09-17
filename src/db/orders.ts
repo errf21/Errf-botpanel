@@ -27,6 +27,21 @@ export interface OrderRow {
   renew_target_unix: number | null;
   /** Claimed absolute panel quota target (bytes) for volume add-ons; null = none. */
   renew_target_data_limit_bytes: number | null;
+  /**
+   * Phase 18 repurchase: 'same' = original specs, 'custom' = selected finals,
+   * NULL = purchase or historical renewal. Repurchase rows reuse
+   * kind='renewal' (the kind CHECK is frozen — see migration 0019) and are
+   * distinguished by this column plus snapshot.kind='repurchase'.
+   */
+  repurchase_mode: string | null;
+  /** Claimed ABSOLUTE final panel quota target (bytes) for a repurchase. */
+  repurchase_target_quota_bytes: number | null;
+  /** Claimed ABSOLUTE fresh expiry target (unix seconds) for a repurchase. */
+  repurchase_target_unix: number | null;
+  /** Claimed final HWID/device limit for a repurchase. */
+  repurchase_target_hwid: number | null;
+  /** 1 once POST .../by-username/{u}/reset was issued for this repurchase. */
+  repurchase_reset_done: number | null;
   provision_attempts: number;
   failure_reason: string | null;
   created_at: string;
@@ -52,6 +67,12 @@ export interface NewOrderFields {
   kind?: 'purchase' | 'renewal';
   /** Phase 6: service (purchase order) a renewal extends. */
   renewsOrderId?: string | null;
+  /**
+   * Phase 18: 'same' | 'custom' marks a REPURCHASE row (stored with
+   * kind='renewal' — see OrderRow.repurchase_mode). Undefined/null =
+   * historical renewal or purchase.
+   */
+  repurchaseMode?: 'same' | 'custom' | null;
   /** Phase 7: wallet-funded orders are born 'approved' (no receipt, no queue). */
   initialState?: 'pending_payment' | 'approved';
   /** Phase 7: 'wallet' when the order was paid from the balance. */
@@ -64,33 +85,58 @@ export async function insertOrderWithEvent(
   db: D1Database,
   order: NewOrderFields,
 ): Promise<void> {
-  const initial = order.initialState ?? 'pending_payment';
+  const initialState = order.initialState ?? 'pending_payment';
   const createdEvent =
-    order.initialEvent ?? (initial === 'approved' ? 'order_created_wallet_paid' : 'order_created');
+    order.initialEvent ?? (initialState === 'approved' ? 'order_created_wallet_paid' : 'order_created');
+  // Phase 18: the repurchase_mode column exists only on databases at/after
+  // migration 0019. Legacy purchase/renewal inserts keep the EXACT pre-0019
+  // shape so they work on old and new schemas alike; repurchase inserts (new
+  // feature, kill-switched until 0019 lands) fail closed on old schemas.
+  const orderInsert =
+    order.repurchaseMode === undefined || order.repurchaseMode === null
+      ? db
+          .prepare(
+            `INSERT INTO orders (id, customer_id, state, kind, selections, amount, currency, idempotency_key, renews_order_id, verified_by, verified_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, CASE WHEN ?3 = 'approved' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END)`,
+          )
+          .bind(
+            order.id,
+            order.customerId,
+            initialState,
+            order.kind ?? 'purchase',
+            order.selections,
+            order.amount,
+            order.currency,
+            order.idempotencyKey,
+            order.renewsOrderId ?? null,
+            order.verifiedBy ?? null,
+          )
+      : db
+          .prepare(
+            `INSERT INTO orders (id, customer_id, state, kind, selections, amount, currency, idempotency_key, renews_order_id, repurchase_mode, verified_by, verified_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CASE WHEN ?3 = 'approved' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END)`,
+          )
+          .bind(
+            order.id,
+            order.customerId,
+            initialState,
+            order.kind ?? 'purchase',
+            order.selections,
+            order.amount,
+            order.currency,
+            order.idempotencyKey,
+            order.renewsOrderId ?? null,
+            order.repurchaseMode,
+            order.verifiedBy ?? null,
+          );
   await db.batch([
-    db
-      .prepare(
-        `INSERT INTO orders (id, customer_id, state, kind, selections, amount, currency, idempotency_key, renews_order_id, verified_by, verified_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, CASE WHEN ?3 = 'approved' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE NULL END)`,
-      )
-      .bind(
-        order.id,
-        order.customerId,
-        initial,
-        order.kind ?? 'purchase',
-        order.selections,
-        order.amount,
-        order.currency,
-        order.idempotencyKey,
-        order.renewsOrderId ?? null,
-        order.verifiedBy ?? null,
-      ),
+    orderInsert,
     db
       .prepare(
         `INSERT INTO order_events (order_id, actor, action, to_state, data)
          VALUES (?1, 'customer', ?2, ?3, ?4)`,
       )
-      .bind(order.id, createdEvent, initial, JSON.stringify({ idempotency_key: order.idempotencyKey })),
+      .bind(order.id, createdEvent, initialState, JSON.stringify({ idempotency_key: order.idempotencyKey })),
   ]);
 }
 
@@ -755,6 +801,255 @@ export async function bookRenewalOnService(
     .bind(
       opts.serviceOrderId,
       JSON.stringify({ renewal_order_id: opts.renewalOrderId, expires_at: opts.expiresIso }),
+    )
+    .run();
+  return true;
+}
+
+/* —— Phase 18: repurchase (same-user reset/reconfigure) ———————————————
+ * A repurchase row reconfigures an EXISTING service: it reuses kind='renewal'
+ * (the kind CHECK is frozen — see migration 0019) and is distinguished by
+ * repurchase_mode ('same' | 'custom') plus snapshot.kind='repurchase'.
+ * Targets are ABSOLUTE finals (quota bytes, expiry unix, hwid cap) claimed
+ * BEFORE any panel mutation; retries adopt the stored values. The reset flag
+ * records that POST .../reset was issued; the panel GET (used_traffic == 0)
+ * is the authoritative proof. All helpers fail closed on pre-0019 schemas
+ * (missing columns → state_changed/null) so legacy databases never half-run
+ * a repurchase.
+ */
+
+/** States of a repurchase order that still "occupy" the service (one at a time). */
+export const ACTIVE_REPURCHASE_STATES =
+  "('pending_payment','awaiting_review','approved','provisioning')";
+
+/** In-flight repurchase for a service (blocks starting a second one). */
+export async function findActiveRepurchaseForService(
+  db: D1Database,
+  serviceOrderId: string,
+): Promise<OrderRow | null> {
+  try {
+    return await db
+      .prepare(
+        `SELECT * FROM orders
+          WHERE renews_order_id = ?1 AND kind = 'renewal' AND repurchase_mode IS NOT NULL
+            AND state IN ${ACTIVE_REPURCHASE_STATES}
+          ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(serviceOrderId)
+      .first<OrderRow>();
+  } catch {
+    return null; // pre-0019 schema: repurchases cannot exist — nothing active
+  }
+}
+
+export type RepurchaseClaimOutcome =
+  | { ok: true; value: number }
+  | { ok: false; error: 'not_found' | 'state_changed' };
+
+/**
+ * Claim one ABSOLUTE repurchase target on the order BEFORE the panel write.
+ * First writer wins; losers adopt the stored value so retries converge and
+ * can never stack quota/expiry/hwids or double-reset.
+ */
+async function claimRepurchaseColumn(
+  db: D1Database,
+  opts: { orderId: string; column: string; value: number },
+): Promise<RepurchaseClaimOutcome> {
+  const allowed = new Set([
+    'repurchase_target_quota_bytes',
+    'repurchase_target_unix',
+    'repurchase_target_hwid',
+  ]);
+  if (!allowed.has(opts.column)) return { ok: false, error: 'state_changed' };
+  let updated: unknown;
+  try {
+    updated = await db
+      .prepare(
+        `UPDATE orders
+            SET ${opts.column} = ?2,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = ?1 AND kind = 'renewal' AND repurchase_mode IS NOT NULL
+            AND state = 'provisioning' AND ${opts.column} IS NULL`,
+      )
+      .bind(opts.orderId, opts.value)
+      .run();
+  } catch {
+    // Column missing on databases predating the 0019 migration: fail closed.
+    return { ok: false, error: 'state_changed' };
+  }
+  if (changeCount(updated) > 0) return { ok: true, value: opts.value };
+  let fresh: OrderRow | null = null;
+  try {
+    fresh = await getOrderById(db, opts.orderId);
+  } catch {
+    return { ok: false, error: 'not_found' };
+  }
+  if (!fresh) return { ok: false, error: 'not_found' };
+  if (fresh.state !== 'provisioning') return { ok: false, error: 'state_changed' };
+  const stored = (fresh as unknown as Record<string, unknown>)[opts.column];
+  return typeof stored === 'number' && Number.isSafeInteger(stored)
+    ? { ok: true, value: stored }
+    : { ok: false, error: 'state_changed' };
+}
+
+export function claimRepurchaseQuotaTarget(
+  db: D1Database,
+  opts: { orderId: string; quotaBytes: number },
+): Promise<RepurchaseClaimOutcome> {
+  return claimRepurchaseColumn(db, { ...opts, column: 'repurchase_target_quota_bytes', value: opts.quotaBytes });
+}
+
+export function claimRepurchaseExpiryTarget(
+  db: D1Database,
+  opts: { orderId: string; targetUnix: number },
+): Promise<RepurchaseClaimOutcome> {
+  return claimRepurchaseColumn(db, { ...opts, column: 'repurchase_target_unix', value: opts.targetUnix });
+}
+
+export function claimRepurchaseHwidTarget(
+  db: D1Database,
+  opts: { orderId: string; hwid: number },
+): Promise<RepurchaseClaimOutcome> {
+  return claimRepurchaseColumn(db, { ...opts, column: 'repurchase_target_hwid', value: opts.hwid });
+}
+
+export function claimRepurchaseReset(
+  db: D1Database,
+  opts: { orderId: string },
+): Promise<{ ok: true; issued: boolean } | { ok: false; error: 'not_found' | 'state_changed' }> {
+  return (async () => {
+    // The flag defaults to 0 (migration 0019), so the claim is a 0 → 1 flip —
+    // not an IS NULL claim like the absolute targets above. The winner issues
+    // exactly one POST .../reset; losers adopt and verify via GET instead.
+    let updated: unknown;
+    try {
+      updated = await db
+        .prepare(
+          `UPDATE orders
+              SET repurchase_reset_done = 1,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND kind = 'renewal' AND repurchase_mode IS NOT NULL
+              AND state = 'provisioning' AND repurchase_reset_done = 0`,
+        )
+        .bind(opts.orderId)
+        .run();
+    } catch {
+      // Column missing on databases predating the 0019 migration: fail closed.
+      return { ok: false, error: 'state_changed' } as const;
+    }
+    if (changeCount(updated) > 0) return { ok: true, issued: true } as const;
+    const fresh = await getOrderById(db, opts.orderId);
+    if (!fresh) return { ok: false, error: 'not_found' } as const;
+    if (fresh.state !== 'provisioning') return { ok: false, error: 'state_changed' } as const;
+    return fresh.repurchase_reset_done === 1
+      ? ({ ok: true, issued: false } as const)
+      : ({ ok: false, error: 'state_changed' } as const);
+  })();
+}
+
+/**
+ * provisioning → completed for a REPURCHASE order. Deliberately does NOT
+ * touch pasarguard_username / pasarguard_user_id: those belong to the service
+ * (purchase) order and one service links exactly one owner row (UNIQUE guard
+ * from 0001 — writing the same user id here would collide). The CURRENT
+ * subscription URL (which may rotate on reset) IS refreshed, since the URL
+ * is not identity. The fresh expiry is booked onto the SERVICE row via
+ * bookRepurchaseOnService.
+ */
+export async function completeRepurchasedOrder(
+  db: D1Database,
+  opts: {
+    orderId: string;
+    targetUnix: number;
+    quotaBytes: number;
+    hwid: number;
+    /** Current subscription URL (audit event only — never a column write). */
+    subscriptionUrl: string | null;
+  },
+): Promise<ProvisionFinalizeOutcome> {
+  let updated: unknown;
+  try {
+    updated = await db
+      .prepare(
+        `UPDATE orders
+            SET state = 'completed',
+                failure_reason = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = ?1 AND state = 'provisioning' AND kind = 'renewal' AND repurchase_mode IS NOT NULL`,
+      )
+      .bind(opts.orderId)
+      .run();
+  } catch {
+    return { ok: false, error: 'state_changed' };
+  }
+  if (changeCount(updated) === 0) {
+    const fresh = await getOrderById(db, opts.orderId);
+    return fresh ? { ok: false, error: 'state_changed' } : { ok: false, error: 'not_found' };
+  }
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
+       VALUES (?1, 'system', 'repurchase_succeeded', 'provisioning', 'completed', ?2)`,
+    )
+    .bind(
+      opts.orderId,
+      JSON.stringify({
+        new_target_unix: opts.targetUnix,
+        new_quota_bytes: opts.quotaBytes,
+        new_hwid: opts.hwid,
+        subscription_url: opts.subscriptionUrl,
+      }),
+    )
+    .run();
+  const after = await getOrderById(db, opts.orderId);
+  if (!after) return { ok: false, error: 'not_found' };
+  return { ok: true, order: after };
+}
+
+/**
+ * Book a completed repurchase on its service row: refresh the local expiry
+ * (forward-only — a late/parallel write can never shorten it), refresh the
+ * CURRENT subscription URL (it may rotate on reset; URL is not identity),
+ * and attach a `service_repurchased` audit event pointing at the repurchase
+ * order. The service row keeps its username/user history untouched.
+ */
+export async function bookRepurchaseOnService(
+  db: D1Database,
+  opts: {
+    serviceOrderId: string;
+    repurchaseOrderId: string;
+    expiresIso: string;
+    subscriptionUrl: string | null;
+  },
+): Promise<boolean> {
+  const current = await getOrderById(db, opts.serviceOrderId);
+  if (!current || current.kind !== 'purchase') return false;
+  const updated = await db
+    .prepare(
+      `UPDATE orders
+          SET service_expires_at = CASE
+                WHEN service_expires_at IS NULL OR service_expires_at < ?2 THEN ?2
+                ELSE service_expires_at
+              END,
+              subscription_url = COALESCE(?3, subscription_url),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?1 AND kind = 'purchase' AND state = 'completed'`,
+    )
+    .bind(opts.serviceOrderId, opts.expiresIso, opts.subscriptionUrl)
+    .run();
+  if (changeCount(updated) === 0) return current.service_expires_at !== null;
+  await db
+    .prepare(
+      `INSERT INTO order_events (order_id, actor, action, data)
+       VALUES (?1, 'system', 'service_repurchased', ?2)`,
+    )
+    .bind(
+      opts.serviceOrderId,
+      JSON.stringify({
+        repurchase_order_id: opts.repurchaseOrderId,
+        expires_at: opts.expiresIso,
+        subscription_url: opts.subscriptionUrl,
+      }),
     )
     .run();
   return true;

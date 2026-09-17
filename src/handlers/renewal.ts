@@ -27,7 +27,7 @@ import { checkoutRenewalOrder } from '../orders/checkout.ts';
 import { newOrderId } from '../lib/security.ts';
 import { isValidOrderId, parsePositiveInt } from '../lib/validate.ts';
 import { setSession, clearSession } from '../db/states.ts';
-import { findActiveRenewalForService, getOwnedService } from '../db/orders.ts';
+import { findActiveRenewalForService, findActiveRepurchaseForService, getOwnedService } from '../db/orders.ts';
 import type { OrderRow } from '../db/orders.ts';
 import { isFreeTestOrder } from '../db/freeTest.ts';
 import { provisionOrder } from '../provision/provision.ts';
@@ -90,6 +90,13 @@ async function renewableService(
   const active = await findActiveRenewalForService(ctx.db, service.id);
   if (active !== null) {
     return { ok: false, toast: ctx.ui.t.renewInProgressNotice(active.id.slice(0, 10)) };
+  }
+  // Phase 18 cross-guard: one lifecycle operation at a time — an in-flight
+  // repurchase blocks a new renewal (and vice versa in repurchase.ts).
+  // Tolerant of pre-0019 schemas (finder returns null there).
+  const activeRepurchase = await findActiveRepurchaseForService(ctx.db, service.id);
+  if (activeRepurchase !== null) {
+    return { ok: false, toast: ctx.ui.t.repInProgressNotice(activeRepurchase.id.slice(0, 10)) };
   }
   return { ok: true, service };
 }

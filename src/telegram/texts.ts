@@ -335,6 +335,37 @@ export const fa = {
     `🎉 پرداخت تمدید شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nتمدید به‌زودی روی سرویس اعمال می‌شود.`,
   ordersKindRenewal: '(تمدید)',
 
+  // ————— Phase 18: repurchase with previous specifications (same user) —————
+  repEntryButton: '🔄 خرید سرویس با مشخصات قبلی',
+  repBuyNewButton: '🛒 خرید سرویس جدید',
+  repModeSame: '🔄 خرید با همان مشخصات قبلی',
+  repModeCustom: '⚙️ شخصی‌سازی و خرید مجدد',
+  repDisabledNotice: '🔧 امکان خرید مجدد فعلاً غیرفعال است.',
+  repNotForFreeTest: '🎁 سرویس تستی قابل خرید مجدد نیست؛ از «🛒 خرید سرویس جدید» یک سرویس کامل بگیر.',
+  repNotEligible: 'ℹ️ خرید مجدد فقط برای سرویس‌های منقضی‌شده یا تمام‌شده است.',
+  repInProgressNotice: (id: string) =>
+    `🔄 یک درخواست خرید مجدد برای این سرویس باز است.\n\n🆔 سفارش خرید مجدد: ${id}\n\nوضعیت آن را از «💳 سفارش‌های من» پیگیری کنید.`,
+  repModeIntro: (name: string, prev: string) =>
+    `🔄 خرید مجدد سرویس «${name}»\n\n📦 مشخصات قبلی: ${prev}\n\nهمان سرویس فعلی بازنشانی و پیکربندی می‌شود؛ سرویس جدیدی ساخته نمی‌شود.`,
+  repSummaryHeader: '🧾 خلاصه‌ی خرید مجدد',
+  repSummaryService: (name: string) => `📦 سرویس: «${name}»`,
+  repSummaryReuse:
+    '♻️ همین سرویس فعلی استفاده می‌شود: مصرف صفر، سهمیه و انقضا تازه، لینک اتصال بدون تغییر باقی می‌ماند.',
+  repSummaryFreshCycle: '🆕 چرخه‌ی جدید از لحظه‌ی فعال‌سازی شروع می‌شود.',
+  repConfirmed: (id: string) =>
+    `✅ درخواست خرید مجدد ثبت شد!\n\n🆔 کد: ${id}\n\n👇 اطلاعات واریز رو توی پیام بعدی می‌فرستم.`,
+  repApplied: (id: string, expiresDate: string) =>
+    `🎉 سرویس شما با موفقیت خرید مجدد شد!\n\n🆔 سفارش: ${id}\n📅 انقضای جدید: ${expiresDate}\n\nمصرف صفر شد و مشخصات تازه اعمال شد. از «📦 سرویس‌های من» می‌توانید وضعیت را ببینید.`,
+  repFailedNotice: (id: string) =>
+    `⚠️ خرید مجدد سرویسِ این سفارش چند بار به مشکل خورد.\n\n🆔 سفارش: ${id}\n\nبچه‌ها در جریانی و دارن پیگیری می‌کنن؛ لازم نیست دوباره پرداخت کنی.`,
+  adminRepurchaseFailed: (id: string, reason: string) =>
+    `⚠️ خرید مجدد سرویس ناموفق بود\n🆔 ${id}\n📝 ${reason.slice(0, 200)}\n\nبا دکمه‌ی زیر می‌توانید دوباره تلاش کنید (تا سقف مجاز).`,
+  adminRepurchaseKind: (serviceId: string) => `🔄 خرید مجدد سرویس ${serviceId}`,
+  notifyApprovedRepurchase: (id: string, amount: string) =>
+    `🎉 پرداخت خرید مجدد شما تأیید شد!\n\n🆔 سفارش: ${id}\n💰 مبلغ: ${amount}\n\nسرویس فعلی به‌زودی بازنشانی و پیکربندی می‌شود.`,
+  ordersKindRepurchase: '(خرید مجدد)',
+  svcPendingRepurchase: (shortId: string) => `🔄 خرید مجدد در جریان: سفارش ${shortId}…`,
+
   // ————— Phase 7: wallet + referrals + support + announcements (IRT/Toman) —————
   walletUnavailable: '🔧 کیف پول فعلاً در دسترس نیست رفیق؛ کمی بعد دوباره سر بزن.',
   walletHeader: '💰 کیف پول شما',
@@ -369,6 +400,10 @@ export const fa = {
   walletPartialCreated: (id: string, used: string, rest: string) =>
     `✅ ثبت شد — ${used} از کیف پول کم شد.\n\n🆔 کد: ${id}\n💳 مانده قابل واریز: ${rest}\n\n👇 اطلاعات واریز رو توی پیام بعدی می‌فرستم.`,
   walletPartialRenewal: (id: string, used: string, rest: string) =>
+    `✅ ثبت شد — ${used} از کیف پول کم شد.\n\n🆔 کد: ${id}\n💳 مانده قابل واریز: ${rest}\n\n👇 اطلاعات واریز رو توی پیام بعدی می‌فرستم.`,
+  walletPaidRepurchase: (id: string, used: string) =>
+    `🎉 خرید مجدد شما همون لحظه از کیف پول پرداخت شد!\n\n🆔 سفارش: ${id}\n👛 از کیف پول: ${used}\n\nسرویس فعلی به‌زودی بازنشانی و پیکربندی می‌شه.`,
+  walletPartialRepurchase: (id: string, used: string, rest: string) =>
     `✅ ثبت شد — ${used} از کیف پول کم شد.\n\n🆔 کد: ${id}\n💳 مانده قابل واریز: ${rest}\n\n👇 اطلاعات واریز رو توی پیام بعدی می‌فرستم.`,
   notifyWalletRefunded: (id: string, amount: string) =>
     `ℹ️ مبلغ ${amount} از سفارشِ رد‌شده به کیف پول شما بازگشت.\n\n🆔 سفارش: ${id}`,

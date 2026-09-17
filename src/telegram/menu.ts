@@ -143,7 +143,7 @@ export function failedQueueKeyboard(orderIds: string[]): TelegramInlineKeyboardM
  * exactly like `adm:` — produced ONLY here, consumed ONLY by
  * `parseServiceCallback()`, and every action re-checks ownership server-side.
  */
-export type ServiceAction = 'det' | 'ref' | 'rnw';
+export type ServiceAction = 'det' | 'ref' | 'rnw' | 'rep';
 
 export function serviceCallback(action: ServiceAction, orderId: string): string {
   return `svc:${action}:${orderId}`;
@@ -170,19 +170,41 @@ export function servicesListKeyboard(
 export function serviceDetailKeyboard(
   ui: Ui,
   orderId: string,
-  opts: { canRenew: boolean; serviceUrl: string | null },
+  opts: { canRenew: boolean; canRepurchase: boolean; serviceUrl: string | null },
 ): TelegramInlineKeyboardMarkup {
   const t = ui.t;
   const top: TelegramInlineKeyboardButton[] = [];
-  if (opts.canRenew) top.push(button(t.btnRenewService, serviceCallback('rnw', orderId)));
+  // Phase 18: eligible expired/finished services offer repurchase (same user)
+  // FIRST, then the unchanged normal purchase flow. Legacy renewal stays as
+  // the fallback for services that are not repurchase-eligible.
+  if (opts.canRepurchase) {
+    top.push(button(t.repEntryButton, serviceCallback('rep', orderId)));
+  } else if (opts.canRenew) {
+    top.push(button(t.btnRenewService, serviceCallback('rnw', orderId)));
+  }
   const rows: TelegramInlineKeyboardButton[][] = [
     ...(top.length > 0 ? [top] : []),
+    ...(opts.canRepurchase ? [[button(t.repBuyNewButton, CB.MENU_BUY)]] : []),
     ...(opts.serviceUrl !== null ? [[urlButton(t.svcOpenPage, opts.serviceUrl)]] : []),
     [button(t.btnRefreshStatus, serviceCallback('ref', orderId))],
     [button(t.menuServices, CB.MENU_SERVICES)],
     [button(t.backToMenu, CB.ACT_BACK_MENU)],
   ];
   return { inline_keyboard: rows };
+}
+
+/**
+ * Phase 18: repurchase mode picker — same previous specs vs customize.
+ * Values are fixed literals (validated by exact match in the handler).
+ */
+export function repurchaseModeKeyboard(ui: Ui): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [button(ui.t.repModeSame, 'rep:same')],
+      [button(ui.t.repModeCustom, 'rep:custom')],
+      [button(ui.t.btnCancelInline, CB.ACT_CANCEL)],
+    ],
+  };
 }
 
 /**

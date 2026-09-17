@@ -205,3 +205,92 @@ export interface RenewalCheckoutDraft {
   /** The completed purchase order (service) being extended. */
   serviceOrderId: string;
 }
+
+/**
+ * Phase 18 repurchase draft. The breakdown is a NORMAL purchase breakdown
+ * (calculatePrice) over the FINAL specs — original specs for mode 'same',
+ * user-selected finals for mode 'custom'. The service row itself is touched
+ * ONLY after the panel reconfiguration succeeds (provisioning books it).
+ */
+export interface RepurchaseCheckoutDraft {
+  customerId: number;
+  orderToken: string;
+  catalog: Catalog;
+  breakdown: PriceBreakdown;
+  /** The completed purchase order (service) being reconfigured. */
+  serviceOrderId: string;
+  mode: 'same' | 'custom';
+}
+
+/** Snapshot written to a repurchase order's `selections` column. Immutable
+ *  once the order exists: provisioning reads ONLY this snapshot (plus the
+ *  claimed D1 targets), so later UI/catalog changes cannot alter the finals.
+ */
+export function buildRepurchaseSnapshot(
+  draft: RepurchaseCheckoutDraft,
+  serviceConfigName: string,
+  wallet?: WalletPlan,
+): string {
+  return JSON.stringify({
+    schema: 1,
+    kind: 'repurchase',
+    mode: draft.mode,
+    repurchases_order_id: draft.serviceOrderId,
+    renews_order_id: draft.serviceOrderId,
+    config_name: serviceConfigName,
+    volume_gb: draft.breakdown.volume_gb,
+    duration_days: draft.breakdown.duration_days,
+    device_count: draft.breakdown.device_count,
+    price: draft.breakdown,
+    limits: catalogLimits(draft.catalog),
+    ...(wallet ? { wallet: { mode: wallet.mode, credit_irt: wallet.creditIrt } } : {}),
+  });
+}
+
+/**
+ * Repurchase sibling of checkoutOrder/checkoutRenewalOrder: IDENTICAL
+ * idempotency guarantees (token → partial UNIQUE index → race-winner
+ * re-read). Stored with kind='renewal' + repurchase_mode (the kind CHECK is
+ * frozen — see migration 0019); the snapshot kind 'repurchase' + mode is the
+ * product identity. Sales-stop backstop is unbypassable, same as the others.
+ */
+export async function checkoutRepurchaseOrder(
+  db: D1Database,
+  draft: RepurchaseCheckoutDraft,
+  serviceConfigName: string,
+  wallet?: WalletPlan,
+): Promise<CheckoutResult> {
+  // Phase 18: a repurchase RECONFIGURES a paid service, so the commercial
+  // stop covers it too — same unbypassable backstop discipline.
+  if (await isSalesStopped(db)) return { ok: false, error: 'sales_stopped' };
+  const preExisting = await findOrderByIdempotencyKey(db, draft.orderToken);
+  if (preExisting) return { ok: true, order: preExisting, created: false };
+
+  const order: NewOrderFields = {
+    id: newOrderId(),
+    customerId: draft.customerId,
+    selections: buildRepurchaseSnapshot(draft, serviceConfigName, wallet),
+    amount: wallet ? wallet.remainderIrt : draft.breakdown.total,
+    currency: draft.breakdown.currency,
+    idempotencyKey: draft.orderToken,
+    kind: 'renewal',
+    renewsOrderId: draft.serviceOrderId,
+    repurchaseMode: draft.mode,
+    ...(wallet?.mode === 'full'
+      ? { initialState: 'approved' as const, verifiedBy: 'wallet' }
+      : {}),
+  };
+
+  try {
+    await insertOrderWithEvent(db, order);
+  } catch (error) {
+    const raceWinner = await findOrderByIdempotencyKey(db, draft.orderToken);
+    if (raceWinner) return { ok: true, order: raceWinner, created: false };
+    const name = error instanceof Error ? error.name : 'unknown';
+    return { ok: false, error: `insert_failed:${name}`.slice(0, 80) };
+  }
+
+  const created = await findOrderByIdempotencyKey(db, draft.orderToken);
+  if (!created) return { ok: false, error: 'insert_unconfirmed' };
+  return { ok: true, order: created, created: true };
+}

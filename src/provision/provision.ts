@@ -35,17 +35,26 @@ import { loadProvisioningConfig } from '../catalog/provisioning.ts';
 import type { ProvisioningConfig } from '../catalog/provisioning.ts';
 import { MB_BYTES } from '../catalog/freeTest.ts';
 import { loadRenewalConfig } from '../catalog/renewal.ts';
+import { loadRepurchaseConfig } from '../catalog/repurchase.ts';
+import { isSalesStopped } from '../catalog/sales.ts';
 import {
   bookRenewalOnService,
+  bookRepurchaseOnService,
   claimOrderForProvisioning,
   claimOrderUsername,
   claimRenewalQuotaTarget,
   claimRenewalTarget,
+  claimRepurchaseExpiryTarget,
+  claimRepurchaseHwidTarget,
+  claimRepurchaseQuotaTarget,
+  claimRepurchaseReset,
   completeProvisionedOrder,
   completeRenewedOrder,
+  completeRepurchasedOrder,
   failProvisionedOrder,
   getOrderById,
 } from '../db/orders.ts';
+import { rearmPaidNoticesForRepurchase } from '../db/serviceNotifications.ts';
 import type { OrderRow } from '../db/orders.ts';
 import { getCustomerContact, resolveAdminChatIds } from '../db/customers.ts';
 import { isValidOrderId } from '../lib/validate.ts';
@@ -76,7 +85,9 @@ export type ProvisionSkipReason =
   | 'config_invalid'
   | 'disabled'
   | 'renewal_disabled'
-  | 'renewal_unavailable';
+  | 'renewal_unavailable'
+  | 'repurchase_disabled'
+  | 'repurchase_unavailable';
 
 export type ProvisionOutcome =
   | { ok: true; order: OrderRow; attempted: true }
@@ -269,7 +280,7 @@ async function finalizeFailure(
   deps: ProvisionDeps,
   orderId: string,
   rawReason: string,
-  renewal = false,
+  renewal: boolean | 'repurchase' = false,
 ): Promise<ProvisionOutcome> {
   const reason = rawReason.slice(0, 300);
   const result = await failProvisionedOrder(deps.db, { orderId, reason });
@@ -277,14 +288,17 @@ async function finalizeFailure(
     console.error(`provision_finalize_failed_race orderId=${orderId.slice(0, 32)}`);
     return { ok: false, error: 'provision_failed' };
   }
+  const isRepurchase = renewal === 'repurchase';
   await notifyCustomer(deps, result.order, (ui) => ({
-    text: renewal
-      ? ui.t.renewFailedNotice(result.order.id)
-      : looksLikeNameRejection(reason)
-        ? ui.t.provisionNameRejectedNotice(result.order.id)
-        : ui.t.provisionFailedNotice(result.order.id),
+    text: isRepurchase
+      ? ui.t.repFailedNotice(result.order.id)
+      : renewal
+        ? ui.t.renewFailedNotice(result.order.id)
+        : looksLikeNameRejection(reason)
+          ? ui.t.provisionNameRejectedNotice(result.order.id)
+          : ui.t.provisionFailedNotice(result.order.id),
   }));
-  await notifyAdminsOfFailure(deps, result.order, reason, renewal);
+  await notifyAdminsOfFailure(deps, result.order, reason, renewal === true, isRepurchase);
   return { ok: false, error: 'provision_failed' };
 }
 
@@ -293,12 +307,17 @@ async function notifyAdminsOfFailure(
   order: OrderRow,
   reason: string,
   renewal = false,
+  repurchase = false,
 ): Promise<void> {
   const chatIds = await resolveAdminChatIds(deps.env, deps.db);
   for (const chatId of chatIds) {
     await notice(
       chatId,
-      renewal ? fa.adminRenewalFailed(order.id, reason) : fa.adminProvisionFailed(order.id, reason),
+      repurchase
+        ? fa.adminRepurchaseFailed(order.id, reason)
+        : renewal
+          ? fa.adminRenewalFailed(order.id, reason)
+          : fa.adminProvisionFailed(order.id, reason),
       deps.api,
       adminProvisionFailedKeyboard(order.id),
     );
@@ -684,9 +703,329 @@ async function finalizeRenewalSuccess(
 }
 
 /**
+ * Parse the repurchase-only fields of a repurchase order's selections
+ * snapshot. The snapshot is IMMUTABLE once checkout created the order:
+ * provisioning reads ONLY this (plus the claimed D1 targets), so later UI
+ * or catalog changes can never alter the finals being applied.
+ */
+export function parseRepurchaseSelections(order: OrderRow): {
+  mode: 'same' | 'custom';
+  volumeGb: number;
+  /** Absolute final quota in bytes (GB_BYTES conversion — never a delta). */
+  quotaBytes: number;
+  durationDays: number;
+  deviceCount: number;
+  configName: string | null;
+  serviceOrderId: string | null;
+} | null {
+  let snapshot: Record<string, unknown>;
+  try {
+    const raw: unknown = JSON.parse(order.selections);
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+    snapshot = raw as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (snapshot['kind'] !== 'repurchase') return null;
+  const mode = snapshot['mode'];
+  if (mode !== 'same' && mode !== 'custom') return null;
+  if (order.repurchase_mode !== null && order.repurchase_mode !== mode) return null;
+  const gb = snapshot['volume_gb'];
+  const days = snapshot['duration_days'];
+  const devices = snapshot['device_count'];
+  if (
+    typeof gb !== 'number' ||
+    typeof days !== 'number' ||
+    typeof devices !== 'number' ||
+    !Number.isSafeInteger(gb) ||
+    !Number.isSafeInteger(days) ||
+    !Number.isSafeInteger(devices) ||
+    gb < 1 ||
+    gb > MAX_GB ||
+    days < 1 ||
+    days > MAX_DAYS ||
+    devices < 1 ||
+    devices > MAX_DEVICES
+  ) {
+    return null;
+  }
+  const quotaBytes = gb * GB_BYTES;
+  if (!Number.isSafeInteger(quotaBytes) || quotaBytes < 1) return null;
+  const link = snapshot['repurchases_order_id'];
+  const fallback = snapshot['renews_order_id'];
+  const rawLink =
+    (typeof link === 'string' && isValidOrderId(link) ? link : null) ??
+    (typeof fallback === 'string' && isValidOrderId(fallback) ? fallback : null) ??
+    (typeof order.renews_order_id === 'string' && isValidOrderId(order.renews_order_id)
+      ? order.renews_order_id
+      : null);
+  const name = snapshot['config_name'];
+  return {
+    mode,
+    volumeGb: gb,
+    quotaBytes,
+    durationDays: days,
+    deviceCount: devices,
+    configName: typeof name === 'string' ? name : null,
+    serviceOrderId: rawLink,
+  };
+}
+
+/**
+ * Repurchase provisioning on an ALREADY-CLAIMED order (state = provisioning).
+ *
+ * Same-user invariant: the EXISTING panel user (by the service row's
+ * pasarguard_username) is reset and reconfigured in place. This path NEVER
+ * POSTs /api/user and NEVER DELETEs — a missing panel user fails closed.
+ *
+ * Sequence (verified live on the deployed panel):
+ *   1. GET existing user (precheck; 404 = fail closed, zero further writes).
+ *   2. Claim ABSOLUTE targets (quota bytes, expiry unix, hwid) in D1.
+ *   3. Claim the reset flag; the winner POSTs .../by-username/{u}/reset once.
+ *   4. ONE combined PUT {data_limit, expire, hwid_limit} with dirty fields.
+ *   5. GET again and verify: same user/id, EXACT quota, used_traffic == 0,
+ *      exact hwid, fresh expiry within tolerance.
+ *   6. Persist the CURRENT subscription URL (it may rotate on reset — URL is
+ *      not identity) and finalize/book only after verification succeeds.
+ *
+ * Idempotency: absolute claimed targets are never recomputed once stored —
+ * retries re-read the panel and adopt when the final state already holds
+ * (no second reset, no second PUT, no stacking, no double finalize).
+ */
+export async function provisionRepurchase(
+  deps: ProvisionDeps,
+  order: OrderRow,
+  client: PasarGuardClient,
+): Promise<ProvisionOutcome> {
+  const { db } = deps;
+  const selections = parseRepurchaseSelections(order);
+  if (selections === null) {
+    return finalizeFailure(deps, order.id, 'repurchase_selections_invalid', 'repurchase');
+  }
+  const service = selections.serviceOrderId === null
+    ? null
+    : await getOrderById(db, selections.serviceOrderId);
+  if (
+    service === null ||
+    service.kind !== 'purchase' ||
+    service.state !== 'completed' ||
+    // A deleted service cannot be repurchased, even by an order that entered
+    // the queue before the deletion (fail CLOSED, zero panel writes, and
+    // NEVER recreate the panel user automatically).
+    service.panel_deleted_at !== null ||
+    service.customer_id !== order.customer_id
+  ) {
+    return finalizeFailure(deps, order.id, 'repurchase_service_invalid', 'repurchase');
+  }
+  const username = service.pasarguard_username;
+  if (username === null) {
+    return finalizeFailure(deps, order.id, 'repurchase_service_unlinked', 'repurchase');
+  }
+  // Sales Stop re-check immediately before ANY panel mutation: a stop that
+  // landed after checkout must block the reconfiguration (the order stays
+  // failed and retryable; money handling follows the existing reject/refund
+  // paths, never an automatic second charge).
+  if (await isSalesStopped(db)) {
+    return finalizeFailure(deps, order.id, 'repurchase_sales_stopped', 'repurchase');
+  }
+
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const precheck = await client.getUserByUsername(username);
+  if (!precheck.ok) {
+    // 404 is NOT "safe to proceed" (unlike purchase create): the service row
+    // says the user exists — if the panel lost it, stop and NEVER recreate.
+    if (precheck.kind === 'not_found') {
+      return finalizeFailure(deps, order.id, 'repurchase_service_missing', 'repurchase');
+    }
+    return finalizeFailure(deps, order.id, `repurchase_precheck_${panelReason(precheck)}`, 'repurchase');
+  }
+  if (precheck.data === null) {
+    return finalizeFailure(deps, order.id, 'repurchase_service_missing', 'repurchase');
+  }
+  const panelId = precheck.data.id;
+
+  // ———— claim ABSOLUTE targets BEFORE any panel mutation ————
+  // Fresh expiry starts at repurchase time (a new lifecycle), not at the old
+  // expiry: base = now. First claim wins; retries adopt the stored target.
+  const expiryCandidate = nowUnix + selections.durationDays * DAY_SECONDS;
+  if (!Number.isSafeInteger(expiryCandidate) || expiryCandidate < 1 || expiryCandidate > 4_000_000_000) {
+    return finalizeFailure(deps, order.id, 'repurchase_target_overflow', 'repurchase');
+  }
+  const claimedQuota = await claimRepurchaseQuotaTarget(db, { orderId: order.id, quotaBytes: selections.quotaBytes });
+  if (!claimedQuota.ok) {
+    return { ok: false, error: claimedQuota.error === 'not_found' ? 'not_found' : 'state_changed' };
+  }
+  const claimedExpiry = await claimRepurchaseExpiryTarget(db, { orderId: order.id, targetUnix: expiryCandidate });
+  if (!claimedExpiry.ok) {
+    return { ok: false, error: claimedExpiry.error === 'not_found' ? 'not_found' : 'state_changed' };
+  }
+  const claimedHwid = await claimRepurchaseHwidTarget(db, { orderId: order.id, hwid: selections.deviceCount });
+  if (!claimedHwid.ok) {
+    return { ok: false, error: claimedHwid.error === 'not_found' ? 'not_found' : 'state_changed' };
+  }
+  const quotaTarget = claimedQuota.value;
+  const targetUnix = claimedExpiry.value;
+  const hwidTarget = claimedHwid.value;
+  if (quotaTarget < 1 || targetUnix < 1 || hwidTarget < 1) {
+    return finalizeFailure(deps, order.id, 'repurchase_target_invalid', 'repurchase');
+  }
+
+  const usedIsZero = (used: number | null): boolean => used === null || used === 0;
+  // NOTE: the panel reports used_traffic 0 as null (coerceBytes maps 0 to
+  // null = none), so "zero" reads as null here. A null read is accepted ONLY
+  // together with an issued-or-adopted reset claim below — never alone.
+
+  // ———— reset usage (exactly one POST per order; losers verify via GET) ————
+  const resetClaim = await claimRepurchaseReset(db, { orderId: order.id });
+  if (!resetClaim.ok) {
+    return { ok: false, error: resetClaim.error === 'not_found' ? 'not_found' : 'state_changed' };
+  }
+  if (resetClaim.issued) {
+    const reset = await client.resetUserUsageByUsername(username);
+    if (!reset.ok) {
+      return finalizeFailure(deps, order.id, `repurchase_reset_${panelReason(reset)}`, 'repurchase');
+    }
+  }
+
+  // ———— adopt check: final state already holds (earlier ambiguous attempt) ————
+  const fresh = await client.getUserByUsername(username);
+  if (!fresh.ok) {
+    if (fresh.kind === 'not_found') {
+      return finalizeFailure(deps, order.id, 'repurchase_service_missing', 'repurchase');
+    }
+    return finalizeFailure(deps, order.id, `repurchase_recheck_${panelReason(fresh)}`, 'repurchase');
+  }
+  if (fresh.data === null) {
+    return finalizeFailure(deps, order.id, 'repurchase_service_missing', 'repurchase');
+  }
+  if (panelId !== null && fresh.data.id !== null && fresh.data.id !== panelId) {
+    // Same username must still be the same panel user — never finalize onto
+    // a swapped identity.
+    return finalizeFailure(deps, order.id, 'repurchase_identity_changed', 'repurchase');
+  }
+  const quotaSatisfied = fresh.data.dataLimit === quotaTarget;
+  const expirySatisfied = expiryAtTarget(fresh.data.expire, targetUnix);
+  const usedSatisfied = usedIsZero(fresh.data.usedTraffic);
+  const hwidSatisfied = fresh.data.hwidLimit === hwidTarget;
+
+  // ———— ONE combined PUT with ONLY dirty absolute fields ————
+  // hwid: the panel may omit hwid_limit from GET (unknown = null). A null
+  // read is NOT proof of application — it only passes when this attempt's
+  // PUT for hwid succeeded (or an earlier attempt's did, proven below by the
+  // re-read still showing null while quota/expiry/usage all verify).
+  const patch: { expire?: number; data_limit?: number; hwid_limit?: number } = {};
+  if (!quotaSatisfied) patch.data_limit = quotaTarget;
+  if (!expirySatisfied) patch.expire = targetUnix;
+  if (!hwidSatisfied) patch.hwid_limit = hwidTarget;
+  let putHwidConfirmed = hwidSatisfied;
+  if (Object.keys(patch).length > 0) {
+    const applied = await client.modifyUserByUsername(username, patch);
+    if (!applied.ok) {
+      return finalizeFailure(deps, order.id, panelReason(applied), 'repurchase');
+    }
+    // PUT-response confirmation for hwid when GET cannot show it.
+    if (!hwidSatisfied && patch.hwid_limit !== undefined) {
+      const reported = applied.data?.hwidLimit ?? null;
+      if (reported === hwidTarget) putHwidConfirmed = true;
+      else if (reported !== null && reported !== hwidTarget) {
+        return finalizeFailure(deps, order.id, 'repurchase_hwid_unverified', 'repurchase');
+      }
+      // reported === null (envelope-less success): the mutation happened per
+      // the client contract — the final GET below decides.
+    }
+  }
+
+  // ———— final GET + strict verification (fail CLOSED on any mismatch) ————
+  const verified = await client.getUserByUsername(username);
+  if (!verified.ok) {
+    if (verified.kind === 'not_found') {
+      return finalizeFailure(deps, order.id, 'repurchase_service_missing', 'repurchase');
+    }
+    return finalizeFailure(deps, order.id, `repurchase_verify_${panelReason(verified)}`, 'repurchase');
+  }
+  if (verified.data === null) {
+    return finalizeFailure(deps, order.id, 'repurchase_service_missing', 'repurchase');
+  }
+  if (panelId !== null && verified.data.id !== null && verified.data.id !== panelId) {
+    return finalizeFailure(deps, order.id, 'repurchase_identity_changed', 'repurchase');
+  }
+  if (verified.data.dataLimit !== quotaTarget) {
+    return finalizeFailure(deps, order.id, 'repurchase_quota_unverified', 'repurchase');
+  }
+  if (!usedIsZero(verified.data.usedTraffic)) {
+    return finalizeFailure(deps, order.id, 'repurchase_reset_unverified', 'repurchase');
+  }
+  if (!expiryAtTarget(verified.data.expire, targetUnix)) {
+    return finalizeFailure(deps, order.id, 'repurchase_unverified', 'repurchase');
+  }
+  if (verified.data.hwidLimit !== null && verified.data.hwidLimit !== hwidTarget) {
+    return finalizeFailure(deps, order.id, 'repurchase_hwid_unverified', 'repurchase');
+  }
+  if (verified.data.hwidLimit === null && !putHwidConfirmed && !hwidSatisfied) {
+    // Panel never surfaces hwid AND no PUT in this attempt confirmed it:
+    // an earlier attempt's PUT may have applied it (envelope-less), but with
+    // zero positive evidence we fail closed rather than invent success.
+    // In practice the deployed panel returns hwid_limit on GET (verified
+    // live), so this branch should not trigger there.
+    return finalizeFailure(deps, order.id, 'repurchase_hwid_unverified', 'repurchase');
+  }
+  return finalizeRepurchaseSuccess(deps, order, service.id, targetUnix, quotaTarget, hwidTarget, verified.data);
+}
+
+/** Close out a successful REPURCHASE: complete order → book service → notify. */
+async function finalizeRepurchaseSuccess(
+  deps: ProvisionDeps,
+  order: OrderRow,
+  serviceOrderId: string,
+  targetUnix: number,
+  quotaBytes: number,
+  hwid: number,
+  user: PanelUser | null,
+): Promise<ProvisionOutcome> {
+  const baseUrl = loadPanelConfig(deps.env).ok
+    ? (deps.env.PASARGUARD_PANEL_URL ?? '')
+    : '';
+  // The subscription URL MAY rotate on reset (verified live — old URL keeps
+  // working). It is not identity: always persist the CURRENT value.
+  const subscriptionUrl = resolveSubscriptionUrl(baseUrl, user?.subscriptionUrl ?? null);
+  const result = await completeRepurchasedOrder(deps.db, {
+    orderId: order.id,
+    targetUnix,
+    quotaBytes,
+    hwid,
+    subscriptionUrl,
+  });
+  if (!result.ok) {
+    console.error(`repurchase_finalize_race orderId=${order.id.slice(0, 32)}`);
+    return { ok: false, error: result.error === 'not_found' ? 'not_found' : 'provision_failed' };
+  }
+  const expiresIso = new Date(targetUnix * 1000).toISOString();
+  const booked = await bookRepurchaseOnService(deps.db, {
+    serviceOrderId,
+    repurchaseOrderId: order.id,
+    expiresIso,
+    subscriptionUrl,
+  });
+  if (!booked) {
+    // The panel reconfiguration IS applied — only local bookkeeping raced.
+    console.error(`repurchase_booking_skipped service=${serviceOrderId.slice(0, 32)}`);
+  }
+  // Fresh paid lifecycle: re-arm exactly the paid usage90 + expiring notices
+  // for the SERVICE row (free-test rows and other services untouched).
+  await rearmPaidNoticesForRepurchase(deps.db, serviceOrderId).catch(() => undefined);
+  await notifyCustomer(deps, result.order, (ui) => ({
+    text: ui.t.repApplied(result.order.id, expiresIso.slice(0, 10)),
+    parseMode: subscriptionUrl !== null ? 'HTML' : undefined,
+    buttons: serviceReadyKeyboard(ui, subscriptionUrl),
+  }));
+  return { ok: true, order: result.order, attempted: true };
+}
+
+/**
  * Provision one order. `retry` opens the claim from `failed` instead of
  * `approved` — everything else (guards, pre-check, notifications) is identical.
- * The order's `kind` picks the purchase-create or renewal-extend path.
+ * The order's `kind` (+ repurchase_mode) picks the purchase-create,
+ * renewal-extend or repurchase-reconfigure path.
  */
 export async function provisionOrder(
   deps: ProvisionDeps,
@@ -701,7 +1040,20 @@ export async function provisionOrder(
   // never resurrected (the D1 username claim would collide anyway; refusing
   // here keeps the audit honest and makes ZERO panel calls).
   if (kindProbe.panel_deleted_at !== null) return { ok: false, error: 'state_changed' };
-  const isRenewal = kindProbe.kind === 'renewal';
+  const isRepurchase = kindProbe.kind === 'renewal' &&
+    (kindProbe.repurchase_mode === 'same' || kindProbe.repurchase_mode === 'custom');
+  const isRenewal = kindProbe.kind === 'renewal' && !isRepurchase;
+
+  if (isRepurchase) {
+    // Repurchase kill switch (independent of provisioning): malformed/missing
+    // doc or disabled → ZERO writes, the order stays exactly where it is.
+    const repurchase = await loadRepurchaseConfig(db);
+    if (!repurchase.ok) {
+      console.error(`repurchase_config_unavailable code=${repurchase.error}`);
+      return { ok: false, skip: 'repurchase_unavailable' };
+    }
+    if (!repurchase.config.enabled) return { ok: false, skip: 'repurchase_disabled' };
+  }
 
   if (isRenewal) {
     // Renewal kill switch (independent of provisioning): malformed/missing
@@ -739,6 +1091,10 @@ export async function provisionOrder(
   }
   const order = claim.order;
   const client = new PasarGuardClient(panel.config);
+
+  if (order.kind === 'renewal' && (order.repurchase_mode === 'same' || order.repurchase_mode === 'custom')) {
+    return provisionRepurchase(deps, order, client);
+  }
 
   if (order.kind === 'renewal') {
     return provisionRenewal(deps, order, client);

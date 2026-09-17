@@ -24,6 +24,16 @@ export type ConversationEvent =
   | 'renew_duration_chosen'
   | 'renew_volume_chosen'
   | 'renew_confirmed'
+  // Phase 18 repurchase: mode pick, then same-spec confirm OR the
+  // volume → duration → device customize ladder, handing over to the SAME
+  // WAITING_PAYMENT_RECEIPT state so receipt/admin/provisioning reuse it all.
+  | 'repurchase_start'
+  | 'repurchase_same'
+  | 'repurchase_custom'
+  | 'repurchase_volume_chosen'
+  | 'repurchase_duration_chosen'
+  | 'repurchase_device_chosen'
+  | 'repurchase_confirmed'
   | 'support_start'
   | 'support_message_sent'
   | 'announce_start'
@@ -55,6 +65,14 @@ const FORWARD: Partial<
   renew_duration_chosen: [['WAITING_RENEWAL_DURATION', 'WAITING_RENEWAL_VOLUME']],
   renew_volume_chosen: [['WAITING_RENEWAL_VOLUME', 'WAITING_RENEWAL_CONFIRMATION']],
   renew_confirmed: [['WAITING_RENEWAL_CONFIRMATION', 'WAITING_PAYMENT_RECEIPT']],
+  // Phase 18 repurchase (renewal ladder above stays for in-flight drains).
+  repurchase_start: [['IDLE', 'WAITING_REPURCHASE_MODE']],
+  repurchase_same: [['WAITING_REPURCHASE_MODE', 'WAITING_REPURCHASE_CONFIRMATION']],
+  repurchase_custom: [['WAITING_REPURCHASE_MODE', 'WAITING_REPURCHASE_VOLUME']],
+  repurchase_volume_chosen: [['WAITING_REPURCHASE_VOLUME', 'WAITING_REPURCHASE_DURATION']],
+  repurchase_duration_chosen: [['WAITING_REPURCHASE_DURATION', 'WAITING_REPURCHASE_DEVICE']],
+  repurchase_device_chosen: [['WAITING_REPURCHASE_DEVICE', 'WAITING_REPURCHASE_CONFIRMATION']],
+  repurchase_confirmed: [['WAITING_REPURCHASE_CONFIRMATION', 'WAITING_PAYMENT_RECEIPT']],
   // Phase 7 support: a one-message ladder. The ticket itself lives in D1
   // (open until closed), so after the message is sent the conversation is
   // IDLE again — follow-up routing keys off the open-ticket lookup, not state.
@@ -90,6 +108,12 @@ const BACK_MAP: Partial<Record<ConversationState, ConversationState>> = {
   // Renewal ladder back: confirmation → volume → duration → IDLE (map miss).
   WAITING_RENEWAL_VOLUME: 'WAITING_RENEWAL_DURATION',
   WAITING_RENEWAL_CONFIRMATION: 'WAITING_RENEWAL_VOLUME',
+  // Repurchase ladder back: confirmation → device → duration → volume →
+  // mode → IDLE (map miss on the mode state).
+  WAITING_REPURCHASE_VOLUME: 'WAITING_REPURCHASE_MODE',
+  WAITING_REPURCHASE_DURATION: 'WAITING_REPURCHASE_VOLUME',
+  WAITING_REPURCHASE_DEVICE: 'WAITING_REPURCHASE_DURATION',
+  WAITING_REPURCHASE_CONFIRMATION: 'WAITING_REPURCHASE_DEVICE',
   // Top-up receipt is durable-adjacent (request row exists): frozen like payment.
   WAITING_TOPUP_RECEIPT: 'WAITING_TOPUP_RECEIPT',
   WAITING_TOPUP_AMOUNT: 'IDLE',
@@ -128,6 +152,11 @@ const TEXT_ACCEPTING_STATES: readonly ConversationState[] = [
   // Renewal custom add-on volume is typed free-text in its own step (purchase
   // WAITING_VOLUME precedent); duration/confirmation steps stay button-only.
   'WAITING_RENEWAL_VOLUME',
+  // Repurchase customize steps accept typed custom numbers exactly like the
+  // purchase ladder; mode/confirmation steps stay button-only.
+  'WAITING_REPURCHASE_VOLUME',
+  'WAITING_REPURCHASE_DURATION',
+  'WAITING_REPURCHASE_DEVICE',
   // Phase 7: support body and announcement text are free-text by design.
   'WAITING_SUPPORT_MESSAGE',
   'WAITING_ANNOUNCE_TEXT',

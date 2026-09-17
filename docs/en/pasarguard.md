@@ -43,7 +43,8 @@ endpoints.
 | `GET /api/user/by-username/{username}` | `getUserByUsername` (client.ts:239) | pre-check adoption on create; live status enrich in My Services; usage/expiry sweep reads; post-create confirmation |
 | `GET /api/user/by-id/{id}` | `getUserById` (client.ts:253) | confirmation read after an envelope-less create |
 | `POST /api/user` | `createUser` (client.ts:245) | purchase provisioning — **never auto-retried blindly** |
-| `PUT /api/user/by-username/{username}` | `modifyUserByUsername` (client.ts:274) | renewal — sets an **absolute** `{expire: unix_seconds}` and nothing else; also the create-expiry **repair** write (§3) |
+| `PUT /api/user/by-username/{username}` | `modifyUserByUsername` (client.ts:274) | renewal — sets an **absolute** `{expire: unix_seconds}` and nothing else; also the create-expiry **repair** write (§3). Phase 18 repurchase sends absolute `{data_limit, expire, hwid_limit}` finals through the same partial primitive |
+| `POST /api/user/by-username/{username}/reset` | `resetUserUsageByUsername` | Phase 18 repurchase only — zeroes `used_traffic` on the EXISTING user (empty POST; quota/expiry untouched; subscription URL may rotate). Never the bulk `POST /api/users/reset` |
 | `DELETE /api/user/by-username/{username}` | `deleteUserByUsername` (client.ts) | **admin service delete only** (§5) — one attempt, confirmed by a `GET` of the same name; never issued by any cron/sweep |
 
 Input guards inside the client: username `/^[A-Za-z0-9]{3,32}$/`, user id

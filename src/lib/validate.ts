@@ -22,7 +22,7 @@ const ADMIN_CALLBACK_PATTERN = /^adm:(ok|no|skip|rt):[0-9A-HJKMNP-TV-Z]{28}$/;
  * Phase 6: service callbacks embed a full 28-char order id too, so they get
  * their OWN strict pattern (the generic one caps payloads at 24 chars).
  */
-const SERVICE_CALLBACK_PATTERN = /^svc:(det|ref|rnw):[0-9A-HJKMNP-TV-Z]{28}$/;
+const SERVICE_CALLBACK_PATTERN = /^svc:(det|ref|rnw|rep):[0-9A-HJKMNP-TV-Z]{28}$/;
 
 /**
  * Phase 7: ticket callbacks carry a full ULID ticket id — like `adm:`/`svc:`,
@@ -134,7 +134,7 @@ export function parseAdminCallback(data: string): AdminCallback | null {
   return { action, orderId };
 }
 
-export type ServiceAction = 'det' | 'ref' | 'rnw';
+export type ServiceAction = 'det' | 'ref' | 'rnw' | 'rep';
 
 export interface ServiceCallback {
   action: ServiceAction;
@@ -146,7 +146,7 @@ export function parseServiceCallback(data: string): ServiceCallback | null {
   if (!SERVICE_CALLBACK_PATTERN.test(data)) return null;
   const [, action, orderId] = /^svc:(\w+):(.+)$/.exec(data) ?? [];
   if (!orderId || !ORDER_ID_PATTERN.test(orderId)) return null;
-  if (action !== 'det' && action !== 'ref' && action !== 'rnw') return null;
+  if (action !== 'det' && action !== 'ref' && action !== 'rnw' && action !== 'rep') return null;
   return { action, orderId };
 }
 

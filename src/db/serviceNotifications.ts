@@ -474,3 +474,26 @@ function changeCount(result: unknown): number {
   const meta = (result as { meta?: { changes?: number } } | null)?.meta;
   return typeof meta?.changes === 'number' ? meta.changes : 0;
 }
+
+/**
+ * Phase 18: a successful paid repurchase starts a FRESH service lifecycle on
+ * the SAME service row. Re-arm exactly the paid legs so usage90 can notify
+ * again once and expiring can notify again once. Free-test rows, other
+ * services, budgets, gates and leases are untouched — deleting the settled
+ * rows simply makes the existing candidate queries eligible again. Called
+ * ONLY from the single-winning repurchase finalize path (complete + book
+ * already done), so concurrent sweeps cannot interleave a half-armed state:
+ * the worst case is one extra future notice, never a lost one.
+ */
+export async function rearmPaidNoticesForRepurchase(
+  db: D1Database,
+  serviceOrderId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `DELETE FROM service_notifications
+        WHERE order_id = ?1 AND kind IN ('usage90', 'expiring')`,
+    )
+    .bind(serviceOrderId)
+    .run();
+}

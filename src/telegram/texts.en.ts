@@ -337,6 +337,37 @@ const en: Texts = {
     `🎉 Your renewal payment is confirmed!\n\n🆔 Order: ${id}\n💰 Amount: ${amount}\n\nThe extension will be applied to your service shortly.`,
   ordersKindRenewal: '(renewal)',
 
+  // ————— Phase 18: repurchase with previous specifications (same user) —————
+  repEntryButton: '🔄 Rebuy with previous specs',
+  repBuyNewButton: '🛒 Buy a new service',
+  repModeSame: '🔄 Buy with the same previous specs',
+  repModeCustom: '⚙️ Customize and rebuy',
+  repDisabledNotice: '🔧 Rebuying is currently disabled.',
+  repNotForFreeTest: '🎁 Test services cannot be rebought — pick a full service from "Buy a new service".',
+  repNotEligible: 'ℹ️ Rebuying is only available for expired or finished services.',
+  repInProgressNotice: (id: string) =>
+    `🔄 There\'s already an open repurchase for this service.\n\n🆔 Repurchase order: ${id}\n\nTrack its status under "Orders".`,
+  repModeIntro: (name: string, prev: string) =>
+    `🔄 Rebuy service "${name}"\n\n📦 Previous specs: ${prev}\n\nThe same current service will be reset and reconfigured; no new service is created.`,
+  repSummaryHeader: '🧾 Repurchase summary',
+  repSummaryService: (name: string) => `📦 Service: "${name}"`,
+  repSummaryReuse:
+    '♻️ The same current service is reused: usage reset to zero, fresh quota and expiry, same subscription link.',
+  repSummaryFreshCycle: '🆕 The new cycle starts at activation time.',
+  repConfirmed: (id: string) =>
+    `✅ Repurchase requested!\n\n🆔 ID: ${id}\n\n👇 Payment details are coming up next.`,
+  repApplied: (id: string, expiresDate: string) =>
+    `🎉 Your service was rebought successfully!\n\n🆔 Order: ${id}\n📅 New expiry: ${expiresDate}\n\nUsage is zero and the fresh specs are applied. Check "My Services" for the status.`,
+  repFailedNotice: (id: string) =>
+    `⚠️ Rebuying this order ran into repeated problems.\n\n🆔 Order: ${id}\n\nThe team has been alerted and is on it — you do NOT need to pay again.`,
+  adminRepurchaseFailed: (id: string, reason: string) =>
+    `⚠️ Service repurchase failed\n🆔 ${id}\n📝 ${reason.slice(0, 200)}\n\nYou can retry with the button below (within the allowed cap).`,
+  adminRepurchaseKind: (serviceId: string) => `🔄 Repurchase for service ${serviceId}`,
+  notifyApprovedRepurchase: (id: string, amount: string) =>
+    `🎉 Your repurchase payment is confirmed!\n\n🆔 Order: ${id}\n💰 Amount: ${amount}\n\nThe current service will be reset and reconfigured shortly.`,
+  ordersKindRepurchase: '(repurchase)',
+  svcPendingRepurchase: (shortId: string) => `🔄 Repurchase in progress: order ${shortId}…`,
+
   // ————— Phase 7: wallet + referrals + support + announcements (IRT/Toman) —————
   walletUnavailable: '🔧 The wallet isn\'t available at the moment. Please try again shortly.',
   walletHeader: '💰 Your wallet',
@@ -372,6 +403,10 @@ const en: Texts = {
     `🎉 Renewal paid instantly from your wallet!\n\n🆔 Order: ${id}\n👛 Paid from wallet: ${used}\n\nThe extension will be applied shortly.`,
   walletPartialRenewal: (id: string, used: string, rest: string) =>
     `✅ Renewal started — ${used} was applied from your wallet.\n\n🆔 Order: ${id}\n💳 Remaining due: ${rest}\n\n👇 Payment details for the remainder are coming up next.`,
+  walletPaidRepurchase: (id: string, used: string) =>
+    `🎉 Repurchase paid instantly from your wallet!\n\n🆔 Order: ${id}\n👛 Paid from wallet: ${used}\n\nThe current service will be reset and reconfigured shortly.`,
+  walletPartialRepurchase: (id: string, used: string, rest: string) =>
+    `✅ Repurchase started — ${used} was applied from your wallet.\n\n🆔 Order: ${id}\n💳 Remaining due: ${rest}\n\n👇 Payment details for the remainder are coming up next.`,
   notifyWalletRefunded: (id: string, amount: string) =>
     `ℹ️ ${amount} from the rejected order has been returned to your wallet.\n\n🆔 Order: ${id}`,
   adminRefundedLine: (amount: string) => `↩️ Refunded to customer wallet: ${amount}`,

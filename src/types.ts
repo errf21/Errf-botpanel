@@ -72,6 +72,13 @@ export const CONVERSATION_STATES = [
   'WAITING_RENEWAL_DURATION',
   'WAITING_RENEWAL_VOLUME',
   'WAITING_RENEWAL_CONFIRMATION',
+  // Phase 18 repurchase (renewal states above stay for historical/in-flight
+  // compatibility — see migration 0019).
+  'WAITING_REPURCHASE_MODE',
+  'WAITING_REPURCHASE_VOLUME',
+  'WAITING_REPURCHASE_DURATION',
+  'WAITING_REPURCHASE_DEVICE',
+  'WAITING_REPURCHASE_CONFIRMATION',
   'WAITING_SUPPORT_MESSAGE',
   'WAITING_ANNOUNCE_TEXT',
   'WAITING_ANNOUNCE_CONFIRM',
@@ -93,6 +100,10 @@ export interface StateData {
   order_id?: string;
   /** Phase 6: purchase order (service) a renewal draft extends. */
   renews_order_id?: string;
+  /** Phase 18: purchase order (service) a repurchase draft reconfigures. */
+  repurchases_order_id?: string;
+  /** Phase 18 repurchase mode: 'same' = original specs, 'custom' = finals. */
+  repurchase_mode?: 'same' | 'custom';
   /** Phase 7: 'full' pays the whole order from the wallet, 'partial' credits it. */
   wallet_use?: 'full' | 'partial';
   /** Phase 17: customer wallet top-up draft (isolated from orders). */

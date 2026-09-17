@@ -60,6 +60,8 @@ export interface PanelUser {
   /** Traffic bytes (null = unknown / unlimited). Wire unit: bytes. */
   dataLimit: number | null;
   usedTraffic: number | null;
+  /** Phase 18: concurrent-device cap as reported by the panel (null = unknown). */
+  hwidLimit: number | null;
 }
 
 /**
@@ -123,10 +125,19 @@ export interface CreateUserPayload {
  * duration-only renewals send `expire` exactly as before; volume add-ons add
  * `data_limit` (additively computed upstream); both send both. `used_traffic`
  * is NEVER part of this payload — the panel preserves usage on partial PUTs.
+ *
+ * Phase 18 repurchase: the SAME partial primitive carries the absolute
+ * repurchase finals — `data_limit` (absolute quota, never a delta), `expire`
+ * (fresh absolute expiry) and `hwid_limit` (final device cap, verified live
+ * on the deployed panel: Modify/Edit User accepts it on an existing user).
+ * `used_traffic` is still NEVER sent here — usage is zeroed exclusively via
+ * the dedicated reset operation (`resetUserUsageByUsername`).
  */
 export interface ModifyUserPayload {
   expire?: number;
   data_limit?: number;
+  /** Phase 18: final concurrent-device cap on an EXISTING user. */
+  hwid_limit?: number;
   status?: 'active' | 'on_hold' | 'disabled';
 }
 
@@ -217,6 +228,7 @@ export function extractPanelUser(json: unknown): PanelUser | null {
         expire: coerceUnixSeconds(record['expire']),
         dataLimit: coerceBytes(numberField(record, ['data_limit'])),
         usedTraffic: coerceBytes(numberField(record, ['used_traffic'])),
+        hwidLimit: coerceBytes(numberField(record, ['hwid_limit'])),
       };
     }
   }
@@ -281,10 +293,11 @@ export class PasarGuardClient {
 
   /**
    * PUT /api/user/by-username/{name} — partial modify (renewals set an
-   * absolute `expire` and/or an absolute `data_limit`). NEVER auto-retried
+   * absolute `expire` and/or an absolute `data_limit`; Phase 18 repurchases
+   * additionally set an absolute `hwid_limit`). NEVER auto-retried
    * blindly: callers pre-check the stored targets and post-verify with
    * getUserByUsername, and absolute re-application is a no-op by
-   * construction. At least one of expire/data_limit must be present.
+   * construction. At least one of expire/data_limit/hwid_limit must be present.
    */
   modifyUserByUsername(
     username: string,
@@ -295,7 +308,8 @@ export class PasarGuardClient {
     }
     const hasExpire = patch.expire !== undefined;
     const hasLimit = patch.data_limit !== undefined;
-    if (!hasExpire && !hasLimit) {
+    const hasHwid = patch.hwid_limit !== undefined;
+    if (!hasExpire && !hasLimit && !hasHwid) {
       return Promise.resolve(failure(0, 'empty_patch', 'rejected'));
     }
     if (
@@ -310,10 +324,37 @@ export class PasarGuardClient {
     ) {
       return Promise.resolve(failure(0, 'data_limit_range', 'rejected'));
     }
+    if (
+      hasHwid &&
+      (!Number.isSafeInteger(patch.hwid_limit) || (patch.hwid_limit as number) < 1 || (patch.hwid_limit as number) > 10_000)
+    ) {
+      return Promise.resolve(failure(0, 'hwid_limit_range', 'rejected'));
+    }
     return this.#request<PanelUser | null>(
       'PUT',
       `/api/user/by-username/${encodeURIComponent(username)}`,
       patch,
+    );
+  }
+
+  /**
+   * POST /api/user/by-username/{name}/reset — zero the user's used traffic
+   * on the EXISTING user (Phase 18 repurchases). Verified live on the
+   * deployed panel: HTTP 200, used_traffic becomes 0, data_limit and expire
+   * unchanged, same user/id retained, subscription_url MAY rotate (callers
+   * must re-read it, never treat it as identity). Empty POST — no body.
+   * NEVER auto-retried blindly: callers claim `repurchase_reset_done` BEFORE
+   * the call and prove the result with getUserByUsername (used_traffic == 0);
+   * re-issuing a reset whose usage already reads 0 is a value-idempotent
+   * no-op. NEVER use the bulk `POST /api/users/reset` (resets EVERY user).
+   */
+  resetUserUsageByUsername(username: string): Promise<PanelResult<PanelUser | null>> {
+    if (!/^[A-Za-z0-9]{3,32}$/.test(username)) {
+      return Promise.resolve(failure(0, 'username_charset', 'rejected'));
+    }
+    return this.#request<PanelUser | null>(
+      'POST',
+      `/api/user/by-username/${encodeURIComponent(username)}/reset`,
     );
   }
 

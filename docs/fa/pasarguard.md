@@ -38,7 +38,8 @@
 | `GET /api/user/by-username/{username}` | `getUserByUsername` (:239) | پیش‌بررسی adoption هنگام ساخت؛ غنی‌سازی زندهٔ «سرویس‌های من»؛ جاروب usage/expiry؛ تأیید-خوانش پس از ساخت |
 | `GET /api/user/by-id/{id}` | `getUserById` (:253) | تأیید-خوانش وقتی پاسخ POST پاکت قابل‌برداشت نداشت |
 | `POST /api/user` | `createUser` (:245) | پروژن خرید — **هرگز بدون بررسی retry نمی‌شود** |
-| `PUT /api/user/by-username/{username}` | `modifyUserByUsername` (:274) | تمدید — فقط `{expire:unix_seconds}` مطلق را ست می‌کند؛ همین primitive نوشتنِ **ترمیم انقضای ساخت** هم هست (§3) |
+| `PUT /api/user/by-username/{username}` | `modifyUserByUsername` (:274) | تمدید — فقط `{expire:unix_seconds}` مطلق را ست می‌کند؛ همین primitive نوشتنِ **ترمیم انقضای ساخت** هم هست (§3). خرید مجدد (فاز ۱۸) مقادیر نهایی مطلق `{data_limit, expire, hwid_limit}` را با همین primitive می‌فرستد |
+| `POST /api/user/by-username/{username}/reset` | `resetUserUsageByUsername` | فقط خرید مجدد (فاز ۱۸) — صفر کردن `used_traffic` روی همان کاربر موجود (POST خالی؛ سهمیه/انقضا دست‌نخورده؛ لینک اشتراک ممکن است بچرخد). هرگز نسخهٔ گروهی `POST /api/users/reset` |
 | `DELETE /api/user/by-username/{username}` | `deleteUserByUsername` (client.ts) | **فقط حذف سرویس توسط ادمین** (§5) — تک‌تلاش، تأیید با `GET` همان نام؛ هیچ cron/جاروبی آن را صادر نمی‌کند |
 
 محافظ‌های ورودی داخل client: username `/^[A-Za-z0-9]{3,32}$/`، user id

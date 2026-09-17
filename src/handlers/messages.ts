@@ -30,6 +30,11 @@ import { loadCatalog, type StepKind } from '../catalog/catalog.ts';
 import { submitReceipt } from './payment.ts';
 import { handleTopupAmountText, resumeTopup, submitTopupReceiptInput } from './topup.ts';
 import { resumeRenewal, applyRenewalCustomVolume } from './renewal.ts';
+import {
+  REPURCHASE_TEXT_STATE_KIND,
+  applyRepurchaseStepChoice,
+  resumeRepurchase,
+} from './repurchase.ts';
 import { deliverTicketReply, submitSupportText } from './support.ts';
 import { saveAnnounceDraft } from './announcements.ts';
 import { completeArmedWalletAction } from './wallet.ts';
@@ -272,6 +277,17 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       else await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
       return;
     }
+    // Phase 18: repurchase mode/confirmation steps never accept free text
+    // (buttons only) — redraw the current step, state preserved.
+    if (
+      session.state === 'WAITING_REPURCHASE_MODE' ||
+      session.state === 'WAITING_REPURCHASE_CONFIRMATION'
+    ) {
+      const loaded = await loadCatalog(ctx.db);
+      if (loaded.ok) await resumeRepurchase(ctx, session, loaded.catalog);
+      else await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
+      return;
+    }
     if (session.state === 'WAITING_ANNOUNCE_CONFIRM') {
       await ctx.api.sendMessage(ctx.chatId, fa.supportQueueChoice, backToMenuKeyboard(FA_UI));
       return;
@@ -321,6 +337,24 @@ export async function handleText(ctx: UpdateContext, text: string): Promise<void
       return;
     }
     await applyRenewalCustomVolume(ctx, session, loaded.catalog, text);
+    return;
+  }
+
+  // Phase 18: repurchase customize steps (typed custom numbers, same
+  // purchase limits/validators as the button taps above).
+  const repurchaseKind = REPURCHASE_TEXT_STATE_KIND[session.state];
+  if (repurchaseKind) {
+    const loaded = await loadCatalog(ctx.db);
+    if (!loaded.ok) {
+      await ctx.api.sendMessage(ctx.chatId, t.catalogUnavailable, backToMenuKeyboard(ctx.ui));
+      return;
+    }
+    const value = parsePositiveInt(text);
+    if (value === null) {
+      await ctx.api.sendMessage(ctx.chatId, t.rejectedNotWhole, backToMenuKeyboard(ctx.ui));
+      return;
+    }
+    await applyRepurchaseStepChoice(ctx, session, loaded.catalog, repurchaseKind, value);
     return;
   }
 

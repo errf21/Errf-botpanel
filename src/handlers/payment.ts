@@ -156,11 +156,17 @@ export async function showMyOrders(ctx: UpdateContext): Promise<void> {
   }
   const lines: string[] = [t.ordersHeader];
   orders.forEach((order, index) => {
+    // Phase 18: repurchase rows (kind='renewal' + repurchase_mode) are labeled
+    // distinctly from historical renewals.
+    const kindSuffix =
+      order.kind === 'renewal'
+        ? ` ${order.repurchase_mode ? t.ordersKindRepurchase : t.ordersKindRenewal}`
+        : '';
     lines.push(
       t.ordersEntry(
         index + 1,
         order.id.slice(0, 10),
-        t.orderStatus(order.state) + (order.kind === 'renewal' ? ` ${t.ordersKindRenewal}` : ''),
+        t.orderStatus(order.state) + kindSuffix,
         f.price(order.amount, order.currency),
         order.created_at.slice(0, 10),
       ),

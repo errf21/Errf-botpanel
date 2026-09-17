@@ -11,6 +11,7 @@
  */
 import {
   findActiveRenewalForService,
+  findActiveRepurchaseForService,
   getOwnedService,
   listServicesForCustomer,
   reconcilePanelGone,
@@ -20,6 +21,7 @@ import {
 import type { TelegramInlineKeyboardMarkup, TelegramParseMode, UpdateContext } from '../types.ts';
 import type { Ui } from '../telegram/i18n.ts';
 import { loadRenewalConfig, type RenewalConfig } from '../catalog/renewal.ts';
+import { loadRepurchaseConfig, type RepurchaseConfig } from '../catalog/repurchase.ts';
 import { isSalesStopped } from '../catalog/sales.ts';
 import { loadPanelConfig, PasarGuardClient, type PanelUser } from '../pasarguard/client.ts';
 // Shared with the provisioning/payload layer: ONE GB↔bytes truth (2^30) so
@@ -120,6 +122,14 @@ export async function loadRenewalViewConfig(db: D1Database): Promise<RenewalConf
     : { enabled: false, nearExpiryDays: DEFAULT_NEAR_EXPIRY_DAYS };
 }
 
+/** Phase 18: repurchase kill-switch view config (fail closed when missing). */
+export async function loadRepurchaseViewConfig(db: D1Database): Promise<RepurchaseConfig> {
+  const loaded = await loadRepurchaseConfig(db);
+  return loaded.ok
+    ? loaded.config
+    : { enabled: false, nearExpiryDays: DEFAULT_NEAR_EXPIRY_DAYS };
+}
+
 /** `menu:services` — the customer's own services, rendered from the DB. */
 export async function showMyServices(ctx: UpdateContext): Promise<void> {
   const { t } = ctx.ui;
@@ -192,9 +202,13 @@ async function renderServiceDetail(
   const asHtml = service.subscription_url !== null;
   const esc = (value: string): string => (asHtml ? tgEscapeHtml(value) : value);
 
-  const [renewal, active, salesStopped] = await Promise.all([
+  const [renewal, repurchaseCfg, active, activeRepurchase, salesStopped] = await Promise.all([
     loadRenewalViewConfig(ctx.db),
+    loadRepurchaseViewConfig(ctx.db),
     findActiveRenewalForService(ctx.db, service.id),
+    // Phase 18: one lifecycle operation at a time — an in-flight repurchase
+    // hides both entries (the server guards stay authoritative).
+    findActiveRepurchaseForService(ctx.db, service.id).catch(() => null),
     // Phase 13: a commercial stop hides the renew affordance too — the
     // server-side guard in renewableService stays the authority.
     isSalesStopped(ctx.db),
@@ -292,10 +306,31 @@ async function renderServiceDetail(
   if (active !== null) {
     lines.push(t.svcPendingRenewal(active.id.slice(0, 10)));
   }
+  if (activeRepurchase !== null) {
+    lines.push(t.svcPendingRepurchase(activeRepurchase.id.slice(0, 10)));
+  }
   if (attemptedPanel && !panelGone) {
     lines.push(panelUser !== null ? t.svcLiveNote : t.svcSnapshotNote);
   }
   if (!renewal.enabled) lines.push(t.renewDisabledNotice);
+  // Phase 18: repurchase entry is eligibility-gated (expired-or-finished paid
+  // service). The panel expiry is authoritative when seen, local otherwise —
+  // the same clock the detail bubble above renders.
+  const expiredForRepurchase =
+    !panelGone && expiresIso !== null && Date.parse(expiresIso) - Date.now() <= 0;
+  const finishedForRepurchase =
+    !panelGone &&
+    panelUser !== null &&
+    panelUser.usedTraffic !== null &&
+    panelUser.dataLimit !== null &&
+    panelUser.usedTraffic >= panelUser.dataLimit;
+  const canRepurchase =
+    repurchaseCfg.enabled &&
+    !salesStopped &&
+    activeRepurchase === null &&
+    !snapshot.freeTest &&
+    !panelGone &&
+    (expiredForRepurchase || finishedForRepurchase);
 
   return {
     text: lines.join('\n'),
@@ -305,6 +340,7 @@ async function renderServiceDetail(
       // service can never be renewed either (server authority in
       // renewableService + the getOwnedService filter both say the same).
       canRenew: renewal.enabled && !salesStopped && active === null && !snapshot.freeTest && !panelGone,
+      canRepurchase,
       serviceUrl: panelGone ? null : service.subscription_url,
     }),
     live: panelUser !== null,

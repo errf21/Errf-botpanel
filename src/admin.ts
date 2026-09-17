@@ -67,6 +67,34 @@ export function orderSummaryLines(order: OrderRow): string[] {
     fa.summaryPrice(price),
   ];
   // Phase 6: renewals must be unmistakable in the review queue / forwards.
+  // Phase 18: repurchase rows (kind='renewal' + snapshot.kind='repurchase')
+  // render as repurchases — never confused with historical renewals.
+  if (order.kind === 'renewal' && snapshot['kind'] === 'repurchase') {
+    const serviceId =
+      typeof snapshot['repurchases_order_id'] === 'string'
+        ? snapshot['repurchases_order_id']
+        : typeof snapshot['renews_order_id'] === 'string'
+          ? snapshot['renews_order_id']
+          : '—';
+    lines.push(fa.adminRepurchaseKind(serviceId));
+    lines.push(fa.ordersKindRepurchase);
+    const gb = snapshot['volume_gb'];
+    const days = snapshot['duration_days'];
+    const devices = snapshot['device_count'];
+    const snapshotPrice = snapshot['price'];
+    const months =
+      snapshotPrice && typeof snapshotPrice === 'object'
+        ? (snapshotPrice as Record<string, unknown>)['months']
+        : undefined;
+    const cfgName = snapshot['config_name'];
+    if (typeof gb === 'number') lines.push(fa.summaryVolume(gb));
+    if (typeof days === 'number') {
+      lines.push(fa.summaryDuration(days, typeof months === 'number' ? months : 1));
+    }
+    if (typeof devices === 'number') lines.push(fa.summaryDevices(devices));
+    if (typeof cfgName === 'string') lines.push(fa.summaryName(cfgName));
+    return lines;
+  }
   if (order.kind === 'renewal') {
     const serviceId =
       typeof snapshot['renews_order_id'] === 'string' ? snapshot['renews_order_id'] : '—';
@@ -161,11 +189,15 @@ async function notifyCustomerOfReview(
   // recipient. The rejection reason itself is admin-authored content and is
   // delivered verbatim.
   const { t, f } = uiFor(contact.language);
+  const snapshot = parseSnapshot(order);
+  const isRepurchase = order.kind === 'renewal' && snapshot['kind'] === 'repurchase';
   const text =
     decision === 'approve'
-      ? order.kind === 'renewal'
-        ? t.notifyApprovedRenewal(order.id, f.price(order.amount, order.currency))
-        : t.notifyApproved(order.id, f.price(order.amount, order.currency))
+      ? isRepurchase
+        ? t.notifyApprovedRepurchase(order.id, f.price(order.amount, order.currency))
+        : order.kind === 'renewal'
+          ? t.notifyApprovedRenewal(order.id, f.price(order.amount, order.currency))
+          : t.notifyApproved(order.id, f.price(order.amount, order.currency))
       // The admin's typed reason is authored content — verbatim; only the
       // built-in default reason localizes with the recipient.
       : t.notifyRejected(order.id, reason ?? t.adminRejectDefaultReason);
