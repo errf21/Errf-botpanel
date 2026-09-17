@@ -104,9 +104,9 @@ export function parseSalesCallback(data: string): SalesAction | null {
  * generic pattern already admits the shape, but the handler consumes ONLY
  * this fixed vocabulary — nothing else can ever reach the stoptest surface.
  */
-const STOPTEST_CALLBACK_PATTERN = /^stp:(view|stop|start)$/;
+const STOPTEST_CALLBACK_PATTERN = /^stp:(view|stop|start|vol)$/;
 
-export type StoptestAction = 'view' | 'stop' | 'start';
+export type StoptestAction = 'view' | 'stop' | 'start' | 'vol';
 
 /** Parses ONLY data that already matched STOPTEST_CALLBACK_PATTERN. */
 export function parseStoptestCallback(data: string): StoptestAction | null {

@@ -797,7 +797,7 @@ export function salesKeyboard(stopped: boolean): TelegramInlineKeyboardMarkup {
  * `broken` (missing/malformed doc) offers only the refresh row — the switch
  * never invents policy by writing a canned document.
  */
-export function stoptestKeyboard(state: 'active' | 'stopped' | 'broken'): TelegramInlineKeyboardMarkup {
+export function stoptestKeyboard(t: Texts, state: 'active' | 'stopped' | 'broken'): TelegramInlineKeyboardMarkup {
   return {
     inline_keyboard: [
       ...(state === 'stopped'
@@ -805,6 +805,7 @@ export function stoptestKeyboard(state: 'active' | 'stopped' | 'broken'): Telegr
         : state === 'active'
           ? [[button('⏸ توقف تست رایگان', 'stp:stop')]]
           : []),
+      ...(state === 'broken' ? [] : [[button(t.stoptestChangeVolumeBtn, 'stp:vol')]]),
       [button('🔄 نمایش دوباره', 'stp:view')],
     ],
   };

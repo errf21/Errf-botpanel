@@ -490,8 +490,15 @@ test('P15-09 gates: disabled/garbage docs hide offers AND refuse direct taps; th
     let user = freshUser();
     stub.reset();
     await dispatch(messageUpdateAs(user, '/start', nextId()));
-    assert.equal(sends().length, 1, 'disabled → no offer bubble');
+    // Phase 23: the entry point stays visible while the admin switch is off —
+    // only fulfillment is blocked (exact stopped bubble, wall unburned).
+    assert.equal(sends().length, 2, 'disabled → offer bubble STILL shown');
     await dispatch(callbackUpdateAs('tst:claim', nextId(), user));
+    assert.equal(
+      String(lastSend().text),
+      '🛑 رفیق، سرویس تست فعلاً متوقفه 😅\nبه‌محض اینکه دوباره فعالش کنیم، می‌تونی تستت رو بگیری ❤️',
+      'disabled tap answers with the exact stopped bubble',
+    );
     assert.equal(claimOf(user.id), undefined, 'disabled tap never consumes the once-ever wall');
     setFreeTestDoc({ schema: 7 });
     user = freshUser();

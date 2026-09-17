@@ -278,3 +278,43 @@ test('/users filters + /msg smoke unaffected; output hygiene', async () => {
   const doc = JSON.parse(freeDoc().value) as Record<string, unknown>;
   assert.equal(doc['enabled'], true);
 });
+
+const VISITOR = { id: 810005, first_name: 'Vis', username: 'stp_visitor', language_code: 'fa' };
+
+test('entry points stay visible while stopped: first-start offer keeps its button', async () => {
+  await dispatch(callbackUpdateAs('stp:stop', nextId(), ADMIN, ADMIN.id));
+  stub.reset();
+  await dispatch(messageUpdateAs(VISITOR, '/start', nextId()));
+  assert.equal(textsTo(VISITOR.id).length, 2, 'menu + offer bubble, nothing hidden');
+  assert.ok(lastTextTo(VISITOR.id).includes('تست'), 'offer copy unchanged');
+  assert.ok(buttonsOf(VISITOR.id).includes('tst:claim'), 'claim button still rendered');
+});
+
+test('entry points stay visible while stopped: services empty-state CTA keeps its button', async () => {
+  stub.reset();
+  await dispatch(messageUpdateAs(VISITOR, fa.menuServices, nextId()));
+  const empty = lastTextTo(VISITOR.id);
+  assert.ok(empty.includes('هنوز سرویس فعالی نداری'), 'paid empty copy untouched');
+  assert.ok(empty.includes('تست'), 'CTA line still appended');
+  assert.ok(buttonsOf(VISITOR.id).includes('tst:claim'), 'CTA button still rendered');
+});
+
+test('same button blocked-then-working across a stop/start cycle', async () => {
+  stub.reset();
+  await dispatch(callbackUpdateAs('tst:claim', nextId(), VISITOR, VISITOR.id));
+  assert.equal(lastTextTo(VISITOR.id), fa.freeTestStoppedNotice, 'tap while stopped: exact bubble');
+  const cid = (sqlite.prepare('SELECT id FROM customers WHERE telegram_user_id = ?1').get(String(VISITOR.id)) as {
+    id: number;
+  }).id;
+  const claimWhileStopped = sqlite.prepare('SELECT order_id FROM free_test_claims WHERE customer_id = ?1').get(cid);
+  assert.equal(claimWhileStopped, undefined, 'blocked tap burns nothing');
+
+  await dispatch(callbackUpdateAs('stp:start', nextId(), ADMIN, ADMIN.id));
+  await dispatch(callbackUpdateAs('tst:claim', nextId(), VISITOR, VISITOR.id));
+  const claim = sqlite.prepare('SELECT order_id FROM free_test_claims WHERE customer_id = ?1').get(cid) as {
+    order_id: string;
+  } | null;
+  assert.ok(claim !== null, 'same button claims once re-enabled');
+  const order = sqlite.prepare('SELECT state FROM orders WHERE id = ?1').get(claim.order_id) as { state: string };
+  assert.ok(order !== undefined, 'test order row created');
+});

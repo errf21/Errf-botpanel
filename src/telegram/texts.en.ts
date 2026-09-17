@@ -684,6 +684,16 @@ const en: Texts = {
     '⚠️ Another admin just changed the state; showing the newest one.',
   adminStoptestSaveFailed: '⚠️ The change could not be saved; showing the current state.',
 
+  adminStoptestVolume: (v: string) => `📦 Test volume: ${v}`,
+  adminStoptestDuration: (v: string) => `⏱ Duration: ${v}`,
+  adminStoptestDevices: (v: string) => `👤 Devices: ${v}`,
+  stoptestChangeVolumeBtn: '📦 Change test volume',
+  stoptestVolumePrompt:
+    '⌨️ Send the new test volume with:\n/stoptest vol 500MB\n\nExamples: 50MB, 500MB, 1GB, 2GB\nAllowed range: 1MB to 100000MB (GB means 1000MB).',
+  stoptestVolumeInvalid:
+    '⚠️ Invalid format. Example: /stoptest vol 500MB\nAllowed range: 1MB to 100000MB (GB means 1000MB); unchanged.',
+  stoptestVolumeApplied: (v: string) => `✅ Test volume changed to ${v}.`,
+
   // ————— Phase 9: service notifications + subscription-page discovery —————
   // Important standalone notices: warm opener, never a greeting on mid-flow
   // bubbles, plain text, and no promises beyond what the panel actually does:

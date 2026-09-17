@@ -16,7 +16,7 @@
  * never mint referrer rewards.
  */
 import type { UpdateContext } from '../types.ts';
-import { freeTestAvailable } from '../catalog/freeTest.ts';
+import { freeTestAvailable, loadFreeTestConfig } from '../catalog/freeTest.ts';
 import { isSalesStopped } from '../catalog/sales.ts';
 import {
   claimFreeTest,
@@ -36,12 +36,15 @@ function offerCopy(ui: Ui, volumeMb: number, durationDays: number): string {
 
 /**
  * Offer gating for the two CTA surfaces (first-ever /start, My Services
- * empty). Fail-closed by construction: a missing/malformed/disabled doc, a
- * commercial stop or an existing claim all mean NO offer, no error, no
- * writes of any kind — the surfaces just render as before.
+ * empty). Phase 23: VISIBILITY is independent of the admin enabled/disabled
+ * switch — the button stays so a stopped test answers with the friendly
+ * stopped notice on tap. Only fulfillment (claimFreeTestTap) consults
+ * `enabled` via freeTestAvailable. Fail-closed by construction otherwise: a
+ * missing/malformed doc, a commercial stop or an existing claim all mean NO
+ * offer, no error, no writes of any kind.
  */
 async function freeTestOfferEligible(ctx: UpdateContext): Promise<string | null> {
-  const loaded = await freeTestAvailable(ctx.db);
+  const loaded = await loadFreeTestConfig(ctx.db);
   if (!loaded.ok) return null;
   if (await isSalesStopped(ctx.db)) return null;
   const claim = await getFreeTestClaim(ctx.db, ctx.customerId);
@@ -61,7 +64,8 @@ export async function maybeOfferFreeTestOnStart(ctx: UpdateContext): Promise<voi
 export async function freeTestEmptyStateOffer(
   ctx: UpdateContext,
 ): Promise<string | null> {
-  const loaded = await freeTestAvailable(ctx.db);
+  // Phase 23: visibility ignores the admin switch (see freeTestOfferEligible).
+  const loaded = await loadFreeTestConfig(ctx.db);
   if (!loaded.ok) return null;
   if (await isSalesStopped(ctx.db)) return null;
   if ((await getFreeTestClaim(ctx.db, ctx.customerId)) !== null) return null;

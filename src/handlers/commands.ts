@@ -11,7 +11,7 @@ import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { showPricing } from './pricingAdmin.ts';
 import { showSalesStatus } from './salesAdmin.ts';
-import { showStoptestStatus } from './stoptestAdmin.ts';
+import { showStoptestStatus, handleStoptestVolumeCommand } from './stoptestAdmin.ts';
 import { handleUsersCommand } from './usersAdmin.ts';
 import { handleMsgCommand } from './msgAdmin.ts';
 import { handlePanelDeleteCommand } from './panelDelete.ts';
@@ -143,7 +143,12 @@ export async function handleCommand(
     case 'stoptest':
       // Phase 23: free-test stop/resume — view doubles as the control
       // surface (admin gate lives INSIDE showStoptestStatus; the command
-      // itself never mutates).
+      // itself never mutates). Phase 24: `/stoptest vol <50MB|1GB|…>` is the
+      // stateless volume-write subcommand (gate + validation inside).
+      if (parsed.args[0]?.toLowerCase() === 'vol') {
+        await handleStoptestVolumeCommand(ctx, parsed.args.slice(1).join(' '));
+        return;
+      }
       await showStoptestStatus(ctx);
       return;
     case 'panel_del':

@@ -695,6 +695,20 @@ export const fa = {
     '⚠️ همین حالا مدیر دیگری وضعیت را تغییر داد؛ تازه‌ترین حالت نمایش داده می‌شود.',
   adminStoptestSaveFailed: '⚠️ تغییر ذخیره نشد؛ وضعیت فعلی همین‌جا نشان داده می‌شود.',
 
+  // ————— Phase 24: admin-configurable free-test volume (SI megabytes) —————
+  // Canonical unit is the megabyte (1 MB = 1,000,000 B; 1 GB = 1000 MB).
+  // Every surface renders the CURRENT settings.free_test volume — never a
+  // hardcoded number. Per-order snapshots keep old services on old quotas.
+  adminStoptestVolume: (v: string) => `📦 حجم تست: ${v}`,
+  adminStoptestDuration: (v: string) => `⏱ مدت: ${v}`,
+  adminStoptestDevices: (v: string) => `👤 دستگاه: ${v}`,
+  stoptestChangeVolumeBtn: '📦 تغییر حجم تست',
+  stoptestVolumePrompt:
+    '⌨️ حجم جدید تست را با این دستور بفرستید:\n/stoptest vol 500MB\n\nمثال: 50MB ،500MB ،1GB ،2GB\nمحدوده مجاز: 1MB تا 100000MB ‏(GB معادل 1000MB‏).',
+  stoptestVolumeInvalid:
+    '⚠️ قالب نامعتبر است. مثال: /stoptest vol 500MB\nمحدوده مجاز: 1MB تا 100000MB ‏(GB معادل 1000MB‏)؛ تغییر نکرد.',
+  stoptestVolumeApplied: (v: string) => `✅ حجم تست به ${v} تغییر کرد.`,
+
   // ————— Phase 9: service notifications + subscription-page discovery —————
   // The 8B rule for these two alerts: they open with «درود زیبا»، they are
   // once-per-service by construction, «سلام» never appears, copy is plain
