@@ -67,6 +67,7 @@ import {
 import { runAnnouncementPass, showAnnouncements } from './announcements.ts';
 import { handlePricingCallback } from './pricingAdmin.ts';
 import { handleSalesCallback } from './salesAdmin.ts';
+import { handleStoptestCallback } from './stoptestAdmin.ts';
 import { handlePanelDeleteCallback } from './panelDelete.ts';
 import { handleTopupStart } from './topup.ts';
 import {
@@ -118,6 +119,12 @@ export async function handleCallback(
   // ———— Phase 13: sales stop switch (strict parser + admin gate inside) ————
   if (data.startsWith('sal:')) {
     await handleSalesCallback(ctx, data, callbackQueryId);
+    return;
+  }
+
+  // ———— Phase 23: free-test stop switch (strict parser + admin gate inside) ————
+  if (data.startsWith('stp:')) {
+    await handleStoptestCallback(ctx, data, callbackQueryId);
     return;
   }
 

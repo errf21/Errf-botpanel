@@ -5,6 +5,9 @@
  */
 import { newOrderId } from '../lib/security.ts';
 import { ensureSchedule } from './paymentReminders.ts';
+import type { CustomerRecord } from './customers.ts';
+import { countCustomers, listCustomersPage } from './customers.ts';
+import type { UsersFilter } from '../lib/validate.ts';
 export interface OrderRow {
   id: string;
   customer_id: number;
@@ -1459,4 +1462,73 @@ export async function reconcilePanelGone(
     via: `system:${observer}`,
   });
   return marked.ok;
+}
+
+/* ———— Phase 22: /users filter submenu (migration-free, SELECT-only) ————
+ * Customer filtering for the admin-only /users surface. Every predicate below
+ * reuses the EXISTING order-state meanings (no new states): `pending_payment`
+ * is pre-receipt, `awaiting_review` is post-receipt/pre-decision
+ * (`submitOrderReceipt`), `failed` matches `listOrdersFailed` (panel-deleted
+ * failures excluded there and here), and the active-service shape mirrors
+ * `effectiveExpiryIso` (booked `service_expires_at` first, else
+ * `service_created_at + duration_days` from the snapshot). Snapshot/D1 only —
+ * never a PasarGuard call. One row per customer structurally (selection is
+ * FROM customers with an EXISTS probe; counts use COUNT(DISTINCT)). */
+const USERS_FILTER_NOW = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
+
+/** Order-row predicate on alias `o` for one filter (no customer correlation). */
+function usersFilterOrderPredicate(filter: Exclude<UsersFilter, 'all'>): string {
+  switch (filter) {
+    case 'active':
+      return (
+        `o.kind = 'purchase' AND o.state = 'completed' AND o.panel_deleted_at IS NULL` +
+        ` AND json_extract(o.selections, '$.free_test') IS NOT true` +
+        ` AND (o.service_expires_at > ${USERS_FILTER_NOW}` +
+        ` OR (o.service_expires_at IS NULL AND (o.service_created_at IS NULL` +
+        ` OR CAST(json_extract(o.selections, '$.duration_days') AS INTEGER) IS NULL` +
+        ` OR datetime(o.service_created_at, '+' || CAST(json_extract(o.selections, '$.duration_days') AS INTEGER) || ' days') > ${USERS_FILTER_NOW})))`
+      );
+    case 'paywait':
+      return `o.state = 'pending_payment'`;
+    case 'review':
+      return `o.state = 'awaiting_review'`;
+    case 'failed':
+      return `o.state = 'failed' AND o.panel_deleted_at IS NULL`;
+    case 'deleted':
+      return `o.kind = 'purchase' AND o.state = 'completed' AND o.panel_deleted_at IS NOT NULL`;
+  }
+}
+
+/** Customers matching one filter (DISTINCT count, efficient, no full loads). */
+export async function countCustomersByFilter(db: D1Database, filter: UsersFilter): Promise<number> {
+  if (filter === 'all') return countCustomers(db);
+  const row = await db
+    .prepare(
+      `SELECT COUNT(DISTINCT o.customer_id) AS total FROM orders o WHERE ${usersFilterOrderPredicate(filter)}`,
+    )
+    .first<{ total: number }>();
+  return typeof row?.total === 'number' ? row.total : 0;
+}
+
+/** One page of customers matching one filter, newest-first (same row shape as listCustomersPage). */
+export async function listCustomersPageByFilter(
+  db: D1Database,
+  filter: UsersFilter,
+  limit: number,
+  offset: number,
+): Promise<Array<CustomerRecord & { balance_irt: number }>> {
+  if (filter === 'all') return listCustomersPage(db, limit, offset);
+  const result = await db
+    .prepare(
+      `SELECT c.id, c.telegram_user_id, c.telegram_username, c.first_name, c.last_name,
+              c.language_code, c.language, c.is_admin, c.created_at, c.updated_at, c.balance_irt
+         FROM customers c
+        WHERE EXISTS (SELECT 1 FROM orders o
+                       WHERE o.customer_id = c.id AND ${usersFilterOrderPredicate(filter)})
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT ?1 OFFSET ?2`,
+    )
+    .bind(limit, offset)
+    .all<CustomerRecord & { balance_irt: number }>();
+  return result.results;
 }

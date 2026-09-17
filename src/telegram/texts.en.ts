@@ -522,6 +522,31 @@ const en: Texts = {
   usersBtnNext: 'Next ▶️',
   usersBtnBackMenu: '🔙 Back to menu',
 
+  usersFilterHeader: '👥 Filter users',
+  usersFilterBack: '⬅️ Back',
+  usersFilterAll: (v: string) => `👥 All users (${v})`,
+  usersFilterActive: (v: string) => `🟢 Users with active service (${v})`,
+  usersFilterPaywait: (v: string) => `⏳ Users awaiting payment (${v})`,
+  usersFilterReview: (v: string) => `🔎 Users awaiting review (${v})`,
+  usersFilterFailed: (v: string) => `⚠️ Users with failed orders (${v})`,
+  usersFilterDeleted: (v: string) => `🗑 Users with deleted service (${v})`,
+  usersFilterLabel(filter: string): string {
+    switch (filter) {
+      case 'active':
+        return '🟢 Active service';
+      case 'paywait':
+        return '⏳ Awaiting payment';
+      case 'review':
+        return '🔎 Awaiting review';
+      case 'failed':
+        return '⚠️ Failed';
+      case 'deleted':
+        return '🗑 Deleted';
+      default:
+        return '👥 All users';
+    }
+  },
+
   inviteHeader: '🤝 Invite friends',
   inviteLinkNone: (link: string) => `🔗 Your invite link:\n${link}`,
   inviteCount: (n: number) => `Successful invites: ${n}`,
@@ -641,6 +666,23 @@ const en: Texts = {
   adminSalesConflict:
     '⚠️ Another admin just changed the state; showing the newest one.',
   adminSalesSaveFailed: '⚠️ The change could not be saved; showing the current state.',
+
+  freeTestStoppedNotice:
+    '🛑 The free test is paused for now 😅\nAs soon as it is back, you can grab yours ❤️',
+  adminStoptestStateActive:
+    '🎁 Free test status: 🟢 active\nNew users can claim a free test.',
+  adminStoptestStateStopped:
+    '🎁 Free test status: 🔴 stopped\nNew test requests are blocked; current active tests stay untouched.',
+  adminStoptestUpdated: (v: string) => `Last change: ${v}`,
+  adminStoptestMalformed:
+    '⚠️ The "free_test" settings document is invalid; the test is unavailable and the switch cannot be changed without fixing it.',
+  adminStoptestStoppedToast: '🛑 Free test stopped.',
+  adminStoptestStartedToast: '🟢 Free test resumed.',
+  adminStoptestAlreadyStopped: 'The free test is already stopped.',
+  adminStoptestAlreadyStarted: 'The free test is already active.',
+  adminStoptestConflict:
+    '⚠️ Another admin just changed the state; showing the newest one.',
+  adminStoptestSaveFailed: '⚠️ The change could not be saved; showing the current state.',
 
   // ————— Phase 9: service notifications + subscription-page discovery —————
   // Important standalone notices: warm opener, never a greeting on mid-flow

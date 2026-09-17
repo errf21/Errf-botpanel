@@ -106,6 +106,13 @@ export async function claimFreeTestTap(
 
   const loaded = await freeTestAvailable(db);
   if (!loaded.ok) {
+    // Phase 23: an admin-stopped test gets the friendly stopped notice as a
+    // readable bubble (every other failure keeps the neutral toast).
+    if (loaded.error === 'free_test:disabled') {
+      await ctx.api.answerCallbackQuery(callbackQueryId);
+      await ctx.api.sendMessage(ctx.chatId, t.freeTestStoppedNotice);
+      return;
+    }
     await ctx.api.answerCallbackQuery(callbackQueryId, t.freeTestUnavailable, true);
     return;
   }

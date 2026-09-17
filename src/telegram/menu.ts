@@ -8,7 +8,7 @@ import type {
 import type { Texts } from './texts.ts';
 import type { Ui } from './i18n.ts';
 import { EN_UI, FA_UI } from './i18n.ts';
-import type { UsersListMode } from '../lib/validate.ts';
+import type { UsersFilter, UsersListMode } from '../lib/validate.ts';
 
 /**
  * Callback data vocabulary. Anything not in this exact set is rejected —
@@ -790,6 +790,26 @@ export function salesKeyboard(stopped: boolean): TelegramInlineKeyboardMarkup {
   };
 }
 
+/* ———— Phase 23: free-test stop switch (/stoptest) ————
+ * Persian-only operational surface (same rule as the `sal:` keyboard).
+ * Toggle semantics: stop = block NEW free-test requests; existing test
+ * services are never touched. `stp:view` simply re-renders the state.
+ * `broken` (missing/malformed doc) offers only the refresh row — the switch
+ * never invents policy by writing a canned document.
+ */
+export function stoptestKeyboard(state: 'active' | 'stopped' | 'broken'): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      ...(state === 'stopped'
+        ? [[button('▶️ فعال‌سازی تست رایگان', 'stp:start')]]
+        : state === 'active'
+          ? [[button('⏸ توقف تست رایگان', 'stp:stop')]]
+          : []),
+      [button('🔄 نمایش دوباره', 'stp:view')],
+    ],
+  };
+}
+
 /* ———— Phase 20: /users admin dashboard ————
  * Persian-only operational surface (same rule as adm:/tsk:/prc:/sal:
  * keyboards: literal labels via the fa bundle at the call site, never
@@ -799,12 +819,19 @@ export function salesKeyboard(stopped: boolean): TelegramInlineKeyboardMarkup {
  * Payloads stay far under Telegram's 64-byte callback_data limit.
  */
 
-export function usersCallbackList(next: UsersListMode, page: number): string {
-  return `usr:list:${next}:${page}`;
+export function usersCallbackList(next: UsersListMode, page: number, filter: UsersFilter = 'all'): string {
+  return filter === 'all' ? `usr:list:${next}:${page}` : `usr:list:${next}:${page}:${filter}`;
 }
 
-export function usersCallbackDet(tgid: string, next: UsersListMode, page: number): string {
-  return `usr:det:${tgid}:${next}:${page}`;
+export function usersCallbackDet(tgid: string, next: UsersListMode, page: number, filter: UsersFilter = 'all'): string {
+  return filter === 'all'
+    ? `usr:det:${tgid}:${next}:${page}`
+    : `usr:det:${tgid}:${next}:${page}:${filter}`;
+}
+
+/** Phase 22: /users filter submenu entry. */
+export function usersCallbackFilter(): string {
+  return 'usr:filter';
 }
 
 export function usersCallbackSvc(tgid: string, page: number): string {
@@ -835,10 +862,26 @@ export function usersCallbackRep(tgid: string): string {
 export function usersDashboardKeyboard(t: Texts): TelegramInlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [button(t.usersBtnUsers, usersCallbackList('det', 0)), button(t.usersBtnSearch, 'usr:search')],
+      [button(t.usersBtnUsers, usersCallbackFilter()), button(t.usersBtnSearch, 'usr:search')],
       [button(t.usersBtnServices, usersCallbackList('svc', 0)), button(t.usersBtnOrders, usersCallbackList('ord', 0))],
       [button(t.usersBtnRepurchases, usersCallbackList('rep', 0)), button(t.usersBtnWallet, usersCallbackList('wal', 0))],
       [button(t.usersBtnBackMenu, CB.ACT_BACK_MENU)],
+    ],
+  };
+}
+
+/* ———— Phase 22: /users filter submenu ————
+ * One button per row (clean single column) + a Back row to the dashboard.
+ * Labels (with live counts) are formatted by the caller via the fa bundle;
+ * this builder only places them. */
+export function usersFilterKeyboard(
+  t: Texts,
+  entries: Array<{ label: string; callback: string }>,
+): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      ...entries.map((entry) => [button(entry.label, entry.callback)]),
+      [button(t.usersFilterBack, 'usr:menu')],
     ],
   };
 }
@@ -864,13 +907,13 @@ export function usersListKeyboard(
 export function userProfileKeyboard(
   t: Texts,
   tgid: string,
-  origin: { next: UsersListMode; page: number },
+  origin: { next: UsersListMode; page: number; filter?: UsersFilter },
 ): TelegramInlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [button(t.usersBtnServices, usersCallbackSvc(tgid, 0)), button(t.usersBtnOrders, usersCallbackOrd(tgid, 0))],
       [button(t.usersBtnRepurchases, usersCallbackRep(tgid)), button(t.usersBtnWallet, usersCallbackWal(tgid))],
-      [button(t.usersBackUsers, usersCallbackList(origin.next, origin.page))],
+      [button(t.usersBackUsers, usersCallbackList(origin.next, origin.page, origin.filter ?? 'all'))],
     ],
   };
 }

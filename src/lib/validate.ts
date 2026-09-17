@@ -100,6 +100,21 @@ export function parseSalesCallback(data: string): SalesAction | null {
 }
 
 /**
+ * Phase 23: the free-test stop switch lives in the `stp:` namespace. The
+ * generic pattern already admits the shape, but the handler consumes ONLY
+ * this fixed vocabulary — nothing else can ever reach the stoptest surface.
+ */
+const STOPTEST_CALLBACK_PATTERN = /^stp:(view|stop|start)$/;
+
+export type StoptestAction = 'view' | 'stop' | 'start';
+
+/** Parses ONLY data that already matched STOPTEST_CALLBACK_PATTERN. */
+export function parseStoptestCallback(data: string): StoptestAction | null {
+  const match = STOPTEST_CALLBACK_PATTERN.exec(data);
+  return match ? (match[1] as StoptestAction) : null;
+}
+
+/**
  * Admin pricing value entry: Persian/Arabic digits + separators are accepted
  * (same normalization family as parsePositiveInt), but pricing must reach the
  * 1e9 config cap, so the digit ceiling is 12 — the safe-integer bound check
@@ -215,9 +230,17 @@ const USERS_LIST_MODE_PATTERN = '(det|svc|ord|rep|wal)';
 const USERS_TGID_PATTERN = '[0-9]{1,20}';
 const USERS_PAGE_PATTERN = '[0-9]{1,4}';
 
+/* ———— Phase 22: /users filter submenu ————
+ * The filter rides entirely in callback data (no session state, no
+ * admin_actions kind, no migration). It is an OPTIONAL trailing token, so
+ * pre-existing in-flight keyboards (without it) keep parsing with
+ * filter='all'. */
+const USERS_FILTER_PATTERN = '(all|active|paywait|review|failed|deleted)';
+const USERS_FILTER_SUFFIX = `(?::${USERS_FILTER_PATTERN})?`;
+
 const USERS_CALLBACK_PATTERN = new RegExp(
-  `^usr:(?:menu|search|list:${USERS_LIST_MODE_PATTERN}:${USERS_PAGE_PATTERN}` +
-    `|det:${USERS_TGID_PATTERN}:${USERS_LIST_MODE_PATTERN}:${USERS_PAGE_PATTERN}` +
+  `^usr:(?:menu|search|filter|list:${USERS_LIST_MODE_PATTERN}:${USERS_PAGE_PATTERN}${USERS_FILTER_SUFFIX}` +
+    `|det:${USERS_TGID_PATTERN}:${USERS_LIST_MODE_PATTERN}:${USERS_PAGE_PATTERN}${USERS_FILTER_SUFFIX}` +
     `|svc:${USERS_TGID_PATTERN}:${USERS_PAGE_PATTERN}` +
     `|svcd:${USERS_TGID_PATTERN}:[0-9A-HJKMNP-TV-Z]{28}` +
     `|ord:${USERS_TGID_PATTERN}:${USERS_PAGE_PATTERN}` +
@@ -227,11 +250,14 @@ const USERS_CALLBACK_PATTERN = new RegExp(
 
 export type UsersListMode = 'det' | 'svc' | 'ord' | 'rep' | 'wal';
 
+export type UsersFilter = 'all' | 'active' | 'paywait' | 'review' | 'failed' | 'deleted';
+
 export type UsersCallback =
   | { action: 'menu' }
   | { action: 'search' }
-  | { action: 'list'; next: UsersListMode; page: number }
-  | { action: 'det'; tgid: string; next: UsersListMode; page: number }
+  | { action: 'filter' }
+  | { action: 'list'; next: UsersListMode; page: number; filter: UsersFilter }
+  | { action: 'det'; tgid: string; next: UsersListMode; page: number; filter: UsersFilter }
   | { action: 'svc'; tgid: string; page: number }
   | { action: 'svcd'; tgid: string; orderId: string }
   | { action: 'ord'; tgid: string; page: number }
@@ -252,6 +278,21 @@ function parseUsersTgid(raw: string): string | null {
   return raw;
 }
 
+function parseUsersFilter(raw: string | undefined): UsersFilter | null {
+  if (raw === undefined) return 'all';
+  if (
+    raw === 'all' ||
+    raw === 'active' ||
+    raw === 'paywait' ||
+    raw === 'review' ||
+    raw === 'failed' ||
+    raw === 'deleted'
+  ) {
+    return raw;
+  }
+  return null;
+}
+
 /** Parses ONLY data that already matched USERS_CALLBACK_PATTERN. */
 export function parseUsersCallback(data: string): UsersCallback | null {
   if (!USERS_CALLBACK_PATTERN.test(data)) return null;
@@ -259,11 +300,13 @@ export function parseUsersCallback(data: string): UsersCallback | null {
   const action = parts[1];
   if (action === 'menu') return { action: 'menu' };
   if (action === 'search') return { action: 'search' };
+  if (action === 'filter') return { action: 'filter' };
   if (action === 'list') {
     const next = parts[2];
     const page = parseUsersPage(parts[3] ?? '');
-    if ((next === 'det' || next === 'svc' || next === 'ord' || next === 'rep' || next === 'wal') && page !== null) {
-      return { action: 'list', next, page };
+    const filter = parseUsersFilter(parts[4]);
+    if ((next === 'det' || next === 'svc' || next === 'ord' || next === 'rep' || next === 'wal') && page !== null && filter !== null) {
+      return { action: 'list', next, page, filter };
     }
     return null;
   }
@@ -271,8 +314,9 @@ export function parseUsersCallback(data: string): UsersCallback | null {
     const tgid = parseUsersTgid(parts[2] ?? '');
     const next = parts[3];
     const page = parseUsersPage(parts[4] ?? '');
-    if (tgid !== null && (next === 'det' || next === 'svc' || next === 'ord' || next === 'rep' || next === 'wal') && page !== null) {
-      return { action: 'det', tgid, next, page };
+    const filter = parseUsersFilter(parts[5]);
+    if (tgid !== null && (next === 'det' || next === 'svc' || next === 'ord' || next === 'rep' || next === 'wal') && page !== null && filter !== null) {
+      return { action: 'det', tgid, next, page, filter };
     }
     return null;
   }

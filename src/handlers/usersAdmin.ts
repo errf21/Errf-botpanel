@@ -17,13 +17,13 @@ import {
   countCustomers,
   getCustomer,
   getCustomerByUsername,
-  listCustomersPage,
 } from '../db/customers.ts';
 import {
   countActiveRepurchases,
   countActiveServicesForCustomer,
   countAliveServices,
   countAllServices,
+  countCustomersByFilter,
   countOrdersForCustomer,
   countServicesForCustomerAdmin,
   findActiveRenewalForService,
@@ -31,6 +31,7 @@ import {
   getOrderById,
   isRepurchaseProvisioningStarted,
   listActiveRepurchasesForCustomer,
+  listCustomersPageByFilter,
   listOrdersForCustomerAdmin,
   listServicesForCustomerAdmin,
 } from '../db/orders.ts';
@@ -47,15 +48,17 @@ import {
   userProfileKeyboard,
   usersBackKeyboard,
   usersCallbackDet,
+  usersCallbackFilter,
   usersCallbackList,
   usersCallbackOrdd,
   usersCallbackSvcd,
   usersDashboardKeyboard,
+  usersFilterKeyboard,
   usersListKeyboard,
 } from '../telegram/menu.ts';
 import { fa } from '../telegram/texts.ts';
 import { FA_UI } from '../telegram/i18n.ts';
-import { parseUsernameTarget, type UsersListMode } from '../lib/validate.ts';
+import { parseUsernameTarget, type UsersCallback, type UsersFilter, type UsersListMode } from '../lib/validate.ts';
 
 export const USERS_PAGE_SIZE = 8;
 const MESSAGE_CAP = 3900;
@@ -174,7 +177,7 @@ export async function handleUsersCommand(ctx: UpdateContext, args: string[]): Pr
   );
 }
 
-/* ———— S1: user list (mode-aware picker, 8/page) ———— */
+/* ———— S1: user list (mode-aware picker, 8/page, optional status filter) ———— */
 
 const LIST_TITLE: Record<UsersListMode, string> = {
   det: fa.usersListHeader,
@@ -184,30 +187,72 @@ const LIST_TITLE: Record<UsersListMode, string> = {
   wal: fa.usersWalletHeader(fa.accountNone),
 };
 
+const FILTER_ORDER: readonly UsersFilter[] = ['all', 'active', 'paywait', 'review', 'failed', 'deleted'];
+
+/** Filter submenu: one button per status filter with a live DISTINCT count. Admin-only. */
+export async function showUsersFilterMenu(ctx: UpdateContext): Promise<void> {
+  if (!ctx.isAdmin) {
+    await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
+    return;
+  }
+  const counts = await Promise.all(FILTER_ORDER.map((filter) => countCustomersByFilter(ctx.db, filter)));
+  const labelOf = (filter: UsersFilter, count: number): string => {
+    const v = digits(count);
+    switch (filter) {
+      case 'active':
+        return fa.usersFilterActive(v);
+      case 'paywait':
+        return fa.usersFilterPaywait(v);
+      case 'review':
+        return fa.usersFilterReview(v);
+      case 'failed':
+        return fa.usersFilterFailed(v);
+      case 'deleted':
+        return fa.usersFilterDeleted(v);
+      default:
+        return fa.usersFilterAll(v);
+    }
+  };
+  await ctx.api.sendMessage(
+    ctx.chatId,
+    fa.usersFilterHeader,
+    usersFilterKeyboard(
+      fa,
+      FILTER_ORDER.map((filter, index) => ({
+        label: labelOf(filter, counts[index] ?? 0),
+        callback: usersCallbackList('det', 0, filter),
+      })),
+    ),
+  );
+}
+
 export async function showUsersPage(
   ctx: UpdateContext,
   next: UsersListMode,
   page: number,
+  filter: UsersFilter = 'all',
 ): Promise<void> {
   if (!ctx.isAdmin) {
     await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
     return;
   }
   const safePage = Number.isSafeInteger(page) && page >= 0 ? Math.min(page, 9999) : 0;
-  const total = await countCustomers(ctx.db);
+  const listBack = filter === 'all' ? 'usr:menu' : usersCallbackFilter();
+  const total = await countCustomersByFilter(ctx.db, filter);
   const pages = Math.max(1, Math.ceil(total / USERS_PAGE_SIZE));
   const clamped = Math.min(safePage, pages - 1);
-  const rows = await listCustomersPage(ctx.db, USERS_PAGE_SIZE, clamped * USERS_PAGE_SIZE);
+  const rows = await listCustomersPageByFilter(ctx.db, filter, USERS_PAGE_SIZE, clamped * USERS_PAGE_SIZE);
   if (rows.length === 0) {
     await ctx.api.sendMessage(
       ctx.chatId,
       `${LIST_TITLE[next]}\n\n${fa.usersListEmpty}`,
-      usersBackKeyboard(fa.usersBackDashboard, 'usr:menu'),
+      usersBackKeyboard(fa.usersBackDashboard, listBack),
     );
     return;
   }
   const lines = [
     LIST_TITLE[next],
+    ...(filter === 'all' ? [] : [fa.usersFilterLabel(filter)]),
     fa.usersListPage(digits(clamped + 1), digits(pages)),
     '',
   ];
@@ -218,15 +263,15 @@ export async function showUsersPage(
   });
   const entries = rows.map((row) => ({
     label: `${clamped * USERS_PAGE_SIZE + rows.indexOf(row) + 1}. ${displayName(row)}`.slice(0, 60),
-    callback: usersCallbackDet(row.telegram_user_id, next, clamped),
+    callback: usersCallbackDet(row.telegram_user_id, next, clamped, filter),
   }));
   await ctx.api.sendMessage(
     ctx.chatId,
     cap(lines.join('\n')),
     usersListKeyboard(fa, entries, {
-      prev: clamped > 0 ? usersCallbackList(next, clamped - 1) : null,
-      next: clamped + 1 < pages ? usersCallbackList(next, clamped + 1) : null,
-      back: 'usr:menu',
+      prev: clamped > 0 ? usersCallbackList(next, clamped - 1, filter) : null,
+      next: clamped + 1 < pages ? usersCallbackList(next, clamped + 1, filter) : null,
+      back: listBack,
     }),
   );
 }
@@ -238,6 +283,7 @@ export async function showUserDetail(
   tgid: string,
   originNext: UsersListMode,
   originPage: number,
+  originFilter: UsersFilter = 'all',
 ): Promise<void> {
   if (!ctx.isAdmin) {
     await ctx.api.sendMessage(ctx.chatId, fa.cmdAdminOnly);
@@ -277,7 +323,7 @@ export async function showUserDetail(
   await ctx.api.sendMessage(
     ctx.chatId,
     cap(lines.join('\n')),
-    userProfileKeyboard(fa, record.telegram_user_id, { next: originNext, page: originPage }),
+    userProfileKeyboard(fa, record.telegram_user_id, { next: originNext, page: originPage, filter: originFilter }),
   );
 }
 
@@ -646,17 +692,7 @@ export async function showUsersSearchHint(ctx: UpdateContext): Promise<void> {
 
 export async function handleUsersCallback(
   ctx: UpdateContext,
-  action:
-    | { action: 'menu' }
-    | { action: 'search' }
-    | { action: 'list'; next: UsersListMode; page: number }
-    | { action: 'det'; tgid: string; next: UsersListMode; page: number }
-    | { action: 'svc'; tgid: string; page: number }
-    | { action: 'svcd'; tgid: string; orderId: string }
-    | { action: 'ord'; tgid: string; page: number }
-    | { action: 'ordd'; tgid: string; orderId: string }
-    | { action: 'wal'; tgid: string }
-    | { action: 'rep'; tgid: string },
+  action: UsersCallback,
   callbackQueryId: string,
 ): Promise<void> {
   if (!ctx.isAdmin) {
@@ -671,10 +707,13 @@ export async function handleUsersCallback(
     case 'search':
       await showUsersSearchHint(ctx);
       return;
+    case 'filter':
+      await showUsersFilterMenu(ctx);
+      return;
     case 'list': {
       // A repurchase/wallet "list" pick reuses the user picker, then jumps
       // straight into that subsection on select (progressive disclosure).
-      await showUsersPage(ctx, action.next, action.page);
+      await showUsersPage(ctx, action.next, action.page, action.filter);
       return;
     }
     case 'det': {
@@ -696,7 +735,7 @@ export async function handleUsersCallback(
         await showUserWallet(ctx, action.tgid);
         return;
       }
-      await showUserDetail(ctx, action.tgid, action.next, action.page);
+      await showUserDetail(ctx, action.tgid, action.next, action.page, action.filter);
       return;
     }
     case 'svc':

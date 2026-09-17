@@ -524,6 +524,32 @@ export const fa = {
   usersBtnNext: 'بعدی ▶️',
   usersBtnBackMenu: '🔙 بازگشت به منو',
 
+  // ————— Phase 22: /users filter submenu (Persian-only operational surface) —————
+  usersFilterHeader: '👥 فیلتر کاربران',
+  usersFilterBack: '⬅️ بازگشت',
+  usersFilterAll: (v: string) => `👥 همه کاربران (${v})`,
+  usersFilterActive: (v: string) => `🟢 کاربران دارای سرویس فعال (${v})`,
+  usersFilterPaywait: (v: string) => `⏳ کاربران با سفارش در انتظار پرداخت (${v})`,
+  usersFilterReview: (v: string) => `🔎 کاربران با سفارش در انتظار بررسی (${v})`,
+  usersFilterFailed: (v: string) => `⚠️ کاربران با سفارش ناموفق (${v})`,
+  usersFilterDeleted: (v: string) => `🗑 کاربران دارای سرویس حذف‌شده (${v})`,
+  usersFilterLabel(filter: string): string {
+    switch (filter) {
+      case 'active':
+        return '🟢 سرویس فعال';
+      case 'paywait':
+        return '⏳ در انتظار پرداخت';
+      case 'review':
+        return '🔎 در انتظار بررسی';
+      case 'failed':
+        return '⚠️ ناموفق';
+      case 'deleted':
+        return '🗑 حذف‌شده از پنل';
+      default:
+        return '👥 همه کاربران';
+    }
+  },
+
   inviteHeader: '🤝 دعوت از دوستان',
   inviteLinkNone: (link: string) => `🔗 لینک دعوت شما:\n${link}`,
   inviteCount: (n: number) => `دعوت‌های موفق: ${n}`,
@@ -647,6 +673,27 @@ export const fa = {
   adminSalesConflict:
     '⚠️ همین حالا مدیر دیگری وضعیت را تغییر داد؛ تازه‌ترین حالت نمایش داده می‌شود.',
   adminSalesSaveFailed: '⚠️ تغییر ذخیره نشد؛ وضعیت فعلی همین‌جا نشان داده می‌شود.',
+
+  // ————— Phase 23: free-test stop switch (/stoptest) —————
+  // TEMPORARY stop of NEW free-test requests only. Existing test services
+  // (orders, claims, panel services, notifications) are never touched by the
+  // switch — the claim gate is the single enforcement point.
+  freeTestStoppedNotice:
+    '🛑 رفیق، سرویس تست فعلاً متوقفه 😅\nبه‌محض اینکه دوباره فعالش کنیم، می‌تونی تستت رو بگیری ❤️',
+  adminStoptestStateActive:
+    '🎁 وضعیت تست رایگان: 🟢 فعال\nکاربران جدید می‌توانند تست رایگان بگیرند.',
+  adminStoptestStateStopped:
+    '🎁 وضعیت تست رایگان: 🔴 متوقف\nدرخواست‌های جدید تست مسدود است؛ تست‌های فعال فعلی دست‌نخورده می‌مانند.',
+  adminStoptestUpdated: (v: string) => `آخرین تغییر: ${v}`,
+  adminStoptestMalformed:
+    '⚠️ سند تنظیمات «free_test» معتبر نیست؛ تست فعلاً در دسترس نیست و تغییر وضعیت بدون اصلاح سند ممکن نیست.',
+  adminStoptestStoppedToast: '🛑 تست رایگان متوقف شد.',
+  adminStoptestStartedToast: '🟢 تست رایگان دوباره فعال شد.',
+  adminStoptestAlreadyStopped: 'تست رایگان از قبل متوقف است.',
+  adminStoptestAlreadyStarted: 'تست رایگان از قبل فعال است.',
+  adminStoptestConflict:
+    '⚠️ همین حالا مدیر دیگری وضعیت را تغییر داد؛ تازه‌ترین حالت نمایش داده می‌شود.',
+  adminStoptestSaveFailed: '⚠️ تغییر ذخیره نشد؛ وضعیت فعلی همین‌جا نشان داده می‌شود.',
 
   // ————— Phase 9: service notifications + subscription-page discovery —————
   // The 8B rule for these two alerts: they open with «درود زیبا»، they are

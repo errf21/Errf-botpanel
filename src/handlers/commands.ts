@@ -11,6 +11,7 @@ import { showTicketQueue } from './support.ts';
 import { startAnnounceDraft, showAnnouncements, saveAnnounceDraft } from './announcements.ts';
 import { showPricing } from './pricingAdmin.ts';
 import { showSalesStatus } from './salesAdmin.ts';
+import { showStoptestStatus } from './stoptestAdmin.ts';
 import { handleUsersCommand } from './usersAdmin.ts';
 import { handleMsgCommand } from './msgAdmin.ts';
 import { handlePanelDeleteCommand } from './panelDelete.ts';
@@ -138,6 +139,12 @@ export async function handleCommand(
       // Phase 13: sales stop/resume — view doubles as the control surface
       // (admin gate lives INSIDE showSalesStatus, same precedent as /pricing).
       await showSalesStatus(ctx);
+      return;
+    case 'stoptest':
+      // Phase 23: free-test stop/resume — view doubles as the control
+      // surface (admin gate lives INSIDE showStoptestStatus; the command
+      // itself never mutates).
+      await showStoptestStatus(ctx);
       return;
     case 'panel_del':
       // Phase 16: admin-only service deletion; the explicit confirmation card
