@@ -60,9 +60,9 @@ export type PanelResult<T> =
   | { ok: false; kind: PanelErrorKind; status: number; detail: string };
 
 /** Verified upstream GroupsResponse; expose no inbound/user/admin metadata. */
-export interface PanelGroup { id:number; name:string; disabled?:boolean; }
+export interface PanelGroup { id:number; name:string; disabled?:boolean; statusVerified?:false; }
 interface GroupPage { groups:PanelGroup[]; total:number; }
-function groupPage(value:unknown):GroupPage|null {
+function groupPage(value:unknown, simple=false):GroupPage|null {
   const object=asRecord(value);
   if (!object || !Array.isArray(object.groups) || !Number.isSafeInteger(object.total) || Number(object.total)<0 || Number(object.total)>1000 || object.groups.length>100) return null;
   const groups:PanelGroup[]=[],seen=new Set<number>();
@@ -71,7 +71,7 @@ function groupPage(value:unknown):GroupPage|null {
     if(!group || typeof group.id!=='number' || !Number.isSafeInteger(group.id) || group.id<1 || group.id>1000000 ||
       typeof group.name!=='string' || !group.name.trim() || group.name.length>64 || /[\x00-\x1f\x7f]/.test(group.name) || seen.has(group.id))return null;
     if(group.is_disabled!==undefined && typeof group.is_disabled!=='boolean')return null;
-    seen.add(group.id);groups.push({id:group.id,name:group.name,...(group.is_disabled===true?{disabled:true}:{})});
+    seen.add(group.id);groups.push({id:group.id,name:group.name,...(simple?{statusVerified:false as const}:group.is_disabled===true?{disabled:true}:{})});
   }
   return {groups,total:Number(object.total)};
 }
@@ -478,15 +478,20 @@ export class PasarGuardClient {
     return this.#request('GET', `/api/group/${id}`, undefined, asRecord, timeoutMs);
   }
 
-  /** PasarGuard app/routers/group.py: prefix /api/group + route "s".
-   * Full read permission matches existing getGroup verification. No invented
-   * fallback endpoints, guessed IDs or partial list accepted as complete. */
+  /** Upstream v5.4.1: full list uses groups.read; the documented simple
+   * list uses groups.read_simple. Only a 403 permits this capability fallback,
+   * on the same validated origin/key. Simple IDs/names do NOT prove status. */
   async listGroups():Promise<PanelResult<PanelGroup[]>> {
-    const groups:PanelGroup[]=[],seen=new Set<number>();let total:number|null=null;
     const deadline=Date.now()+20000;
+    const full=await this.#groupList(false,deadline);
+    return !full.ok && full.kind==='permission' && full.status===403
+      ? this.#groupList(true,deadline) : full;
+  }
+  async #groupList(simple:boolean,deadline:number):Promise<PanelResult<PanelGroup[]>> {
+    const groups:PanelGroup[]=[],seen=new Set<number>();let total:number|null=null;
     for(let page=0;page<10;page++) {
       const remaining=deadline-Date.now();if(remaining<=0)return failure(0,'group_discovery_timeout','timeout');
-      const result=await this.#request('GET',`/api/groups?offset=${groups.length}&limit=100`,undefined,groupPage,remaining);
+      const result=await this.#request('GET',`/api/groups${simple?'/simple':''}?offset=${groups.length}&limit=100`,undefined,value=>groupPage(value,simple),remaining);
       if(!result.ok)return result;
       if(!result.data || (total!==null && total!==result.data.total))return failure(0,'group_list_changed','parse');
       total=result.data.total;

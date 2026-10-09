@@ -1,3 +1,5 @@
+> Historical report for the preceding fix. For the current permission-aware discovery behavior and simple-only status limitation, see [group-simple-permissions-fix.md](group-simple-permissions-fix.md). The earlier test totals below are historical, not the current totals.
+
 # MraPanel group configuration fix — implementation and test report
 
 ## Exact baseline and scope

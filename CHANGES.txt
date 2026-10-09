@@ -1,3 +1,53 @@
+ERRF BotPanel — Permission-aware group discovery (base 4757113)
+============================================================
+Exact base: 4757113f85c3720348ef08c5dea39e7639fceb00, 239 tracked files.
+Baseline: 909 passing tests. Final: 932 passed, zero failures/skips/cancellations.
+TypeScript and Cloudflare Worker dry-run passed; 23 new regression tests passed.
+
+ROOT CAUSE / CONTRACT
+The full GET /api/groups endpoint requires groups.read in upstream v5.4.1.
+The UI's Groups - View simple list corresponds to a different documented route:
+GET /api/groups/simple, requiring groups.read_simple. Template permissions are
+separate. The existing X-Api-Key header, GET method and offset/limit are correct.
+The exact live MraPanel version, effective key scopes and API responses have NOT
+been independently verified; this is not a claim of a successful live fix.
+
+IMPLEMENTED
+- Full-list HTTP 403 can use the documented simple-list endpoint with the same
+  validated origin, API key and shared bounded discovery deadline.
+- No endpoint fallback for auth, malformed response, network or other failures.
+- Numeric IDs, strict schemas, pagination, public-DNS validation, redirect refusal,
+  timeouts, secret redaction and cross-panel isolation remain intact.
+- Simple groups explicitly carry statusVerified=false: IDs/names are available,
+  but disabled status is unknown. UI shows an honest localized warning and blocks
+  unverified saving. Direct API calls still cannot bypass full-detail checks.
+- Read-only Test reports groups_status_unverified for this capability limitation,
+  not ok or a misleading missing selection. Existing saved selections remain.
+- Detail 403 and account-check 403 have separate localized diagnostics. Removed
+  instructions to enable an assumed/nonexistent additional permission toggle.
+- Migration group-status checks are unchanged: simple list is not proof that a
+  destination group is enabled. This safety limitation is deliberately preserved.
+
+FILES
+src/pasarguard/client.ts; src/panels/admin.ts; src/panels/form.ts;
+src/telegram/texts.ts; src/telegram/texts.en.ts;
+tests/panelGroups.test.ts; tests/mrapanelGroupsWorkflow.test.ts;
+tests/groupSimplePermissions.test.ts (new); tests/groupSimpleRuntime.test.ts (new);
+docs/evidence/group-simple-permissions-541.json (new);
+docs/en/group-simple-permissions-fix.md (new);
+docs/en/mrapanel-group-configuration-fix.md (historical-report banner); CHANGES.txt.
+
+SAFETY / SETUP
+No new secret, variable, migration or dependency. No existing key is rotated.
+Keep PANEL_COUNT/PANEL_n_URL/PANEL_n_NAME/PANEL_n_API_KEY, PANEL_ENCRYPTION_KEY,
+legacy settings, admin IDs, origin and saved selections unchanged. Do not rerun
+migration 0025. No production deployment, settings, secrets, or data changed.
+Group discovery is ready for controlled verification; full configuration remains
+blocked for simple-only credentials until the upstream detail capability exists.
+See docs/en/group-simple-permissions-fix.md for actual validation and limitations.
+
+--- Earlier change notes (preserved) ---
+
 ERRF BotPanel — MraPanel group configuration and diagnostics fix
 ==============================================================
 BASE: public master fe5cf8cd44cf1f4b8f4c1e8703161c93cd99d803 (235 tracked files).

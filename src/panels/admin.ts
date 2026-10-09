@@ -87,6 +87,7 @@ async function verifyConfiguration(config: PanelConfig, groups: number[] | null)
             const discovered=await client.listGroups();
             if(!discovered.ok)return `group_discovery_${discovered.kind}_${discovered.status}`;
             if(!discovered.data.length)return 'groups_none_available';
+            if(discovered.data.some(group=>group.statusVerified===false))return 'groups_status_unverified';
             if(discovered.data.every(group=>group.disabled===true))return 'groups_none_enabled';
             return 'groups_missing';
         }
@@ -107,6 +108,9 @@ function groupFailureCode(result:string):string {
     if(/^group_disabled_/.test(result))return 'group_disabled';
     if(/^group_response_unexpected_/.test(result))return 'group_response_unexpected';
     if(/^group_read_not_found_404$/.test(result))return 'group_not_found';
+    if(result==='groups_status_unverified')return 'groups_status_unverified';
+    if(result==='group_read_permission_403')return 'group_details_permission_denied';
+    if(/^test_permission_/.test(result))return 'account_permission_denied';
     if(/^group_discovery_not_found_404$/.test(result))return 'unsupported_api';
     if(/^(group_read|group_discovery|test)_auth_/.test(result))return 'key_rejected';
     if(/^(group_read|group_discovery|test)_permission_/.test(result))return 'permission_denied';
@@ -116,7 +120,7 @@ function groupFailureCode(result:string):string {
 }
 function groupFailureText(ctx:UpdateContext,result:string):string {
     const t=ctx.ui.t,code=groupFailureCode(result);
-    const messages:Record<string,string>={groups_missing:t.panelTestGroupsMissing,groups_none_available:t.panelGroupsEmpty,
+    const messages:Record<string,string>={account_permission_denied:t.panelGroupsAccountPermission,groups_missing:t.panelTestGroupsMissing,groups_status_unverified:t.panelGroupsStatusUnverified,group_details_permission_denied:t.panelGroupsDetailsPermission,groups_none_available:t.panelGroupsEmpty,
         groups_none_enabled:t.panelGroupsNoneEnabled,groups_invalid_configuration:t.panelGroupsConfigInvalid,
         group_disabled:t.panelGroupsDisabledError,group_not_found:t.panelGroupsNotFound,
         group_response_unexpected:t.panelGroupsUnexpected,key_rejected:t.panelGroupsKeyRejected,
@@ -161,9 +165,9 @@ export async function panelCallback(ctx: UpdateContext,data:string,callbackId:st
             await audit(ctx.db,ctx.actor.id,id,'test',result);
             const guidance=groupFailureText(ctx,result),origin=adminOrigin(ctx.env);
             let buttons:TelegramInlineKeyboardMarkup|undefined;
-            if(result==='groups_missing'&&origin){const token=await arm(ctx.env,ctx.actor.id,'configure',p.id);
+            if((result==='groups_missing'||result==='groups_status_unverified')&&origin){const token=await arm(ctx.env,ctx.actor.id,'configure',p.id);
                 buttons={inline_keyboard:[[{text:ctx.ui.t.panelTestChooseGroups,web_app:{url:`${origin}/admin/panels?nonce=${token}&lang=${ctx.ui.locale}`}}]]};}
-            await ctx.api.sendMessage(ctx.chatId,`Panel ${p.name}: ${result}. Read-only test; declared permissions and groups, not live mutation proof.`+(guidance?'\n\n'+guidance:'')+(!origin&&result==='groups_missing'?'\n'+ctx.ui.t.panelTestFormUnavailable:''),buttons);return;
+            await ctx.api.sendMessage(ctx.chatId,`Panel ${p.name}: ${result}. Read-only test; declared permissions and groups, not live mutation proof.`+(guidance?'\n\n'+guidance:'')+(!origin&&(result==='groups_missing'||result==='groups_status_unverified')?'\n'+ctx.ui.t.panelTestFormUnavailable:''),buttons);return;
         }
         if(action==='delete' && p.credential_binding && (await configuredPanels(ctx.env)).entries.some(e=>e.id===p.id)){await ctx.api.answerCallbackQuery(callbackId,'Remove its Worker declaration first; historical associations still block deletion.',true);return;}
         if(action==='delete' && id==='legacy') {await ctx.api.answerCallbackQuery(callbackId,'Legacy panel cannot be deleted.',true);return;}
