@@ -23,6 +23,17 @@ export function panelOrigin(raw: string): string | null {
         return null;
     }
 }
+/** Normalize a pasted panel/dashboard URL only at the administrator input
+ * boundary. Stored origins, the Mini App origin and DNS checks stay strict.
+ * Never strip embedded credentials or a query into an apparently safe URL. */
+export function panelInputOrigin(raw: string): string | null {
+    try {
+        if (/[\x00-\x1f\x7f]/.test(raw)) return null;
+        const u = new URL(raw.trim());
+        if (u.username || u.password || u.search) return null;
+        return panelOrigin(u.origin);
+    } catch { return null; }
+}
 function bytes64(bytes: Uint8Array): string {
     return btoa(Array.from(bytes, v => String.fromCharCode(v)).join(''));
 }

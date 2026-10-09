@@ -3,7 +3,7 @@ import { resolveLocale } from '../telegram/i18n.ts';
 import type { Env, UpdateContext, TelegramInlineKeyboardMarkup } from '../types.ts';
 import { getPanel, selection, resolvePanel, clientFor, audit, MAX_PANELS, validApiKey } from './registry.ts';
 import type { PanelRow } from './registry.ts';
-import { encrypt, decrypt, isPanelAdmin, nonce, panelOrigin, verifyInitData, publicDestination } from './security.ts';
+import { encrypt, decrypt, isPanelAdmin, nonce, panelOrigin, panelInputOrigin, verifyInitData, publicDestination } from './security.ts';
 import { limitedText } from './http.ts';
 import type { PanelConfig } from '../pasarguard/client.ts';
 interface Session {
@@ -210,7 +210,7 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
             if(url.pathname==='/admin/panels/groups') {
                 const fail=(status:number,code:string)=>new Response(JSON.stringify({code}),{status,headers:{...headers,'content-type':'application/json'}});
                 if(session.panel_id==='legacy')return fail(400,'legacy_configuration');
-                const destination=typeof body.url==='string'?panelOrigin(body.url):null;
+                const destination=typeof body.url==='string'?panelInputOrigin(body.url):null;
                 if(!destination)return fail(400,'invalid_origin');
                 if(p && destination!==p.origin) {
                     const refs=await env.DB.prepare('SELECT (SELECT COUNT(*) FROM orders WHERE panel_id=?1)+(SELECT COUNT(*) FROM service_migrations WHERE source_panel_id=?1 OR destination_panel_id=?1) n').bind(p.id).first<{n:number}>();
@@ -256,8 +256,8 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
             const won=await env.DB.prepare("SELECT last_change FROM panels WHERE id='legacy'").first<{last_change:string}>();
             return won?.last_change===token ? reply(200,'Legacy display name saved. Existing Worker URL/API key are unchanged.') : reply(409,'Configuration changed; reopen form.');
         }
-        const destination=typeof raw==='string' ? panelOrigin(raw) : null;
-        if(!destination) return reply(400,'Use a public HTTPS origin without paths, credentials, or queries.');
+        const destination=typeof raw==='string' ? panelInputOrigin(raw) : null;
+        if(!destination) return reply(400,'Use a public HTTPS URL on port 443 or 8000 without credentials or queries.');
         if(!Array.isArray(groups) || !groups.length || groups.length>50 || groups.some(v=>!Number.isSafeInteger(v) || v<1 || v>1000000) || new Set(groups).size!==groups.length) return reply(400,'Invalid group IDs (1–50 unique IDs).');
         if(old && old.origin!==destination) {
             const refs=await env.DB.prepare('SELECT (SELECT COUNT(*) FROM orders WHERE panel_id=?1)+(SELECT COUNT(*) FROM service_migrations WHERE source_panel_id=?1 OR destination_panel_id=?1) n').bind(id).first<{n:number}>();

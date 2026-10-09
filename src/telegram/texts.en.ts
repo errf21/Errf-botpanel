@@ -169,7 +169,7 @@ const en: Texts = {
   panelGroupsPermission: "The panel account cannot read groups. Grant group-read permission.",
   panelGroupsKeyRejected: "The API key was rejected. Check the key.",
   panelGroupsOriginLocked: "A panel with service history cannot change origin. Add a separate panel.",
-  panelGroupsInvalidOrigin: "Use a public HTTPS origin without a path, query or credentials.",
+  panelGroupsInvalidOrigin: "Use a public HTTPS URL on port 443 or 8000 without a query or embedded credentials. Dashboard links are normalized to their origin.",
   panelGroupsKeyRequired: "An API key is required for this origin.",
   panelGroupsUnsupported: "This panel does not provide the supported group-list API. Check version compatibility.",
   panelGroupsSessionChanged: "The form expired or configuration changed. Open a fresh form.",
