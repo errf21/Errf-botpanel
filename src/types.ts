@@ -15,6 +15,9 @@ export interface Env {
   PANEL_ADMIN_IDS?: string;
   PANEL_ADMIN_ORIGIN?: string;
   PANEL_ENCRYPTION_KEY?: string;
+  PANEL_COUNT?: string;
+  PANEL_MANIFEST?: string;
+  PANEL_MANIFEST_COUNT?: string;
   /** Official DIRECT-support Telegram handle (plain var, never a secret), shown
    *  by «🆘 پشتیبانی». The bot builds `https://t.me/<handle>` from it and NEVER
    *  invents a destination: unset/invalid → the support button fails closed to

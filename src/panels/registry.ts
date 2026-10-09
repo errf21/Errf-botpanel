@@ -1,16 +1,20 @@
+import {configuredCredential,MAX_PANELS} from './bindings.ts';
+export {MAX_PANELS};
 import type { Env } from '../types.ts';
 import type { ProvisioningConfig } from '../catalog/provisioning.ts';
 import { loadPanelConfig, PasarGuardClient } from '../pasarguard/client.ts';
 import type { PanelConfig } from '../pasarguard/client.ts';
 import { panelOrigin, decrypt, publicDestination } from './security.ts';
 export type PanelId = string;
-export const MAX_PANELS = 100;
+
 export interface PanelRow {
     id: PanelId;
     name: string;
     origin: string | null;
     auth_type: 'api_key';
     credentials: string | null;
+    credential_binding?: string | null;
+    binding_fingerprint?: string | null;
     revision: number;
     enabled_new: number;
     group_ids: string | null;
@@ -49,6 +53,11 @@ export async function resolvePanel(env: Env, id: string): Promise<{
     const origin = row.origin && panelOrigin(row.origin);
     if (!origin)
         return { ok: false, kind: 'bad_url', detail: 'panel_origin_invalid' };
+    if(row.credential_binding){
+        const loaded=await configuredCredential(env,row);
+        if(!loaded.ok)return {ok:false,kind:'not_configured',detail:loaded.detail};
+        return {ok:true,row,config:{baseUrl:origin,apiKey:loaded.apiKey,panelId:row.id,onVerifiedUser:observationWriter(env.DB,id,origin),validateDestination:()=>publicDestination(origin)}};
+    }
     if (!row.credentials) return {ok:false,kind:'not_configured',detail:'panel_api_key_missing'};
     try {
         const credentials = await decrypt<{apiKey:string}>(env, `panel:${row.id}:${row.revision}:${origin}:credentials`, row.credentials);

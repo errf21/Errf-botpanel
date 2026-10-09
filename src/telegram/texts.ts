@@ -18,6 +18,11 @@
 import { tgCode, tgEscapeHtml } from './format.ts';
 
 export const fa = {
+  panelFormManagedIntro: "آدرس و کلید API این پنل از تنظیمات کلادفلر خوانده می‌شود. نام و گروه‌های پنل را اینجا ویرایش کنید.",
+  panelFormManagedLocked: "آدرس و کلید این پنل فقط از تنظیمات کلادفلر قابل تغییر است.",
+  panelFormManagedUnavailable: "تنظیمات Worker ناقص، نامعتبر یا تغییر کرده است. پس از اصلاح، /panels را دوباره باز کنید.",
+  panelGroupsDestinationFailed: "آدرس HTTPS درست خوانده شد، اما بررسی DNS یا عمومی بودن مقصد ناموفق بود. DNS و ایمنی آدرس را بررسی کنید؛ حفاظت SSRF را غیرفعال نکنید.",
+
   // Cross-panel migration: shared locale and saved customer preference.
   migrationUsageCommands: "/migrate <شناسه_عدد_تلگرام_مشتری>\n/migrate status <شناسه_انتقال>\n/migrate panels <شناسه_سرویس> [صفحه]",
   migrationManualCommand: "/migrate manual {id} <حجم_بایت> <YYYY-MM-DDTHH:mm:ssZ> <سقف_دستگاه>",
@@ -153,7 +158,7 @@ export const fa = {
   panelGroupsPermission: "حساب پنل اجازهٔ مشاهدهٔ گروه‌ها را ندارد. دسترسی خواندن گروه‌ها را فعال کنید.",
   panelGroupsKeyRejected: "کلید API پذیرفته نشد؛ کلید را بررسی کنید.",
   panelGroupsOriginLocked: "آدرس پنلی که سابقهٔ سرویس دارد قابل تغییر نیست؛ پنل جداگانه‌ای اضافه کنید.",
-  panelGroupsInvalidOrigin: "یک آدرس عمومی HTTPS بدون مسیر، پارامتر یا اطلاعات ورود وارد کنید.",
+  panelGroupsInvalidOrigin: "از آدرس عمومی HTTPS با پورت 443 یا 8000 و بدون پارامتر یا اطلاعات ورود استفاده کنید. لینک داشبورد به آدرس اصلی پنل تبدیل می‌شود.",
   panelGroupsKeyRequired: "برای این آدرس، کلید API لازم است.",
   panelGroupsUnsupported: "نسخهٔ پنل، API فهرست گروه‌ها را ارائه نمی‌کند. سازگاری نسخه را بررسی کنید.",
   panelGroupsSessionChanged: "فرم منقضی یا تنظیمات تغییر کرده است؛ فرم تازه‌ای باز کنید.",

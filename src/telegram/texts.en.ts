@@ -34,6 +34,11 @@ const deviceLineEn = (count: number): string =>
       : `${count} devices, one happy crew`;
 
 const en: Texts = {
+  panelFormManagedIntro: "Cloudflare manages this panel’s URL and API key. Edit its name and group selection here.",
+  panelFormManagedLocked: "This panel’s URL/key can only be changed in Cloudflare configuration.",
+  panelFormManagedUnavailable: "Worker configuration is missing, invalid or changed. Open /panels after correcting its bindings.",
+  panelGroupsDestinationFailed: "The HTTPS origin parsed correctly, but public DNS/destination validation failed. Check DNS and address safety; do not disable SSRF protections.",
+
   // Cross-panel migration: shared locale and saved customer preference.
   migrationUsageCommands: "/migrate <customer Telegram ID>\n/migrate status <migration ID>\n/migrate panels <service ID> [page]",
   migrationManualCommand: "/migrate manual {id} <remaining_bytes> <YYYY-MM-DDTHH:mm:ssZ> <devices>",

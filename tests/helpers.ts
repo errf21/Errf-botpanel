@@ -177,6 +177,7 @@ export function freshDb(): DatabaseSync {
     'migrations/0022_service_migrations.sql',
     'migrations/0023_reliability_delivery.sql',
     'migrations/0024_financial_optimization.sql',
+    'migrations/0025_cloudflare_panel_bindings.sql',
   ]) {
     // Wrangler migration files run transactionally in D1. Match that here.
     sqlite.exec('BEGIN');

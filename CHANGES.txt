@@ -1,3 +1,77 @@
+ERRF BotPanel — Scalable Cloudflare-configured API-key panels
+===========================================================
+
+BASE
+Public master e3b565910991da82cf64e1eb89d478a89afb7967 (224 tracked files).
+Starting suite actually executed: 754 passing, 0 failures, 0 skips.
+All earlier multi-panel/security/migration/financial/announcement functionality
+is retained. This is an incremental extension, not a project rebuild.
+
+IMPLEMENTED
+- Explicit PANEL_COUNT + PANEL_n_URL / secret PANEL_n_API_KEY bindings, optional
+  initial name/group IDs; stable cf_n IDs, no arbitrary environment enumeration.
+- Alternative named PANEL_MANIFEST or sharded PANEL_MANIFEST_COUNT declarations
+  for larger fleets; manifests contain secret binding names, never key values.
+- Idempotent, revision-guarded D1 synchronization, controlled per-panel errors,
+  immutable accepted origins, duplicate/collision isolation, no default resets,
+  no automatic enablement, no removal of historical panel rows or services.
+- Existing registered owners win over newly declared duplicate origins/references.
+- Managed keys remain Worker secrets; D1 holds only binding reference and keyed
+  revision fingerprint. Existing dynamic AES-GCM credentials/key are unchanged.
+- Existing private-admin /panels list/test/enable/disable/select confirmations,
+  auditing, pagination, and persistent selection work with managed panels.
+- Managed Mini App names/groups are editable with the existing authenticated
+  visual selector; URL is read-only and key input hidden. No key is returned.
+- New purchases/trials and original-service lifecycle/recovery use the same
+  shared panel resolver and durable pre-request assignment/selection revision.
+- Key changes require re-test/re-enable; failed hosts never trigger fallback.
+- Source-confirmed dashboard input normalization is preserved. Fixed stale
+  Persian path-prohibition text and downstream DNS/public-destination errors
+  previously misclassified as URL syntax errors. Added non-secret UI version
+  markers to support checking the actual deployed route without credentials.
+- Additive migration 0025_cloudflare_panel_bindings.sql adds two nullable panel
+  metadata columns only. Released migrations 0001–0024 are unchanged.
+- Exact configuration, release ordering, limits, retirement, rotation, routing,
+  version checks and rollback limitations documented in the new setup guide.
+
+VALIDATION ACTUALLY EXECUTED
+- npm test: 799 PASS, 0 FAIL, 0 SKIP, 0 CANCELLED (754 baseline + 45 new tests).
+- npm run typecheck: PASS.
+- node --disable-warning=ExperimentalWarning --test tests/configuredPanels*.test.ts:
+  45 PASS, 0 FAIL, 0 SKIP.
+- Wrangler deploy --dry-run: PASS; no deployment performed.
+- Real installed Cloudflare workerd + local D1: explicit indexed lookup,
+  concurrent synchronization, no duplicate registration/audit, selection remains
+  persistent, canonical port-8000 origin, no stored plaintext keys: PASS.
+- Wrangler local fresh install 0001–0025: PASS.
+- Wrangler local 0024 -> 0025 upgrade with seeded legacy/multi-panel customers,
+  services, orders, wallet/top-up/referral/payment evidence and pending claims:
+  all 29 application tables/original columns preserved; zero FK violations.
+- Wrangler repeated local migration apply: no migrations to apply; PASS.
+- SQLite migration rollback and direct raw-repeat failure: preserve records.
+- New TypeScript files formatted with the installed TypeScript printer;
+  git diff --check passes. No formatter/linter script exists in package.json.
+  Prettier was not installed in this restored environment; no dependency added.
+
+LIMITATIONS / RELEASE BOUNDARY
+- No live Telegram/PasarGuard/DNS/TLS deployment test and no production query.
+- Real deployed Worker hostname/version unavailable: the exact historical live
+  dashboard incident cannot be attributed to stale routing versus DNS from
+  source inspection alone. Source-level error causes and fixes are tested.
+- Registry cap 100 total; Cloudflare binding, query/CPU and API limits can impose
+  lower operational limits. Large fleets need plan-budget and staging validation.
+- New panels require explicit permissions/group test, enable and select.
+- Existing declarations/secrets must remain for panels owning service/history.
+- Safe rollout must not overlap old/new announcement or managed-panel processors.
+- No deployment, production data/configuration/secret/encryption-key changes,
+  production migration, or remote push performed. HTTPS GitHub push dry-run
+  failed because authenticated repository credentials were unavailable.
+
+Detailed results/changed-file list: docs/en/scalable-panels-implementation-report.md
+Cloudflare setup: docs/en/cloudflare-configured-panels.md
+
+--- Previous delivery notes (preserved for historical context) ---
+
 ERRF BotPanel — Localized cross-panel migration / PasarGuard 5.4.1
 ================================================================
 

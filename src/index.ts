@@ -1,3 +1,4 @@
+import {syncConfiguredPanels} from './panels/bindings.ts';
 import { cleanupExpiredAdminTokens } from './db/maintenance.ts';
 import { cleanupExpiredUpdates } from './db/dedupe.ts';
 import {recoverUnlinkedWalletPayments} from './db/wallet.ts';
@@ -42,6 +43,7 @@ export default {
    * are independent runs: one failing never cancels the other.
    */
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    try{await syncConfiguredPanels(env);}catch{console.error('panel_binding_sync_failed');}
     const at = typeof controller.scheduledTime === 'number' ? controller.scheduledTime : Date.now();
     const when = Number.isFinite(at) ? at : Date.now();
     // Authorization expiry is enforced on reads; hourly garbage collection

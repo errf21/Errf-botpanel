@@ -172,3 +172,10 @@ rights are reserved by the author until a `LICENSE` is added. © [Espierz](https
 Creator / سازنده: **[Espierz](https://t.me/Espierz)** ·
 Telegram / تلگرام: [@Espierz](https://t.me/Espierz)
 — [🇮🇷 فارسی](docs/fa/README.md)
+
+## Cloudflare-configured multi-panel registry
+
+Panels can also be declared through indexed Worker bindings or a named/sharded
+manifest, without per-panel source edits. API keys remain Worker secrets;
+Telegram `/panels` retains testing, group editing, explicit activation and
+persistent selection for new services. See [setup and release ordering](docs/en/cloudflare-configured-panels.md), including additive migration 0025 and practical Cloudflare limits.

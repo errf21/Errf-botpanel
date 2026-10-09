@@ -1,3 +1,4 @@
+import {syncConfiguredPanels,configuredPanels} from './bindings.ts';
 import { renderPanelForm } from './form.ts';
 import { resolveLocale } from '../telegram/i18n.ts';
 import type { Env, UpdateContext, TelegramInlineKeyboardMarkup } from '../types.ts';
@@ -43,6 +44,7 @@ export async function showPanels(ctx: UpdateContext, page = 0): Promise<void> {
         await ctx.api.sendMessage(ctx.chatId, 'Panel management is restricted to Cloudflare-authorized administrators in private chat.');
         return;
     }
+    let bindingIssues:string[]=[];try{bindingIssues=await syncConfiguredPanels(ctx.env);}catch{bindingIssues=['binding_sync_failed'];}
     const sel = await selection(ctx.db);
     const count = await ctx.db.prepare('SELECT COUNT(*) AS n FROM panels').first<{n:number}>();
     const pages = Math.max(1,Math.ceil((count?.n ?? 0)/PAGE_SIZE));
@@ -52,9 +54,10 @@ export async function showPanels(ctx: UpdateContext, page = 0): Promise<void> {
     const selected = await getPanel(ctx.db,sel.panel_id);
     const buttons: TelegramInlineKeyboardMarkup = {inline_keyboard:[]};
     const lines = ['PasarGuard panels', `Selected for NEW services: ${selected?.name ?? sel.panel_id} (${sel.panel_id})`, `Page ${page+1}/${pages}; ${count?.n ?? 0}/${MAX_PANELS} panels`];
+    if(bindingIssues.length)lines.push('Cloudflare configuration: '+[...new Set(bindingIssues)].join(', '));
     for (const p of rows.results) {
         const resolved = await resolvePanel(ctx.env,p.id);
-        lines.push(`${p.id}: ${p.name}${sel.panel_id===p.id ? ' — SELECTED' : ''}\nNew orders: ${p.enabled_new ? 'enabled' : 'disabled'}; configuration: ${resolved.ok ? 'ready' : resolved.detail}\nAPI key: ${p.id==='legacy' ? 'Worker secret (hidden)' : p.credentials ? 'encrypted (hidden)' : 'required'}\nLast connection/permission test: ${p.last_test ?? 'not tested'}${p.last_test_at ? ` at ${p.last_test_at}` : ''}`);
+        lines.push(`${p.id}: ${p.name}${sel.panel_id===p.id ? ' — SELECTED' : ''}\nNew orders: ${p.enabled_new ? 'enabled' : 'disabled'}; configuration: ${resolved.ok ? 'ready' : resolved.detail}\nAPI key: ${p.id==='legacy'||p.credential_binding ? 'Worker secret (hidden)' : p.credentials ? 'encrypted (hidden)' : 'required'}\nLast connection/permission test: ${p.last_test ?? 'not tested'}${p.last_test_at ? ` at ${p.last_test_at}` : ''}`);
         buttons.inline_keyboard.push([{text:`Test ${p.name}`,callback_data:`pnl:test:${p.id}`},{text:`Select ${p.name}`,callback_data:`pnl:select:${p.id}`}]);
         buttons.inline_keyboard.push([{text:`${p.enabled_new ? 'Disable' : 'Enable'} new orders`,callback_data:`pnl:toggle:${p.id}`},{text:`Edit ${p.name}`,callback_data:`pnl:edit:${p.id}`}]);
         if (p.id!=='legacy') buttons.inline_keyboard.push([{text:`Delete ${p.name}`,callback_data:`pnl:delete:${p.id}`}]);
@@ -97,6 +100,7 @@ export async function panelCallback(ctx: UpdateContext,data:string,callbackId:st
         await audit(ctx.db,ctx.actor.id,'','unauthorized','denied');
         await ctx.api.answerCallbackQuery(callbackId,'Not authorized.',true); return;
     }
+    try{await syncConfiguredPanels(ctx.env);}catch{await ctx.api.answerCallbackQuery(callbackId,'Configuration sync unavailable.',true);return;}
     const list = /^pnl:list:([0-9]{1,3})$/.exec(data);
     if(list) { await ctx.api.answerCallbackQuery(callbackId); await showPanels(ctx,Number(list[1])); return; }
     if(data==='pnl:add') {
@@ -120,6 +124,7 @@ export async function panelCallback(ctx: UpdateContext,data:string,callbackId:st
             await audit(ctx.db,ctx.actor.id,id,'test',result);
             await ctx.api.sendMessage(ctx.chatId,`Panel ${p.name}: ${result}. Read-only test; declared permissions and groups, not live mutation proof.`);return;
         }
+        if(action==='delete' && p.credential_binding && (await configuredPanels(ctx.env)).entries.some(e=>e.id===p.id)){await ctx.api.answerCallbackQuery(callbackId,'Remove its Worker declaration first; historical associations still block deletion.',true);return;}
         if(action==='delete' && id==='legacy') {await ctx.api.answerCallbackQuery(callbackId,'Legacy panel cannot be deleted.',true);return;}
         const token=await arm(ctx.env,ctx.actor.id,action,id);
         await ctx.api.answerCallbackQuery(callbackId);
@@ -179,7 +184,7 @@ export async function panelCallback(ctx: UpdateContext,data:string,callbackId:st
 export async function panelAdminRoute(request:Request,env:Env): Promise<Response> {
     const url=new URL(request.url),origin=adminOrigin(env);
     const headers={
-        'cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff',
+        'x-errf-panel-ui':'cloudflare-bindings-v1','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff',
         'content-security-policy':"default-src 'none'; script-src https://telegram.org 'nonce-panel-form'; style-src 'nonce-panel-form'; connect-src 'self'; frame-ancestors https://web.telegram.org; base-uri 'none'; form-action 'self'",
     };
     const reply=(status:number,message:string)=>new Response(JSON.stringify({message}),{status,headers:{...headers,'content-type':'application/json'}});
@@ -217,6 +222,11 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
                     if(refs?.n)return fail(409,'origin_locked');
                 }
                 let supplied:unknown=body.apiKey;
+                if(p?.credential_binding){
+                    if(destination!==p.origin||(supplied!==''&&supplied!==undefined))return fail(409,'managed_configuration_locked');
+                    const managed=await resolvePanel(env,p.id);if(!managed.ok)return fail(400,'managed_configuration_unavailable');
+                    supplied=managed.config.apiKey;
+                }
                 // A stored credential is bound to its exact origin and revision.
                 // Never send a retained key to an edited hostname.
                 if((supplied==='' || supplied===undefined) && p?.credentials && destination===p.origin)
@@ -224,7 +234,7 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
                 if(!validApiKey(supplied))return fail(400,'key_required');
                 const result=await clientFor({baseUrl:destination,apiKey:supplied,validateDestination:()=>publicDestination(destination)}).listGroups();
                 if(!result.ok)return fail(result.kind==='auth'?401:result.kind==='permission'?403:502,
-                    result.kind==='auth'?'key_rejected':result.kind==='permission'?'permission_denied':result.status===404?'unsupported_api':result.kind==='bad_url'?'invalid_origin':'discovery_failed');
+                    result.kind==='auth'?'key_rejected':result.kind==='permission'?'permission_denied':result.status===404?'unsupported_api':result.kind==='bad_url'?'destination_check_failed':'discovery_failed');
                 // A malicious upstream must not reflect our credential in a group name.
                 if(result.data.some(group=>group.name.includes(supplied as string)))return fail(502,'discovery_failed');
                 // Read-only discovery doesn't consume the one-time save nonce.
@@ -237,7 +247,7 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
             const groups=JSON.parse(p?.group_ids ?? '[]') as unknown;
             if(!Array.isArray(groups) || groups.some(v=>!Number.isSafeInteger(v) || v<1 || v>1000000)) return reply(400,'Configuration unavailable.');
             // Explicit DTO: never serialize PanelRow, ciphertext, keys or bindings.
-            const metadata={name:p?.name ?? '',url:p?.origin ?? '',groups,legacy:session.panel_id==='legacy',hasApiKey:!!p?.credentials};
+            const metadata={name:p?.name ?? '',url:p?.origin ?? '',groups,legacy:session.panel_id==='legacy',hasApiKey:!!p?.credentials||!!p?.credential_binding,...(p?.credential_binding?{managed:true}:{})};
             return new Response(JSON.stringify(metadata),{status:200,headers:{...headers,'content-type':'application/json'}});
         }
         const {name,url:raw,apiKey,groups,nonce:token}=body;
@@ -271,13 +281,28 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
         const duplicates=await env.DB.prepare('SELECT id FROM panels WHERE origin=?1 AND id<>?2').bind(destination,id).first<{id:string}>();
         if(duplicates) return reply(409,'This origin is already registered.');
         let key:unknown=apiKey;
+        if(old?.credential_binding){
+            if(destination!==old.origin||(apiKey!==''&&apiKey!==undefined))return reply(409,'Cloudflare-managed URL and key are read-only.');
+            const managed=await resolvePanel(env,id);if(!managed.ok)return reply(400,'Cloudflare panel configuration unavailable.');
+            key=managed.config.apiKey;
+        }
         if((apiKey==='' || apiKey===undefined) && old?.credentials && destination===old.origin) key=(await decrypt<{apiKey:string}>(env,`panel:${id}:${old.revision}:${old.origin}:credentials`,old.credentials)).apiKey;
         if(!validApiKey(key)) return reply(400,'A valid API key is required.');
+        if(name.includes(key)) return reply(400,'Display name cannot contain credential material.');
         const config:PanelConfig={baseUrl:destination,apiKey:key,panelId:id,validateDestination:()=>publicDestination(destination)};
         const result=await verifyConfiguration(config,groups as number[]);
         await audit(env.DB,actor,id,'configuration_test',result);
         if(result!=='ok') return reply(422,`Configuration not accepted: ${result}. No credentials were saved.`);
         const revision=(old?.revision ?? 0)+1;
+        if(old?.credential_binding){
+            await env.DB.batch([
+                env.DB.prepare("UPDATE panels SET name=?1,group_ids=?2,revision=revision+1,last_change=?3,last_test='ok',last_test_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?4 AND revision=?5 AND credential_binding IS NOT NULL")
+                    .bind(name.trim(),JSON.stringify(groups),token,id,old.revision),
+                env.DB.prepare("INSERT INTO panel_audit(actor,panel_id,action,result) SELECT ?1,id,'configure','ok' FROM panels WHERE id=?2 AND last_change=?3").bind(String(actor),id,token),
+            ]);
+            const won=await env.DB.prepare('SELECT last_change FROM panels WHERE id=?1').bind(id).first<{last_change:string}>();
+            return won?.last_change===token?reply(200,'Panel groups/name saved. Worker URL and secret are unchanged.'):reply(409,'Configuration changed; reopen form.');
+        }
         const ciphertext=await encrypt(env,`panel:${id}:${revision}:${destination}:credentials`,{apiKey:key});
         await env.DB.batch([
             env.DB.prepare(`INSERT INTO panels(id,name,origin,auth_type,credentials,revision,enabled_new,group_ids,last_change,last_test,last_test_at)

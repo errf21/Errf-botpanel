@@ -1,3 +1,4 @@
+import {syncConfiguredPanels} from './panels/bindings.ts';
 import type { Env, TelegramUpdate, UpdateContext } from './types.ts';
 import { TelegramApi } from './telegram/api.ts';
 import { uiFor } from './telegram/i18n.ts';
@@ -57,6 +58,7 @@ export async function processTelegramUpdate(
       if (isStartCommand(startText)) firstEverStart = neverSeen;
     }
 
+    try{await syncConfiguredPanels(env);}catch{console.error('panel_binding_sync_failed');}
     // Phase 10: the upsert's own row read carries the explicit language
     // choice — resolution costs ZERO extra queries (NULL/Persian default).
     const { id: customerId, language, is_admin } = await upsertCustomer(env.DB, actor);
