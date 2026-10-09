@@ -1,3 +1,53 @@
+ERRF BotPanel — MraPanel group configuration and diagnostics fix
+==============================================================
+BASE: public master fe5cf8cd44cf1f4b8f4c1e8703161c93cd99d803 (235 tracked files).
+Baseline executed: 876 tests passed, zero failures/skips.
+Final validation: 909 tests passed, zero failures/skips; TypeScript and
+Cloudflare Worker dry-run passed. See docs/en/mrapanel-group-configuration-fix.md.
+
+ROOT CAUSE
+An absent PANEL_1_GROUP_IDS initially produces an empty saved group selection.
+The old read-only Test returned groups_missing without querying /api/groups.
+Group-list permission does not choose the groups used for new services.
+Synchronization already preserved Mini App selections; no reset logic was added.
+A separate reproduced error-classification bug applied user-absence safeguards
+to group endpoint 404 responses. Only user-resource endpoints retain that guard.
+
+CHANGES
+- src/panels/admin.ts: discover before reporting missing groups, precise safe
+  diagnostic codes, owner-bound localized selector button, strict selected-group
+  identity/status validation, localized form save errors.
+- src/panels/form.ts: disabled groups cannot be selected, enabled-only Select All,
+  unavailable selections warning, meaningful save failures, accurate managed
+  configuration success message. Saved IDs are preselected on reopening.
+- src/pasarguard/client.ts: validated disabled-group metadata, correct non-user
+  endpoint 404 classification; pagination and strict user-absence checks retained.
+- src/panels/bindings.ts: explanatory comment only; saved groups remain unchanged
+  on synchronization, omitted GROUP_IDS, environment changes or key rotation.
+- src/telegram/texts.ts / texts.en.ts: Persian/English instructions, diagnostics,
+  selector button and status text, using the existing localization architecture.
+- tests/mrapanelGroupsWorkflow.test.ts: 32 new regression tests.
+- tests/mrapanelGroupsRuntime.test.ts: one real local workerd/D1 workflow test
+  with synthetic read-only upstream responses.
+- tests/multiPanel.test.ts / panelAuthorization.test.ts: group-detail fixtures
+  now include the upstream is_disabled boolean; no assertions removed/weakened.
+- docs/en/mrapanel-group-configuration-fix.md: implementation/test/setup report.
+- docs/evidence/mrapanel-group-contract-verification.json: pinned upstream hashes.
+- CHANGES.txt: this section added; pre-existing public master contents preserved.
+
+SETUP / SAFETY
+No new migration, dependency, secret or variable. Do not rerun migration 0025.
+Keep PANEL_COUNT, PANEL_1_NAME, PANEL_1_URL, PANEL_1_API_KEY, all legacy settings,
+PANEL_ENCRYPTION_KEY, and existing admin authorization unchanged.
+PANEL_1_GROUP_IDS is optional: save valid selected numeric IDs through /panels.
+Existing PANEL_ADMIN_ORIGIN must identify the bot Worker HTTPS origin for forms.
+No automatic group selection, enablement, panel switch or cross-panel fallback.
+No production calls/data/secrets/migrations/deployment/commit/push performed.
+Live MraPanel version, permissions and connectivity were NOT verified.
+This is a Cloudflare Worker project, not an APK project.
+
+--- Previous delivered change notes (unchanged) ---
+
 ERRF BotPanel — Scalable Cloudflare-configured API-key panels
 ===========================================================
 

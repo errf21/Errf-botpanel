@@ -33,7 +33,7 @@ beforeEach(async()=>{
         assert.equal(init?.method,'GET','Metadata/configuration tests must never mutate panel users');
         assert.equal(new Headers(init?.headers).get('x-api-key'),KEY);panelCalls.push(u.pathname);
         if(u.pathname==='/api/groups')return Response.json({groups:[{id:17,name:'First group'},{id:18,name:'Second group'}],total:2});
-        return Response.json(u.pathname==='/api/admin' ? {username:'bot',status:'active',role:{is_owner:true}} : {id:Number(u.pathname.split('/').at(-1))});
+        return Response.json(u.pathname==='/api/admin' ? {username:'bot',status:'active',role:{is_owner:true}} : {id:Number(u.pathname.split('/').at(-1)),is_disabled:false});
     }) as typeof fetch;
 });
 afterEach(()=>{globalThis.fetch=originalFetch;sqlite.close();});

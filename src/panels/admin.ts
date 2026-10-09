@@ -81,19 +81,56 @@ async function verifyConfiguration(config: PanelConfig, groups: number[] | null)
     const permits = (value:unknown) => value===true || (typeof value==='object' && value!==null && [1,2].includes(Number((value as {scope?:unknown}).scope)));
     if(role?.is_owner!==true && !['create','read','update','reset_usage','delete'].every(k=>permits(role?.permissions?.users?.[k]))) return 'required_user_permissions_unverified';
     if(groups) {
-        if(!groups.length) return 'groups_missing';
+        if(!groups.length) {
+            // A viewing permission is not a provisioning selection. Verify the
+            // actual list before reporting an empty local configuration.
+            const discovered=await client.listGroups();
+            if(!discovered.ok)return `group_discovery_${discovered.kind}_${discovered.status}`;
+            if(!discovered.data.length)return 'groups_none_available';
+            if(discovered.data.every(group=>group.disabled===true))return 'groups_none_enabled';
+            return 'groups_missing';
+        }
         for (const group of groups) {
             const read = await client.getGroup(group);
-            if(!read.ok || Number(read.data?.id)!==group || read.data?.is_disabled===true) return 'group_access_unverified';
+            if(!read.ok)return `group_read_${read.kind}_${read.status}`;
+            if(!read.data || read.data.id!==group || typeof read.data.is_disabled!=='boolean')return `group_response_unexpected_${group}`;
+            if(read.data.is_disabled)return `group_disabled_${group}`;
         }
     }
     return 'ok';
 }
+function groupFailureCode(result:string):string {
+    if(result==='groups_missing')return 'groups_missing';
+    if(result==='groups_none_available')return 'groups_none_available';
+    if(result==='groups_none_enabled')return 'groups_none_enabled';
+    if(result==='groups_invalid_configuration')return 'groups_invalid_configuration';
+    if(/^group_disabled_/.test(result))return 'group_disabled';
+    if(/^group_response_unexpected_/.test(result))return 'group_response_unexpected';
+    if(/^group_read_not_found_404$/.test(result))return 'group_not_found';
+    if(/^group_discovery_not_found_404$/.test(result))return 'unsupported_api';
+    if(/^(group_read|group_discovery|test)_auth_/.test(result))return 'key_rejected';
+    if(/^(group_read|group_discovery|test)_permission_/.test(result))return 'permission_denied';
+    if(/^(group_read|group_discovery|test)_parse_/.test(result))return 'group_response_unexpected';
+    if(/^(group_read|group_discovery|test)_bad_url_/.test(result))return 'destination_check_failed';
+    return 'configuration_test_failed';
+}
+function groupFailureText(ctx:UpdateContext,result:string):string {
+    const t=ctx.ui.t,code=groupFailureCode(result);
+    const messages:Record<string,string>={groups_missing:t.panelTestGroupsMissing,groups_none_available:t.panelGroupsEmpty,
+        groups_none_enabled:t.panelGroupsNoneEnabled,groups_invalid_configuration:t.panelGroupsConfigInvalid,
+        group_disabled:t.panelGroupsDisabledError,group_not_found:t.panelGroupsNotFound,
+        group_response_unexpected:t.panelGroupsUnexpected,key_rejected:t.panelGroupsKeyRejected,
+        permission_denied:t.panelGroupsPermission,unsupported_api:t.panelGroupsUnsupported,
+        destination_check_failed:t.panelGroupsDestinationFailed};
+    return messages[code]??(result.startsWith('group_')?t.panelGroupsError:'');
+}
 export async function testPanel(env:Env,id:string): Promise<string> {
     const panel = await resolvePanel(env,id);
     if(!panel.ok) return panel.detail;
-    const groups = id==='legacy' ? null : JSON.parse(panel.row.group_ids ?? '[]') as number[];
-    return verifyConfiguration(panel.config,groups);
+    let groups:unknown=null;
+    if(id!=='legacy'){try{groups=JSON.parse(panel.row.group_ids ?? '[]');}catch{return 'groups_invalid_configuration';}
+        if(!Array.isArray(groups)||groups.length>50||groups.some(v=>!Number.isSafeInteger(v)||v<1||v>1000000)||new Set(groups).size!==groups.length)return 'groups_invalid_configuration';}
+    return verifyConfiguration(panel.config,groups as number[]|null);
 }
 export async function panelCallback(ctx: UpdateContext,data:string,callbackId:string): Promise<void> {
     if(!privateAdmin(ctx)) {
@@ -122,7 +159,11 @@ export async function panelCallback(ctx: UpdateContext,data:string,callbackId:st
             await ctx.db.prepare("UPDATE panels SET last_test=?1,last_test_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?2 AND revision=?3")
                 .bind(result,id,p.revision).run();
             await audit(ctx.db,ctx.actor.id,id,'test',result);
-            await ctx.api.sendMessage(ctx.chatId,`Panel ${p.name}: ${result}. Read-only test; declared permissions and groups, not live mutation proof.`);return;
+            const guidance=groupFailureText(ctx,result),origin=adminOrigin(ctx.env);
+            let buttons:TelegramInlineKeyboardMarkup|undefined;
+            if(result==='groups_missing'&&origin){const token=await arm(ctx.env,ctx.actor.id,'configure',p.id);
+                buttons={inline_keyboard:[[{text:ctx.ui.t.panelTestChooseGroups,web_app:{url:`${origin}/admin/panels?nonce=${token}&lang=${ctx.ui.locale}`}}]]};}
+            await ctx.api.sendMessage(ctx.chatId,`Panel ${p.name}: ${result}. Read-only test; declared permissions and groups, not live mutation proof.`+(guidance?'\n\n'+guidance:'')+(!origin&&result==='groups_missing'?'\n'+ctx.ui.t.panelTestFormUnavailable:''),buttons);return;
         }
         if(action==='delete' && p.credential_binding && (await configuredPanels(ctx.env)).entries.some(e=>e.id===p.id)){await ctx.api.answerCallbackQuery(callbackId,'Remove its Worker declaration first; historical associations still block deletion.',true);return;}
         if(action==='delete' && id==='legacy') {await ctx.api.answerCallbackQuery(callbackId,'Legacy panel cannot be deleted.',true);return;}
@@ -187,7 +228,7 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
         'x-errf-panel-ui':'cloudflare-bindings-v1','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff',
         'content-security-policy':"default-src 'none'; script-src https://telegram.org 'nonce-panel-form'; style-src 'nonce-panel-form'; connect-src 'self'; frame-ancestors https://web.telegram.org; base-uri 'none'; form-action 'self'",
     };
-    const reply=(status:number,message:string)=>new Response(JSON.stringify({message}),{status,headers:{...headers,'content-type':'application/json'}});
+    const reply=(status:number,message:string,code?:string)=>new Response(JSON.stringify({message,...(code?{code}:{})}),{status,headers:{...headers,'content-type':'application/json'}});
     if(!origin || url.origin!==origin) return reply(403,'Configuration endpoint unavailable.');
     if(request.method==='GET' && url.pathname==='/admin/panels') {
         const token=url.searchParams.get('nonce');
@@ -268,7 +309,7 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
         }
         const destination=typeof raw==='string' ? panelInputOrigin(raw) : null;
         if(!destination) return reply(400,'Use a public HTTPS URL on port 443 or 8000 without credentials or queries.');
-        if(!Array.isArray(groups) || !groups.length || groups.length>50 || groups.some(v=>!Number.isSafeInteger(v) || v<1 || v>1000000) || new Set(groups).size!==groups.length) return reply(400,'Invalid group IDs (1–50 unique IDs).');
+        if(!Array.isArray(groups) || !groups.length || groups.length>50 || groups.some(v=>!Number.isSafeInteger(v) || v<1 || v>1000000) || new Set(groups).size!==groups.length) return reply(400,'Invalid group IDs (1–50 unique IDs).','groups_invalid_configuration');
         if(old && old.origin!==destination) {
             const refs=await env.DB.prepare('SELECT (SELECT COUNT(*) FROM orders WHERE panel_id=?1)+(SELECT COUNT(*) FROM service_migrations WHERE source_panel_id=?1 OR destination_panel_id=?1) n').bind(id).first<{n:number}>();
             if(refs?.n) return reply(409,'Cannot change the origin of a panel with assigned orders. Add a separate panel instead.');
@@ -292,7 +333,7 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
         const config:PanelConfig={baseUrl:destination,apiKey:key,panelId:id,validateDestination:()=>publicDestination(destination)};
         const result=await verifyConfiguration(config,groups as number[]);
         await audit(env.DB,actor,id,'configuration_test',result);
-        if(result!=='ok') return reply(422,`Configuration not accepted: ${result}. No credentials were saved.`);
+        if(result!=='ok') return reply(422,`Configuration not accepted: ${result}. No credentials were saved.`,groupFailureCode(result));
         const revision=(old?.revision ?? 0)+1;
         if(old?.credential_binding){
             await env.DB.batch([

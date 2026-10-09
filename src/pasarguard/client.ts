@@ -60,7 +60,7 @@ export type PanelResult<T> =
   | { ok: false; kind: PanelErrorKind; status: number; detail: string };
 
 /** Verified upstream GroupsResponse; expose no inbound/user/admin metadata. */
-export interface PanelGroup { id:number; name:string; }
+export interface PanelGroup { id:number; name:string; disabled?:boolean; }
 interface GroupPage { groups:PanelGroup[]; total:number; }
 function groupPage(value:unknown):GroupPage|null {
   const object=asRecord(value);
@@ -70,7 +70,8 @@ function groupPage(value:unknown):GroupPage|null {
     const group=asRecord(value);
     if(!group || typeof group.id!=='number' || !Number.isSafeInteger(group.id) || group.id<1 || group.id>1000000 ||
       typeof group.name!=='string' || !group.name.trim() || group.name.length>64 || /[\x00-\x1f\x7f]/.test(group.name) || seen.has(group.id))return null;
-    seen.add(group.id);groups.push({id:group.id,name:group.name});
+    if(group.is_disabled!==undefined && typeof group.is_disabled!=='boolean')return null;
+    seen.add(group.id);groups.push({id:group.id,name:group.name,...(group.is_disabled===true?{disabled:true}:{})});
   }
   return {groups,total:Number(object.total)};
 }
@@ -544,7 +545,7 @@ export class PasarGuardClient {
     }
 
     if (!response.ok) {
-      if (response.status === 404 && this.#strictAbsence) {
+      if (response.status === 404 && this.#strictAbsence && (path==='/api/user' || path.startsWith('/api/user/'))) {
         const detail = asRecord(json)?.['detail'];
         // Dynamic panels must return the supported user absence contract.
         // A proxy/route 404 is not evidence that the user was deleted.

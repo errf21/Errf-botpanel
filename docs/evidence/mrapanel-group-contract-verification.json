@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/PasarGuard/panel",
+  "tag": "v5.4.1",
+  "commit": "b56ffe369f542152c52c69733205baeaf3f6e4cd",
+  "files": [
+    {
+      "path": "app/routers/group.py",
+      "sha256": "1aaeb7c180a3e17207d2af378837ff2c32c9a6063482a4cc5ca82eaca5aa1a3e",
+      "verified": true
+    },
+    {
+      "path": "app/models/group.py",
+      "sha256": "bcac871bfa5e62b945aec23c8f26cd7e7cbc00f48064c83eb293d2bb735fef1b",
+      "verified": true
+    },
+    {
+      "path": "app/routers/dependencies/group.py",
+      "sha256": "b8e1a133b312561d692b18144164c92e17f3ebe7786fe6f62c64137388091888",
+      "verified": true
+    }
+  ],
+  "live_panel_verified": false
+}

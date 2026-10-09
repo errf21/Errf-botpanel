@@ -184,6 +184,8 @@ export async function syncConfiguredPanels(env: Env): Promise<string[]> {
                 ]);
             }
             else {
+                // Seed names/groups only on INSERT. Never overwrite Mini App
+                // selections on restart, absent GROUP_IDS, or secret rotation.
                 await env.DB.batch([
                     env.DB.prepare(`UPDATE panels SET origin=?1,credential_binding=?2,binding_fingerprint=?3,revision=revision+1,enabled_new=0,last_change=?4,last_test=?5,last_test_at=NULL
       WHERE id=?6 AND revision=?7 AND credential_binding IS NOT NULL`).bind(origin, e.keyBinding, digest, token, status, e.id, old.revision),

@@ -68,7 +68,7 @@ beforeEach(async () => {
         if (url.pathname === '/api/admin')
             return Response.json({ username: 'bot-user', status: 'active', role: { is_owner: false, permissions: { users: { create: true, read: { scope: 1 }, update: { scope: 1 }, reset_usage: true, delete: { scope: 1 } } } } });
         if (url.pathname.startsWith('/api/group/'))
-            return Response.json({ id: Number(url.pathname.split('/').at(-1)), name: 'Group' });
+            return Response.json({ id: Number(url.pathname.split('/').at(-1)), name: 'Group', is_disabled: false });
         if (url.pathname === '/api/user' && method === 'POST') {
             const payload = JSON.parse(body);
             if (users[n]!.has(payload.username))
