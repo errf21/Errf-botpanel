@@ -58,7 +58,7 @@ beforeEach(() => {
         assert.ok(n >= 0, 'No fallback or unintended destination');
         assert.equal(new Headers(init?.headers).get('x-api-key'), keys[n]);
         assert.equal(new Headers(init?.headers).get('authorization'), null);
-        assert.equal(init?.redirect, 'error');
+        assert.equal(init?.redirect, 'manual');
         calls.push({ origin: u.origin, path: u.pathname, method });
         if (failPanel === u.origin)
             return Response.json({ detail: keys[n] }, { status: 401 });

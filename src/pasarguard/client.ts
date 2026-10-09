@@ -511,7 +511,9 @@ export class PasarGuardClient {
     try {
       if (this.#validateDestination && !await this.#validateDestination()) return failure(0,'destination_not_public','bad_url');
       const send = () => fetch(url, {
-        method, redirect: 'error',
+        // workerd rejects redirect:'error' before I/O. Manual + the
+        // explicit 3xx guard below preserves no-follow credential protection.
+        method, redirect: 'manual',
         headers: {
           'x-api-key': this.#apiKey,
           accept: 'application/json',
@@ -526,6 +528,12 @@ export class PasarGuardClient {
       const kind: PanelErrorKind = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network';
       console.error(`pasarguard_request_failed method=${method} path=${path.slice(0, 60)} kind=${kind}`);
       return failure(0, kind, kind);
+    }
+
+    if (response.status>=300 && response.status<400) {
+      // Never inspect Location/redirect bodies or resend a key to another URL.
+      await response.body?.cancel().catch(()=>undefined);
+      return failure(response.status,'redirect_rejected','rejected');
     }
 
     let json: unknown = null;

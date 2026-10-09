@@ -41,7 +41,7 @@ beforeEach(async()=>{
   const u=new URL(String(input)),method=init?.method??'GET';
   if(u.origin==='https://cloudflare-dns.com')return Response.json({Status:0,Answer:[{type:1,data:'8.8.8.8'}]});
   if(u.origin==='https://api.telegram.org'){const b=JSON.parse(String(init?.body));if(u.pathname.endsWith('/sendMessage'))messages.push({chat:b.chat_id,text:b.text,buttons:b.reply_markup});return Response.json({ok:true,result:{message_id:1}});}
-  const n=origins.indexOf(u.origin);assert.ok(n>=0,'no unintended panel fallback');assert.equal(new Headers(init?.headers).get('x-api-key'),keys[n]);assert.equal(init?.redirect,'error');assert.equal(new Headers(init?.headers).get('authorization'),null);
+  const n=origins.indexOf(u.origin);assert.ok(n>=0,'no unintended panel fallback');assert.equal(new Headers(init?.headers).get('x-api-key'),keys[n]);assert.equal(init?.redirect,'manual');assert.equal(new Headers(init?.headers).get('authorization'),null);
   const body=init?.body?JSON.parse(String(init.body)):null;calls.push({n,method,path:u.pathname,body});
   if(n===0&&sourceDown)return Response.json({detail:keys[0]},{status:401});
   if(n===0&&proxySource404)return new Response('Proxy route missing',{status:404});

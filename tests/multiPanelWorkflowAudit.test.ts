@@ -34,7 +34,7 @@ beforeEach(async()=>{
   if(u.origin==='https://api.telegram.org')return Response.json({ok:true,result:{}});
   if(u.origin==='https://cloudflare-dns.com')return Response.json({Status:0,Answer:[{type:1,data:'8.8.8.8'}]});
   const n=origins.indexOf(u.origin);assert.ok(n>=0,'Unintended destination');
-  assert.equal(new Headers(init?.headers).get('x-api-key'),keys[n]);assert.equal(new Headers(init?.headers).get('authorization'),null);assert.equal(init?.redirect,'error');
+  assert.equal(new Headers(init?.headers).get('x-api-key'),keys[n]);assert.equal(new Headers(init?.headers).get('authorization'),null);assert.equal(init?.redirect,'manual');
   const body=init?.body?JSON.parse(String(init.body)):null;calls.push({panel:n,path:u.pathname,method,body});
   // Assert ownership BEFORE every remote user request (including initial lookup).
   if(u.pathname.startsWith('/api/user')){

@@ -1,0 +1,53 @@
+{
+  "baseline_commit": "a653a98ae173e5efc8121235df9e178339df1934",
+  "runtime": "installed local Cloudflare workerd via Miniflare",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "panel_api_requests": 0,
+  "production_credentials_used": false,
+  "live_production_worker_logs_accessed": false,
+  "before": {
+    "allowed": false,
+    "addressAllowed": true,
+    "events": [
+      {
+        "type": "A",
+        "errorName": "TypeError",
+        "errorMessage": "Invalid redirect value, must be one of \"follow\" or \"manual\" (\"error\" won't be implemented since it does not make sense at the edge; use \"manual\" and check the r"
+      },
+      {
+        "type": "AAAA",
+        "errorName": "TypeError",
+        "errorMessage": "Invalid redirect value, must be one of \"follow\" or \"manual\" (\"error\" won't be implemented since it does not make sense at the edge; use \"manual\" and check the r"
+      }
+    ]
+  },
+  "after": {
+    "allowed": true,
+    "addressAllowed": true,
+    "events": [
+      {
+        "type": "AAAA",
+        "status": 200,
+        "contentType": "application/dns-json",
+        "Status": 0
+      },
+      {
+        "type": "A",
+        "status": 200,
+        "contentType": "application/dns-json",
+        "Status": 0,
+        "answers": [
+          {
+            "name": "panel.mrapanel.shop",
+            "type": 1,
+            "TTL": 300,
+            "data": "176.120.17.222"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -113,8 +113,11 @@ export async function verifyInitData(env: Env, value: string, now = Date.now()):
  * The operator must trust the panel DNS/TLS owner: DNS lookup and Worker fetch
  * are separate resolutions, not an atomic DNS-pinned egress firewall. */
 export function publicAddress(value: string): boolean {
+    if (typeof value !== 'string') return false;
     if (/^\d+\.\d+\.\d+\.\d+$/.test(value)) {
-        const b = value.split('.').map(Number);
+        const parts = value.split('.');
+        if (parts.some(part => !/^(?:0|[1-9][0-9]{0,2})$/.test(part))) return false;
+        const b = parts.map(Number);
         if (b.some(v => v > 255)) return false;
         const [a,c,d] = b as [number,number,number,number];
         return !(a===0 || a===10 || a===127 || a>=224 ||
@@ -139,12 +142,33 @@ export async function publicDestination(origin: string): Promise<boolean> {
         const answers = await Promise.all(['A','AAAA'].map(async type => {
             const u = new URL('https://cloudflare-dns.com/dns-query');
             u.searchParams.set('name',host); u.searchParams.set('type',type);
-            const response = await fetch(u,{headers:{accept:'application/dns-json'},redirect:'error',signal:AbortSignal.timeout(5000)});
-            if (!response.ok) throw new Error();
+            const response = await fetch(u,{headers:{accept:'application/dns-json'},redirect:'manual',signal:AbortSignal.timeout(5000)});
+            // Workers supports follow/manual, not redirect:'error'. Non-2xx
+            // (including every redirect) is rejected without following it.
+            if (!response.ok) {
+                await response.body?.cancel().catch(()=>undefined);
+                throw new Error();
+            }
             const {limitedText} = await import('./http.ts');
-            const data = JSON.parse(await limitedText(response,32768)) as {Status?:number;Answer?:{type:number;data:string}[]};
-            if (data.Status!==0 || (data.Answer && (!Array.isArray(data.Answer) || data.Answer.length>64))) throw new Error();
-            return (data.Answer??[]).filter(v=>v.type===1 || v.type===28).map(v=>v.data);
+            const raw:unknown = JSON.parse(await limitedText(response,32768));
+            if (!raw || typeof raw!=='object' || Array.isArray(raw)) throw new Error();
+            const data=raw as {Status?:unknown;TC?:unknown;Answer?:unknown};
+            if (data.Status!==0 || data.TC===true || (data.TC!==undefined && typeof data.TC!=='boolean')) throw new Error();
+            // NOERROR with absent/empty Answer is normal AAAA NODATA, not
+            // a failure. At least one public address across both queries is
+            // still required; any failed query or malformed/private answer blocks.
+            if (data.Answer===undefined) return [];
+            if (!Array.isArray(data.Answer) || data.Answer.length>64) throw new Error();
+            const addresses:string[]=[];
+            for (const item of data.Answer) {
+                if (!item || typeof item!=='object' || Array.isArray(item)) throw new Error();
+                const record=item as {type?:unknown;data?:unknown};
+                if (!Number.isInteger(record.type) || Number(record.type)<1 || Number(record.type)>65535 || typeof record.data!=='string' || !record.data.length) throw new Error();
+                if (record.type===1 && !/^\d+\.\d+\.\d+\.\d+$/.test(record.data)) throw new Error();
+                if (record.type===28 && !record.data.includes(':')) throw new Error();
+                if (record.type===1 || record.type===28) addresses.push(record.data);
+            }
+            return addresses;
         }));
         const addresses = answers.flat();
         return addresses.length>0 && addresses.every(publicAddress);

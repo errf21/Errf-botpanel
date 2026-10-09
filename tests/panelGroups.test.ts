@@ -11,7 +11,7 @@ beforeEach(async()=>{
  forms=[];calls=[];groupData=[{id:17,name:'Germany group'},{id:18,name:'Netherlands group'},{id:23,name:'گروه فنلاند'}];failure=0;malformed=changeRevision=dnsPrivate=false;real=fetch;
  globalThis.fetch=(async(input,init)=>{
   const url=new URL(String(input));if(url.origin==='https://cloudflare-dns.com')return Response.json({Status:0,Answer:[{type:1,data:dnsPrivate?'127.0.0.1':'8.8.8.8'}]});
-  assert.ok([PANEL,OTHER].includes(url.origin),'no unintended panel');const key=new Headers(init?.headers).get('x-api-key');calls.push({url,method:init?.method??'GET',key});assert.equal(init?.redirect,'error');assert.equal(key,KEY);assert.equal(new Headers(init?.headers).get('authorization'),null);
+  assert.ok([PANEL,OTHER].includes(url.origin),'no unintended panel');const key=new Headers(init?.headers).get('x-api-key');calls.push({url,method:init?.method??'GET',key});assert.equal(init?.redirect,'manual');assert.equal(key,KEY);assert.equal(new Headers(init?.headers).get('authorization'),null);
   if(failure)return Response.json({detail:KEY},{status:failure});if(url.pathname==='/api/groups'){
    if(changeRevision)raw.exec("UPDATE panels SET revision=revision+1 WHERE id='group-panel'");
    if(malformed)return Response.json({groups:[{id:'17',name:KEY}],total:1});const offset=Number(url.searchParams.get('offset')??0),limit=Number(url.searchParams.get('limit')??100);return Response.json({groups:groupData.slice(offset,offset+limit),total:groupData.length});
@@ -109,7 +109,7 @@ test('secure panel save rejects a disabled selected group without replacing encr
 
 test('pasted port-8000 dashboard URL is normalized by Worker and form before storing or calling APIs',async()=>{
  const expected='https://panel.mrapanel.shop:8000',pasted='https://panel.MraPanel.shop:8000/dashboard/#/login',f=globalThis.fetch,targets:string[]=[];
- globalThis.fetch=async(input,init)=>{const u=new URL(String(input));if(u.origin===expected){targets.push(u.toString());assert.equal(init?.redirect,'error');return f(OTHER+u.pathname+u.search,init);}return f(input,init);};
+ globalThis.fetch=async(input,init)=>{const u=new URL(String(input));if(u.origin===expected){targets.push(u.toString());assert.equal(init?.redirect,'manual');return f(OTHER+u.pathname+u.search,init);}return f(input,init);};
  const b=await browser('add');b.get('name').value='Port 8000';b.get('url').value=pasted;b.get('url').oninput();b.get('key').value=KEY;b.get('key').oninput();await b.flush();
  assert.equal(b.requests.find(r=>r.path.endsWith('/groups'))!.body.url,pasted);assert.equal(b.get('url').value,expected);assert.equal(b.get('save').disabled,true);
  b.checkboxes()[2].checked=true;b.checkboxes()[2].onchange();await b.get('f').onsubmit({preventDefault(){}});

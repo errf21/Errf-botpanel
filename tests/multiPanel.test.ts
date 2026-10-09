@@ -58,7 +58,7 @@ beforeEach(async () => {
         if(url.origin==='https://cloudflare-dns.com') return Response.json({Status:0,Answer:[{type:1,data:'8.8.8.8'}]});
         assert.ok([A,B,C,D].includes(url.origin), 'unexpected network destination');
         calls.push({ origin: url.origin, path: url.pathname, method, headers, body });
-        assert.equal(init?.redirect, 'error');
+        assert.equal(init?.redirect, 'manual');
         const n=[A,B,C,D].indexOf(url.origin);
         assert.equal(headers['x-api-key'],n===0 ? env.PASARGUARD_API_KEY : n===1 ? DYNAMIC_KEY : `SYNTHETIC-KEY-${n}`);
         assert.equal(headers.authorization,undefined);
@@ -619,7 +619,7 @@ test('DNS preflight rejects private/reserved/mixed destinations BEFORE sending a
 test('redirects are never followed and transport errors never leak keys',async()=>{
     await secondary();const original=fetch;
     globalThis.fetch=(async(input,init)=>{
-        if(new URL(String(input)).origin===B) {assert.equal(init?.redirect,'error');throw new Error(`unsafe redirect ${DYNAMIC_KEY}`);}
+        if(new URL(String(input)).origin===B) {assert.equal(init?.redirect,'manual');throw new Error(`unsafe redirect ${DYNAMIC_KEY}`);}
         return original(input,init);
     }) as typeof fetch;
     const logs:string[]=[],log=console.error;console.error=(...a)=>logs.push(a.join(' '));
