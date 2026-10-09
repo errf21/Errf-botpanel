@@ -1,0 +1,93 @@
+ERRF BotPanel — Localized cross-panel migration / PasarGuard 5.4.1
+================================================================
+
+EXACT STARTING SOURCE
+Archive: Errf-botpanel-visual-group-selector.zip
+SHA-256: 033003e10507753d32319216af75c9cdc6922d140cf10bf348bef988a830018e
+219 files, previously executed 704-test baseline; current bytes verified against
+that entire delivered ZIP before editing. No vanilla HEAD or older baseline used.
+Git HEAD unchanged: 348c2414dbae119b962076fed9223d3edc29970b.
+
+ACTUAL IMPLEMENTATION
+- All migration command help, customer/service selection, destination pagination,
+  review cards, evidence labels, statuses, errors, callback answers, confirmations,
+  retry/abort/revocation controls and recovery instructions use shared fa/en Texts.
+- Reused ctx.ui, uiFor(), customer language preference and existing formatters.
+  No separate language detector or migration-only language selector.
+- Fresh, stale and manual values remain distinct. UTC expiry is exact; technical
+  IDs/URLs/names/numbers are bidi-isolated for readable Persian mixed text.
+- Customer handoff messages and scheduled retries use the customer's saved language,
+  not the administrator's language or Telegram language hint. Delivery remains
+  stamped only on confirmed Telegram success; ambiguous sends remain recoverable.
+- Migration captures the destination panel's configured numeric group IDs, shows
+  them on review and sends exactly those IDs during provisioning. No group override,
+  hardcoded fallback or silent replacement after defaults are edited.
+- Added live read-only group-resource checks before draft and provisioning/activation:
+  missing, disabled, unreadable, malformed, empty or duplicate groups block progress.
+- Destination user read-back must retain the reviewed group ID set before cutover.
+- Group checks use a 30-second checked budget; an expired check cannot create or
+  activate a service. Existing per-request timeout remains the default elsewhere.
+- Secure panel save now rejects an explicitly disabled selected group.
+- Added version-pinned 5.4.1 source evidence and synthetic wire-contract fixtures.
+
+SUPPORTED VERSION EVIDENCE
+Official v5.4.1 tag resolves to b56ffe369f542152c52c69733205baeaf3f6e4cd.
+Inspected public group/user models, routes and API-key authentication source.
+Confirmed GET /api/groups pagination, GET /api/group/{id}, X-Api-Key header,
+POST /api/user and stable-ID GET/PUT/DELETE routes, group_ids response field,
+ISO expiry support and permission requirements. Source hashes/URLs recorded in
+ docs/evidence/pasarguard-5.4.1-contract.json.
+This is source + mocked contract verification, NOT a live panel compatibility test.
+
+CHANGED FILES (13)
+CHANGES.txt                                  Current release change summary.
+MIGRATION_LOCALIZATION_TEST_REPORT.md         Actual validation and limitations.
+docs/en/migration-localization-validation.md  Safe /panels and /migrate staging steps.
+docs/evidence/pasarguard-5.4.1-contract.json   Pinned upstream evidence/synthetic formats.
+src/handlers/serviceMigration.ts             Shared localization and recipient locale.
+src/migrations/service.ts                    Group validation, budget, read-back checks.
+src/panels/admin.ts                          Reject disabled selected configuration group.
+src/pasarguard/client.ts                     Parse group IDs; optional group-read timeout.
+src/telegram/texts.ts                        Persian migration translations.
+src/telegram/texts.en.ts                     English migration translations.
+tests/serviceMigration.test.ts              Localized workflow/group/deadline regressions.
+tests/panelGroups.test.ts                    Selector-save to migration integration.
+tests/pasarguard541.test.ts                   Version-pinned synthetic client/parser tests.
+
+REAL VALIDATION RESULTS
+Final complete suite: 738 passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+Targeted migration/selector/schema/5.4.1 set: 126 passed; zero failures/skips.
+TypeScript: PASS (npm run typecheck).
+Worker dry-run: PASS, Wrangler 4.131.1; 882.98 KiB / 172.37 KiB gzip.
+Fresh isolated transactional SQLite install: migrations 0001-0024, 29 application
+ tables, zero foreign-key violations. Existing preservation/rollback/repeat tests
+ also pass. Autocommit SQL replay is not supported; use versioned transactions.
+34 new regressions: 25 migration, 2 selector-integration, 7 API-contract tests.
+Existing tests retained; three outage/backoff fixtures now introduce the outage
+ after successful draft validation, with all original recovery assertions retained.
+
+PRESERVED / CONFIGURATION
+Previous multi-panel, authorization, encryption, migration, financial, wallet,
+ announcement, dedupe and full-audience delivery functionality remains in this ZIP.
+No new SQL migration, secret, variable, dependency or Cloudflare resource.
+PANEL_ENCRYPTION_KEY was not rotated/replaced. Existing cryptographic and Mini App
+ authorization source is unchanged. Released migrations 0001-0024 unchanged.
+Visual selector markup/CSS and unrelated financial/business files unchanged.
+Final ZIP: 223 files, CRC/file-list/byte equality verified; no original file removed.
+
+REMAINING STAGING CHECKS / LIMITATIONS
+No real PasarGuard user creation/deletion, actual Telegram delivery or panel migration
+ performed. No staging or production server was used. HTTP tests use mocks and
+ local SQLite/D1 shim fixtures, not production records or distributed live D1.
+Live version/scopes, group/inbound behavior, subscription connectivity, source
+ deletion propagation, Telegram RTL/URL usability, Cron recovery and Worker limits
+ require separately authorized disposable staging tests. Large group counts can
+ hit subrequest/time budgets and remain safely blocked/recoverable.
+Finite fixed entitlements only; no free trials or full proxy/reset/next-plan clone.
+Stale/manual values require explicit judgment; quota consumption across panels is
+ not atomic. Source can remain usable until separately confirmed deletion.
+The migration UI is accessible with /migrate, not a new button inside /panels.
+
+No production data queries/changes, secret/configuration changes, deployment,
+ commit, push, production migration, real migration or release publication.
+See the included test report and validation guide for exact commands and next steps.

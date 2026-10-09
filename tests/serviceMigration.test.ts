@@ -11,8 +11,8 @@ import { resolvePanel,clientFor,acquireServiceLock,releaseServiceLock } from '..
 import { processTelegramUpdate } from '../src/dispatch.ts';
 import { runServiceNotificationSweep } from '../src/handlers/serviceNotifications.ts';
 import { recoverPanelOperations } from '../src/panels/recovery.ts';
-import { migrationCommand,deliverMigrationNotices } from '../src/handlers/serviceMigration.ts';
-import { FA_UI } from '../src/telegram/i18n.ts';
+import { migrationCommand,migrationCallback,deliverMigrationNotices } from '../src/handlers/serviceMigration.ts';
+import { FA_UI, EN_UI, uiFor } from '../src/telegram/i18n.ts';
 import type { Env,UpdateContext } from '../src/types.ts';
 import type { Migration } from '../src/migrations/service.ts';
 let raw:DatabaseSync,db:D1Database,env:Env,real:typeof fetch,service:string,expiry:number;
@@ -40,12 +40,13 @@ beforeEach(async()=>{
  globalThis.fetch=(async(input,init)=>{
   const u=new URL(String(input)),method=init?.method??'GET';
   if(u.origin==='https://cloudflare-dns.com')return Response.json({Status:0,Answer:[{type:1,data:'8.8.8.8'}]});
-  if(u.origin==='https://api.telegram.org')return Response.json({ok:true,result:{message_id:1}});
+  if(u.origin==='https://api.telegram.org'){const b=JSON.parse(String(init?.body));if(u.pathname.endsWith('/sendMessage'))messages.push({chat:b.chat_id,text:b.text,buttons:b.reply_markup});return Response.json({ok:true,result:{message_id:1}});}
   const n=origins.indexOf(u.origin);assert.ok(n>=0,'no unintended panel fallback');assert.equal(new Headers(init?.headers).get('x-api-key'),keys[n]);assert.equal(init?.redirect,'error');assert.equal(new Headers(init?.headers).get('authorization'),null);
   const body=init?.body?JSON.parse(String(init.body)):null;calls.push({n,method,path:u.pathname,body});
   if(n===0&&sourceDown)return Response.json({detail:keys[0]},{status:401});
   if(n===0&&proxySource404)return new Response('Proxy route missing',{status:404});
   if(n===1&&destDown)return Response.json({detail:keys[1]},{status:503});
+  if(u.pathname.startsWith('/api/group/')){const id=Number(u.pathname.split('/').at(-1));return Response.json({id,name:`Group ${id}`,is_disabled:false,inbound_tags:['fixture']});}
   if(u.pathname==='/api/admin')return Response.json({username:'synthetic-operator',status:'active',role:{is_owner:!restrictedReadScope,permissions:{users:{read:{scope:restrictedReadScope?1:2}}}}});
   if(u.pathname==='/api/user'&&method==='POST'){
    const migration=raw.prepare('SELECT * FROM service_migrations WHERE destination_username=?').get(body.username);
@@ -352,7 +353,7 @@ test('globally visible certified absence can still mark a genuinely missing migr
 });
 
 test('repeated identical migration blocks back off durably, coalesce diagnostics and allow manual recovery',async()=>{
- destDown=true;const draft=await propose();let m=await confirmOnce(env,ADMIN.id,draft.confirmation_token);
+ const draft=await propose();destDown=true;let m=await confirmOnce(env,ADMIN.id,draft.confirmation_token);
  assert.equal(m.state,'creating');assert.equal(m.blocked_count,1);assert.equal(m.next_recovery_at,0);
  const firstEventCount=raw.prepare("SELECT COUNT(*) n FROM service_migration_events WHERE migration_id=? AND action='blocked'").get(m.id)!.n;
  await recoverOnce(env);m=await migrationStatus(env,m.id,ADMIN.id);assert.equal(m.blocked_count,2);assert.ok(m.next_recovery_at>Date.now());
@@ -363,7 +364,7 @@ test('repeated identical migration blocks back off durably, coalesce diagnostics
  await recoverOnce(env);assert.equal((await migrationStatus(env,m.id,ADMIN.id)).state,'cleanup_pending');assert.equal((await migrationStatus(env,m.id,ADMIN.id)).source_revoked_at,null);
 });
 test('automatic migration recovery honors persisted due time and retries after expiry',async()=>{
- destDown=true;const draft=await propose();let m=await confirmOnce(env,ADMIN.id,draft.confirmation_token);await recoverOnce(env);m=await migrationStatus(env,m.id,ADMIN.id);
+ const draft=await propose();destDown=true;let m=await confirmOnce(env,ADMIN.id,draft.confirmation_token);await recoverOnce(env);m=await migrationStatus(env,m.id,ADMIN.id);
  const count=calls.length;await recoverOnce(env);assert.equal(calls.length,count);
  raw.prepare('UPDATE service_migrations SET next_recovery_at=0 WHERE id=?').run(m.id);await recoverOnce(env);assert.ok(calls.length>count);assert.equal((await migrationStatus(env,m.id,ADMIN.id)).blocked_count,3);
 });
@@ -392,7 +393,7 @@ test('optimized observation lookup rejects ambiguous base/current identity inste
 });
 
 test('revoked operators cannot occupy the recovery limit and starve an authorized due migration',async()=>{
- destDown=true;const draft=await propose(),m=await confirmOnce(env,ADMIN.id,draft.confirmation_token);
+ const draft=await propose();destDown=true;const m=await confirmOnce(env,ADMIN.id,draft.confirmation_token);
  const columns=raw.prepare('PRAGMA table_info(service_migrations)').all().map(v=>String(v.name));
  const template=raw.prepare('SELECT * FROM service_migrations WHERE id=?').get(m.id)!;
  for(let n=0;n<25;n++){
@@ -403,4 +404,91 @@ test('revoked operators cannot occupy the recovery limit and starve an authorize
  }
  const before=calls.length;await recoverOnce(env);assert.ok(calls.length>before);assert.equal((await migrationStatus(env,m.id,ADMIN.id)).blocked_count,2);
  assert.equal(raw.prepare("SELECT SUM(blocked_count) n FROM service_migrations WHERE operator='999999999'").get()!.n,25,'unauthorized rows retain their prior evidence without being advanced');
+});
+
+// Permanent 5.4.1 group and shared-localization regressions.
+for(const locale of ['fa','en'] as const){
+ test(`migration ${locale} command help, selection and review use shared dictionary and isolated IDs`,async()=>{
+  const ctx={...context(),ui:uiFor(locale)},t=ctx.ui.t;
+  await migrationCommand(ctx,[]);assert.ok(messages.at(-1)!.text.startsWith(t.migrationUsage.split('{commands}')[0]));
+  await migrationCommand(ctx,[String(USER.id)]);const choice=messages.at(-1)!;assert.ok(choice.text.includes(locale==='fa'?'یک سرویس انتخاب کنید':'select a service'));assert.ok(choice.buttons.inline_keyboard[0][0].text.includes(locale==='fa'?'سرویس':'Service'));
+  const draft=await propose();await migrationCommand(ctx,['status',draft.id]);const card=messages.at(-1)!;
+  assert.ok(card.text.includes(t.migrationFresh));assert.ok(card.text.includes(t.migrationStateReview));assert.ok(card.text.includes('\u2066'+draft.id+'\u2069'));
+  assert.ok(card.text.includes(String(7*GB_BYTES)));assert.ok(card.text.includes(new Date(expiry*1000).toISOString()));assert.ok(card.text.includes('71'));
+  assert.equal(card.buttons.inline_keyboard[0][0].text,t.migrationConfirmFresh);assert.equal(card.buttons.inline_keyboard.at(-1)[0].text,t.migrationRefresh);
+ });
+ test(`migration ${locale} dispatch callbacks follow saved operator locale through activation and revocation`,async()=>{
+  raw.prepare('UPDATE customers SET language=? WHERE telegram_user_id=?').run(locale,String(ADMIN.id));
+  const draft=await propose();await processTelegramUpdate(callbackUpdateAs(`sm:c:${draft.confirmation_token}`,998100,ADMIN),env);
+  const staged=messages.at(-1)!;assert.ok(staged.text.includes(uiFor(locale).t.migrationStateVerified));assert.ok(staged.buttons.inline_keyboard.flat().some((b:any)=>b.text===uiFor(locale).t.migrationContinue));
+  await processTelegramUpdate(callbackUpdateAs(`sm:r:${draft.id}`,998101,ADMIN),env);assert.ok(messages.at(-1)!.text.includes(uiFor(locale).t.migrationStateCleanupPending));
+  await processTelegramUpdate(callbackUpdateAs(`sm:x:${draft.id}`,998102,ADMIN),env);assert.equal(messages.at(-1)!.buttons.inline_keyboard[0][0].text,uiFor(locale).t.migrationConfirmRevoke);assert.ok(messages.at(-1)!.text.includes(locale==='fa'?'حذف فقط':'ONLY source'));
+  const token=raw.prepare("SELECT nonce FROM migration_admin_choices WHERE action='revoke'").get()!;
+  await processTelegramUpdate(callbackUpdateAs(`sm:k:${token.nonce}`,998103,ADMIN),env);assert.ok(messages.at(-1)!.text.includes(uiFor(locale).t.migrationStateCompleted));
+ });
+ test(`migration ${locale} stale and manual reviews retain distinct confirmation labels`,async()=>{
+  await refreshSource();sourceDown=true;let draft=await propose();const ctx={...context(),ui:uiFor(locale)},t=ctx.ui.t;
+  await migrationCommand(ctx,['status',draft.id]);assert.ok(messages.at(-1)!.text.includes(t.migrationSaved));assert.equal(messages.at(-1)!.buttons.inline_keyboard[0][0].text,t.migrationConfirmSaved);
+  await migrationCommand(ctx,['manual',draft.id,'1000000',new Date(expiry*1000).toISOString().replace('.000Z','Z'),'2']);assert.ok(messages.at(-1)!.text.includes(t.migrationManual));assert.equal(messages.at(-1)!.buttons.inline_keyboard[0][0].text,t.migrationConfirmManual);
+ });
+ test(`migration ${locale} authorization, validation and blocked recovery errors are localized and redacted`,async()=>{
+  const ctx={...context(),ui:uiFor(locale)},t=ctx.ui.t;
+  await migrationCommand({...context(USER),ui:uiFor(locale)},[]);assert.equal(messages.at(-1)!.text,t.migrationDenied);
+  await migrationCommand(ctx,['manual',service,'1','not-a-date','1']);assert.ok(messages.at(-1)!.text.includes(t.migrationError_use_explicit_UTC_timestamp));assert.ok(!messages.at(-1)!.text.includes('use_explicit_UTC_timestamp'));
+  const draft=await propose();destDown=true;await confirmOnce(env,ADMIN.id,draft.confirmation_token);await migrationCommand(ctx,['status',draft.id]);assert.ok(messages.at(-1)!.text.includes(t.migrationError_destination_groups_unverified));for(const key of keys)assert.ok(!messages.at(-1)!.text.includes(key));
+ });
+ test(`scheduled migration handoff ${locale} follows customer preference, not operator language`,async()=>{
+  raw.prepare('UPDATE customers SET language=? WHERE id=1').run(locale);raw.prepare('UPDATE customers SET language=? WHERE id=3').run(locale==='fa'?'en':'fa');
+  const done=await migrate();messages=[];await deliverMigrationNotices(env);const notice=messages.find(v=>v.chat===USER.id)!;
+  assert.ok(notice.text.startsWith(uiFor(locale).t.migrationCustomerNotice.split('{url}')[0]));assert.ok(notice.text.includes(done.destination_url!));assert.ok(notice.text.includes('\u2066'+done.destination_url+'\u2069'));
+  assert.ok(raw.prepare('SELECT customer_notified_at FROM service_migrations WHERE id=?').get(done.id)!.customer_notified_at);
+ });
+}
+test('destination receives saved numeric group IDs, exact remaining quota, absolute expiry and device limit',async()=>{
+ raw.prepare("UPDATE panels SET group_ids='[71,93]' WHERE id='dest'").run();const draft=await propose();await confirmMigration(env,ADMIN.id,draft.confirmation_token);
+ const create=calls.find(c=>c.n===1&&c.method==='POST'&&c.path==='/api/user')!;assert.deepEqual(create.body.group_ids,[71,93]);assert.equal(create.body.data_limit,7*GB_BYTES);assert.equal(create.body.expire,expiry);assert.equal(create.body.hwid_limit,3);
+});
+test('changing panel defaults after review does not substitute different groups in a pending migration',async()=>{
+ const draft=await propose();raw.prepare("UPDATE panels SET group_ids='[99]',revision=revision+1 WHERE id='dest'").run();
+ // Credential AAD rotates with panel revision, exactly as real secure edits do.
+ const cipher=await encrypt(env,`panel:dest:2:${origins[1]}:credentials`,{apiKey:keys[1]});raw.prepare('UPDATE panels SET credentials=? WHERE id=?').run(cipher,'dest');
+ await confirmMigration(env,ADMIN.id,draft.confirmation_token);assert.deepEqual(calls.find(c=>c.n===1&&c.method==='POST'&&c.path==='/api/user')!.body.group_ids,[71]);
+});
+for(const failure of ['missing','permission','disabled','malformed'] as const)test(`migration rejects ${failure} destination group before creation without source loss`,async()=>{
+ const draft=await propose(),fetchBefore=globalThis.fetch;
+ globalThis.fetch=async(input,init)=>{const u=new URL(String(input));if(u.origin===origins[1]&&u.pathname.startsWith('/api/group/'))return failure==='missing'?Response.json({detail:'Group not found'},{status:404}):failure==='permission'?Response.json({detail:keys[1]},{status:403}):Response.json({id:71,name:'Destination',...(failure==='disabled'?{is_disabled:true}:{})});return fetchBefore(input,init);};
+ const done=await confirmOnce(env,ADMIN.id,draft.confirmation_token);assert.equal(done.state,'creating');assert.equal(done.error,failure==='disabled'?'destination_groups_disabled':'destination_groups_unverified');assert.equal(users[1]!.size,0);assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(calls.filter(c=>c.n===0&&c.method==='DELETE').length,0);
+});
+test('empty and duplicate destination defaults cannot open a migration draft',async()=>{
+ for(const config of ['[]','[71,71]']){raw.prepare('UPDATE panels SET group_ids=? WHERE id=?').run(config,'dest');await assert.rejects(propose(),/panel_groups_invalid/);}
+ assert.equal(raw.prepare('SELECT COUNT(*) n FROM service_migrations').get()!.n,0);assert.equal(users[1]!.size,0);
+});
+test('destination group read-back mismatch prevents staging and cutover instead of accepting panel substitution',async()=>{
+ const draft=await propose(),f=globalThis.fetch;globalThis.fetch=async(input,init)=>{const response=await f(input,init),u=new URL(String(input));if(u.origin===origins[1]&&u.pathname.startsWith('/api/user/')&&init?.method==='GET'&&response.ok)return Response.json({...await response.json() as any,group_ids:[999]});return response;};
+ const done=await confirmOnce(env,ADMIN.id,draft.confirmation_token);assert.equal(done.error,'destination_groups_mismatch');assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(users[0]!.size,1);
+});
+test('deleted group after disabled staging blocks activation and remains safely retryable',async()=>{
+ const draft=await propose(),staged=await confirmOnce(env,ADMIN.id,draft.confirmation_token);assert.equal(staged.state,'verified');const f=globalThis.fetch;globalThis.fetch=async(input,init)=>String(input).startsWith(origins[1]+'/api/group/')?Response.json({detail:'Group not found'},{status:404}):f(input,init);
+ const blocked=await advanceOnce(env,draft.id,ADMIN.id,false);assert.equal(blocked.state,'verified');assert.equal(blocked.error,'destination_groups_unverified');assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(users[1]!.get(draft.destination_username)!.status,'disabled');
+ globalThis.fetch=f;const done=await advanceOnce(env,draft.id,ADMIN.id,false);assert.equal(done.state,'cleanup_pending');assert.equal(done.source_revoked_at,null);
+});
+test('activation read-back must retain reviewed groups even when an external actor changes the candidate',async()=>{
+ const draft=await propose();await confirmOnce(env,ADMIN.id,draft.confirmation_token);users[1]!.get(draft.destination_username)!.group_ids=[999];const done=await advanceOnce(env,draft.id,ADMIN.id,false);assert.equal(done.error,'destination_groups_mismatch');assert.equal(done.state,'activating');assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(users[0]!.size,1);
+});
+test('absent destination never triggers automatic creation after group validation succeeds',async()=>{
+ const draft=await propose();destDown=true;await confirmOnce(env,ADMIN.id,draft.confirmation_token);destDown=false;await recoverOnce(env);assert.equal(users[1]!.size,0);assert.equal((await migrationStatus(env,draft.id,ADMIN.id)).error,'destination_absent_explicit_retry_required');
+});
+test('migration customer notification defaults to Persian even with an English Telegram language hint',async()=>{
+ raw.prepare("UPDATE customers SET language=NULL,language_code='en' WHERE id=1").run();await migrate();messages=[];await deliverMigrationNotices(env);assert.ok(messages.find(m=>m.chat===USER.id)!.text.startsWith(FA_UI.t.migrationCustomerNotice.split('{url}')[0]));
+});
+for(const locale of ['fa','en'] as const)test(`migration ${locale} callback responses and safe-abort confirmation are localized`,async()=>{
+ const answers:string[]=[],ctx={...context(),ui:uiFor(locale),api:{...api,answerCallbackQuery:async(_id:string,text?:string)=>{if(text)answers.push(text);}} as UpdateContext['api']},t=ctx.ui.t;
+ await migrationCallback({...ctx,actor:USER,chatId:USER.id},'sm:s:'+service,'deny');assert.equal(answers.at(-1),t.migrationDenied);
+ const draft=await propose();await confirmOnce(env,ADMIN.id,draft.confirmation_token);await migrationCallback(ctx,'sm:n:'+draft.id,'abort-review');assert.equal(answers.at(-1),t.migrationChecking);assert.equal(messages.at(-1)!.text,t.migrationAbortPrompt);assert.equal(messages.at(-1)!.buttons.inline_keyboard[0][0].text,t.migrationConfirmAbort);
+ const token=raw.prepare("SELECT nonce FROM migration_admin_choices WHERE action='abort'").get()!;await migrationCallback(ctx,'sm:a:'+token.nonce,'abort-confirm');assert.ok(messages.at(-1)!.text.includes(t.migrationStateCancelled));assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(users[0]!.size,1);assert.equal(users[1]!.size,0);
+});
+test('slow destination group validation is bounded and cannot proceed to remote creation after its deadline',async()=>{
+ const draft=await propose(),f=globalThis.fetch,clock=Date.now;let now=clock();
+ Date.now=()=>now;globalThis.fetch=async(input,init)=>{const response=await f(input,init);if(String(input).startsWith(origins[1]+'/api/group/'))now+=30001;return response;};
+ try{const done=await confirmOnce(env,ADMIN.id,draft.confirmation_token);assert.equal(done.state,'creating');assert.equal(done.error,'destination_groups_unverified');assert.equal(users[1]!.size,0);assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(users[0]!.size,1);}finally{Date.now=clock;globalThis.fetch=f;}
 });

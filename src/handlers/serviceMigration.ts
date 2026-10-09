@@ -1,3 +1,6 @@
+import {uiFor} from '../telegram/i18n.ts';
+import type {Ui} from '../telegram/i18n.ts';
+import type {Texts} from '../telegram/texts.ts';
 import {deliverMessage} from '../telegram/delivery.ts';
 /** No new HTTP surface or credential-entry form. Signed Telegram webhook + strict panel-admin allowlist. */
 import type { UpdateContext,Env } from '../types.ts';
@@ -6,35 +9,43 @@ import { getOrderById } from '../db/orders.ts';
 import { isValidOrderId } from '../lib/validate.ts';
 import { migrationStatus,proposeMigration,manualEntitlement,confirmMigration,cancelMigration,advanceMigration,revokeSource } from '../migrations/service.ts';
 import type { Migration,Entitlement } from '../migrations/service.ts';
+/** Plain-text technical values are bidi-isolated; callbacks/storage remain untouched. */
+function value(v:unknown):string{return `\u2066${String(v)}\u2069`;}
+function message(template:string,values:Record<string,unknown>):string{return template.replace(/\{(\w+)\}/g,(_,key)=>String(values[key]??''));}
+const errorKeys = new Set(["migration_not_authorized", "migration_not_found", "service_busy", "service_owner_or_identity_invalid", "pending_service_operation", "destination_not_ready", "manual_entitlement_invalid", "cannot_cancel_remote_migration", "expired_or_incomplete_review", "entitlement_expired", "fresh_preview_expired_cancel_and_review_again", "fresh_preview_changed_cancel_and_review_again", "source_origin_unavailable", "use_explicit_UTC_timestamp", "customer_not_found", "service_invalid", "invalid_migration_action", "invalid_service_id", "expired_or_used_choice", "invalid_migration_id", "source_not_ready_for_revocation", "source_or_pending_operation_changed", "entitlement_expired_requires_review", "destination_configuration_unavailable", "destination_origin_changed", "destination_absent_explicit_retry_required", "destination_creation_unverified", "destination_identity_owned_elsewhere", "destination_staging_disable_unverified", "destination_url_unverified", "activation_identity_unverified", "activation_unverified", "active_url_unverified", "source_is_current_active_resource", "source_unavailable_revocation_unconfirmed", "source_revocation_unconfirmed", "source_absence_scope_unverified", "candidate_cleanup_unconfirmed", "candidate_identity_unverified", "candidate_absence_scope_unverified", "review_expired", "panel_groups_invalid", "destination_groups_unverified", "destination_groups_disabled", "destination_groups_mismatch"]);
+function reason(ui:Ui,code:string):string{return errorKeys.has(code)?ui.t[('migrationError_'+code) as keyof Texts] as string:ui.t.migrationInterrupted;}
+function stage(ui:Ui,state:Migration['state']):string{const keys={review:'migrationStateReview',creating:'migrationStateCreating',verified:'migrationStateVerified',activating:'migrationStateActivating',cleanup_pending:'migrationStateCleanupPending',completed:'migrationStateCompleted',cancelled:'migrationStateCancelled'} as const;return ui.t[keys[state]];}
 function authorized(ctx:UpdateContext):boolean{return ctx.chatId===ctx.actor.id&&isPanelAdmin(ctx.env,ctx.actor.id);}
-async function deny(ctx:UpdateContext):Promise<void>{await ctx.api.sendMessage(ctx.chatId,'Migration requires an explicitly authorized administrator in private chat.');}
+async function deny(ctx:UpdateContext):Promise<void>{await ctx.api.sendMessage(ctx.chatId,ctx.ui.t.migrationDenied);}
 async function card(ctx:UpdateContext,m:Migration):Promise<void>{
- const e=m.entitlement?JSON.parse(m.entitlement) as Entitlement:null;
+ const {t,f}=ctx.ui,e=m.entitlement?JSON.parse(m.entitlement) as Entitlement:null;
  const customer=await ctx.db.prepare('SELECT telegram_user_id,telegram_username FROM customers WHERE id=?1').bind(m.customer_id).first<{telegram_user_id:string;telegram_username:string|null}>();
  const names=await ctx.db.prepare('SELECT id,name FROM panels WHERE id IN (?1,?2)').bind(m.source_panel_id,m.destination_panel_id).all<{id:string;name:string}>();
  const name=(id:string)=>names.results.find(p=>p.id===id)?.name??id;
  const active=await getOrderById(ctx.db,m.service_id);
- const lines=[`Migration ${m.id}`,`Customer: Telegram ${customer?.telegram_user_id??'unknown'} ${customer?.telegram_username?'@'+customer.telegram_username:''} (internal ${m.customer_id}); service: ${m.service_id}`,
-  `Source: ${name(m.source_panel_id)} (${m.source_panel_id})`, `Destination: ${name(m.destination_panel_id)} (${m.destination_panel_id})`,
-  `Destination groups: ${JSON.parse(m.destination_config).groupIds?.join(',')??'unavailable'}. Fixed finite quota/expiry/device model; custom proxy, reset and next-plan settings are not cloned.`,
-  `Stage: ${m.state}${m.abort_requested?' — ABORT REQUESTED':''}${m.error?`; blocked: ${m.error}`:''}`,`Active in bot: ${active?.panel_id??'unknown'} / ${active?.pasarguard_user_id??'unknown'}`,
-  `Source revocation: ${m.source_revoked_at?'API absence confirmed at '+m.source_revoked_at:'NOT CONFIRMED — old subscription may still be usable'}`];
- if(e)lines.push(`Entitlement: ${e.source==='fresh'?'verified fresh':e.source==='saved'?'STALE saved':'MANUAL administrator values'}; observed/entered ${new Date(e.observedAt).toISOString()}`,
-  `Remaining: ${e.remaining} bytes; absolute expiry: ${new Date(e.expire*1000).toISOString()}; devices: ${e.hwid}`,
-  `Quota/usage evidence: ${e.quota??'unknown'} / ${e.used??'unknown'} bytes`,
-  'Migration uses this timestamped snapshot. Traffic consumed afterward is not atomically transferable across panels. Review any entitlement uncertainty before confirming.');
- else lines.push('No complete trustworthy finite entitlement. STOP until administrator review. Use explicit manual remaining values only if justified.');
+ const lines=[message(t.migrationHeader,{id:value(m.id)}),
+  message(t.migrationCustomerLine,{telegram:value(customer?.telegram_user_id??t.migrationUnknown),username:customer?.telegram_username?value('@'+customer.telegram_username):'',customer:value(f.digits(m.customer_id)),service:value(m.service_id)}),
+  message(t.migrationSourceLine,{name:value(name(m.source_panel_id)),id:value(m.source_panel_id)}),
+  message(t.migrationDestinationLine,{name:value(name(m.destination_panel_id)),id:value(m.destination_panel_id)}),
+  message(t.migrationGroupsLine,{groups:value(JSON.parse(m.destination_config).groupIds?.join(', ')??t.migrationUnknown)}),t.migrationModelWarning,
+  message(t.migrationStageLine,{stage:stage(ctx.ui,m.state)})+(m.abort_requested?' — '+t.migrationAbortRequested:''),
+  ...(m.error?[message(t.migrationBlockedLine,{reason:reason(ctx.ui,m.error)})]:[]),
+  message(t.migrationActiveLine,{panel:value(active?.panel_id??t.migrationUnknown),user:value(active?.pasarguard_user_id??t.migrationUnknown)}),
+  m.source_revoked_at?message(t.migrationRevokedLine,{date:value(f.dateTime(m.source_revoked_at))}):t.migrationNotRevoked];
+ if(e)lines.push(message(t.migrationEvidenceLine,{source:e.source==='fresh'?t.migrationFresh:e.source==='saved'?t.migrationSaved:t.migrationManual,date:value(f.dateTime(new Date(e.observedAt).toISOString()))}),
+  message(t.migrationRemainingLine,{bytes:value(f.digits(e.remaining)),expiry:value(new Date(e.expire*1000).toISOString()),devices:value(f.digits(e.hwid))}),
+  message(t.migrationQuotaLine,{quota:value(e.quota===null?t.migrationUnknown:f.digits(e.quota)),used:value(e.used===null?t.migrationUnknown:f.digits(e.used))}),t.migrationSnapshotWarning);
+ else lines.push(t.migrationNoEntitlement);
  const buttons:{text:string;callback_data:string}[][]=[];
  if(m.state==='review'){
-  if(e)buttons.push([{text:`Confirm ${e.source==='fresh'?'verified':'STALE / MANUAL'} entitlement and migrate`,callback_data:`sm:c:${m.confirmation_token}`}]);
-  buttons.push([{text:'Cancel draft (no remote changes)',callback_data:`sm:n:${m.id}`}]);
-  lines.push(`Manual confirmation explicitly accepts fixed remaining values, not automatic cloning of unsupported source features.
-Manual review: /migrate manual ${m.id} <remaining_bytes> <YYYY-MM-DDTHH:mm:ssZ> <devices>`);
+  if(e)buttons.push([{text:e.source==='fresh'?t.migrationConfirmFresh:e.source==='saved'?t.migrationConfirmSaved:t.migrationConfirmManual,callback_data:`sm:c:${m.confirmation_token}`}]);
+  buttons.push([{text:t.migrationCancelDraft,callback_data:`sm:n:${m.id}`}]);
+  lines.push(message(t.migrationManualHelp,{command:value(message(t.migrationManualCommand,{id:m.id}))}));
  }
- if(['creating','verified','activating'].includes(m.state))buttons.push([{text:'Review abort; preserve original source',callback_data:`sm:n:${m.id}`}]);
- if(['creating','verified','activating'].includes(m.state))buttons.push([{text:m.abort_requested?'Retry abort cleanup':m.state==='verified'?'Continue verified activation':'Retry — reconcile first',callback_data:`sm:r:${m.id}`}]);
- if(m.state==='cleanup_pending')buttons.push([{text:'Review source revocation',callback_data:`sm:x:${m.id}`}]);
- buttons.push([{text:'Refresh progress',callback_data:`sm:v:${m.id}`}]);
+ if(['creating','verified','activating'].includes(m.state))buttons.push([{text:t.migrationAbortReview,callback_data:`sm:n:${m.id}`}]);
+ if(['creating','verified','activating'].includes(m.state))buttons.push([{text:m.abort_requested?t.migrationRetryAbort:m.state==='verified'?t.migrationContinue:t.migrationRetry,callback_data:`sm:r:${m.id}`}]);
+ if(m.state==='cleanup_pending')buttons.push([{text:t.migrationReviewRevoke,callback_data:`sm:x:${m.id}`}]);
+ buttons.push([{text:t.migrationRefresh,callback_data:`sm:v:${m.id}`}]);
  await ctx.api.sendMessage(ctx.chatId,lines.join('\n'),{inline_keyboard:buttons});
 }
 async function notifyCustomer(ctx:Pick<UpdateContext,'env'|'db'|'api'>,m:Migration):Promise<void>{
@@ -43,11 +54,11 @@ async function notifyCustomer(ctx:Pick<UpdateContext,'env'|'db'|'api'>,m:Migrati
  const {acquireServiceLock,releaseServiceLock}=await import('../panels/registry.ts');
  if(!await acquireServiceLock(ctx.db,m.service_id,owner))return;
  try{
-  const target=await ctx.db.prepare(`SELECT c.telegram_user_id,r.subscription_url FROM active_service_resources r
+  const target=await ctx.db.prepare(`SELECT c.telegram_user_id,c.language,r.subscription_url FROM active_service_resources r
    JOIN orders o ON o.id=r.service_id JOIN customers c ON c.id=o.customer_id JOIN service_migrations m ON m.id=r.migration_id
-   WHERE r.migration_id=?1 AND m.customer_notified_at IS NULL`).bind(m.id).first<{telegram_user_id:string;subscription_url:string}>();
+   WHERE r.migration_id=?1 AND m.customer_notified_at IS NULL`).bind(m.id).first<{telegram_user_id:string;language:string|null;subscription_url:string}>();
   if(!target)return;
-  const delivery=await deliverMessage(ctx.api,Number(target.telegram_user_id),`Your service has been moved by an administrator. Use the new subscription URL:\n${target.subscription_url}`);
+  const delivery=await deliverMessage(ctx.api,Number(target.telegram_user_id),message(uiFor(target.language).t.migrationCustomerNotice,{url:value(target.subscription_url)}));
   if(delivery.kind!=='sent')return;
   await ctx.db.prepare("UPDATE service_migrations SET customer_notified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1").bind(m.id).run();
  }finally{await releaseServiceLock(ctx.db,m.service_id,owner);}
@@ -59,8 +70,8 @@ async function destinations(ctx:UpdateContext,service:string,page=0):Promise<voi
  await ctx.db.prepare('DELETE FROM migration_admin_choices WHERE expires_at<?1').bind(Date.now()).run();
  const buttons=[];
  for(const p of panels.results){const token=nonce();await ctx.db.prepare("INSERT INTO migration_admin_choices(nonce,actor,action,service_id,customer_id,panel_id,expires_at) VALUES(?1,?2,'destination',?3,?4,?5,?6)")
-  .bind(token,String(ctx.actor.id),s.id,s.customer_id,p.id,Date.now()+300000).run();buttons.push([{text:`Migrate to ${p.name}`,callback_data:`sm:d:${token}`}]);}
- await ctx.api.sendMessage(ctx.chatId,`Customer ${s.customer_id}, service ${s.id}\nCurrent panel ${s.panel_id}. Choose enabled destination; no remote changes yet.\nMore panels: /migrate panels ${s.id} ${page+1}`,{inline_keyboard:buttons});
+  .bind(token,String(ctx.actor.id),s.id,s.customer_id,p.id,Date.now()+300000).run();buttons.push([{text:message(ctx.ui.t.migrationDestinationButton,{name:value(p.name)}),callback_data:`sm:d:${token}`}]);}
+ await ctx.api.sendMessage(ctx.chatId,message(ctx.ui.t.migrationDestinationHelp,{customer:value(ctx.ui.f.digits(s.customer_id)),service:value(s.id),panel:value(s.panel_id),command:value(`/migrate panels ${s.id} ${page+1}`)})+(panels.results.length?'':'\n'+ctx.ui.t.migrationNoDestinations),{inline_keyboard:buttons});
 }
 export async function migrationCommand(ctx:UpdateContext,args:string[]):Promise<void>{
  if(!authorized(ctx)){await deny(ctx);return;}
@@ -75,23 +86,19 @@ export async function migrationCommand(ctx:UpdateContext,args:string[]):Promise<
   if(args.length===1&&/^\d{1,16}$/.test(args[0]!)){
    const c=await ctx.db.prepare('SELECT id FROM customers WHERE telegram_user_id=?1').bind(args[0]!).first<{id:number}>();if(!c)throw Error('customer_not_found');
    const services=await ctx.db.prepare("SELECT id,panel_id FROM effective_orders WHERE customer_id=?1 AND kind='purchase' AND state='completed' AND panel_deleted_at IS NULL ORDER BY created_at DESC LIMIT 10").bind(c.id).all<{id:string;panel_id:string}>();
-   await ctx.api.sendMessage(ctx.chatId,`Customer ${args[0]}: select service (latest 10). /migrate panels <service-id> also accepts a known historical service ID.`,{inline_keyboard:services.results.map(s=>[{text:`${s.id} — ${s.panel_id}`,callback_data:`sm:s:${s.id}`}])});return;
+   await ctx.api.sendMessage(ctx.chatId,message(ctx.ui.t.migrationSelectService,{id:value(args[0]),command:value(ctx.ui.t.migrationPanelsCommand)})+(services.results.length?'':'\n'+ctx.ui.t.migrationNoServices),{inline_keyboard:services.results.map(s=>[{text:message(ctx.ui.t.migrationServiceButton,{service:value(s.id),panel:value(s.panel_id)}),callback_data:`sm:s:${s.id}`}])});return;
   }
   const recent=await ctx.db.prepare('SELECT id,state FROM service_migrations ORDER BY updated_at DESC LIMIT 10').all<{id:string;state:string}>();
-  await ctx.api.sendMessage(ctx.chatId,'Usage: /migrate <customer Telegram ID>\n/migrate status <migration ID>\n/migrate panels <service ID> [page]\nNo charges or new orders are created.',{inline_keyboard:recent.results.map(m=>[{text:`${m.id} — ${m.state}`,callback_data:`sm:v:${m.id}`}])});
- }catch(error){await ctx.api.sendMessage(ctx.chatId,safeFailure(error));}
+  await ctx.api.sendMessage(ctx.chatId,message(ctx.ui.t.migrationUsage,{commands:value(ctx.ui.t.migrationUsageCommands)}),{inline_keyboard:recent.results.map(m=>[{text:`${value(m.id)} — ${stage(ctx.ui,m.state as Migration['state'])}`,callback_data:`sm:v:${m.id}`}])});
+ }catch(error){await ctx.api.sendMessage(ctx.chatId,safeFailure(ctx.ui,error));}
 }
-function safeFailure(error:unknown):string{
- const msg=error instanceof Error?error.message:'';
- const codes=new Set(['migration_not_authorized','migration_not_found','service_busy','service_owner_or_identity_invalid','pending_service_operation',
-  'destination_not_ready','manual_entitlement_invalid','cannot_cancel_remote_migration','expired_or_incomplete_review','entitlement_expired',
-  'fresh_preview_expired_cancel_and_review_again','fresh_preview_changed_cancel_and_review_again','source_origin_unavailable','use_explicit_UTC_timestamp','customer_not_found','service_invalid','invalid_migration_action',
-  'invalid_service_id','expired_or_used_choice','invalid_migration_id','source_not_ready_for_revocation']);
- return codes.has(msg)?`Migration stopped: ${msg}. Original financial/history records are unchanged.`:'Migration stopped or interrupted. Open /migrate to inspect durable progress; retry reconciles first. No raw error or credentials are displayed.';
+function safeFailure(ui:Ui,error:unknown):string{
+ const code=error instanceof Error?error.message:'';
+ return errorKeys.has(code)?message(ui.t.migrationStopped,{reason:reason(ui,code)}):ui.t.migrationInterrupted;
 }
 export async function migrationCallback(ctx:UpdateContext,data:string,callbackId:string):Promise<void>{
- if(!authorized(ctx)){await ctx.api.answerCallbackQuery(callbackId,'Not authorized.',true);return;}
- await ctx.api.answerCallbackQuery(callbackId,'Checking migration…');
+ if(!authorized(ctx)){await ctx.api.answerCallbackQuery(callbackId,ctx.ui.t.migrationDenied,true);return;}
+ await ctx.api.answerCallbackQuery(callbackId,ctx.ui.t.migrationChecking);
  try{
   const match=/^sm:([sdcnvrxka]):([0-9A-HJKMNP-TV-Z]{28}|[a-f0-9]{32})$/.exec(data);if(!match)throw Error('invalid_migration_action');
   const action=match[1]!,id=match[2]!;
@@ -110,7 +117,7 @@ export async function migrationCallback(ctx:UpdateContext,data:string,callbackId
    if(m.state!=='cleanup_pending')throw Error('source_not_ready_for_revocation');
    const token=nonce();await ctx.db.prepare("INSERT INTO migration_admin_choices(nonce,actor,action,service_id,customer_id,migration_id,expires_at) VALUES(?1,?2,'revoke',?3,?4,?5,?6)")
     .bind(token,String(ctx.actor.id),m.service_id,m.customer_id,m.id,Date.now()+300000).run();
-   await ctx.api.sendMessage(ctx.chatId,`Destination is active. Confirm deletion of ONLY source user ID ${m.source_user_id} on panel ${m.source_panel_id}? A failed/uncertain operation will remain unconfirmed.`,{inline_keyboard:[[{text:'Confirm source revocation',callback_data:`sm:k:${token}`}]]});return;
+   await ctx.api.sendMessage(ctx.chatId,message(ctx.ui.t.migrationRevokePrompt,{user:value(m.source_user_id),panel:value(m.source_panel_id)}),{inline_keyboard:[[{text:ctx.ui.t.migrationConfirmRevoke,callback_data:`sm:k:${token}`}]]});return;
   }
   if(action==='n'){
    if(m.state==='review')m=await cancelMigration(ctx.env,ctx.actor.id,id);
@@ -118,12 +125,12 @@ export async function migrationCallback(ctx:UpdateContext,data:string,callbackId
     if(!['creating','verified','activating'].includes(m.state))throw Error('cannot_cancel_remote_migration');
     const token=nonce();await ctx.db.prepare("INSERT INTO migration_admin_choices(nonce,actor,action,service_id,customer_id,migration_id,expires_at) VALUES(?1,?2,'abort',?3,?4,?5,?6)")
       .bind(token,String(ctx.actor.id),m.service_id,m.customer_id,m.id,Date.now()+300000).run();
-    await ctx.api.sendMessage(ctx.chatId,'Confirm abort BEFORE cutover? Only the unpublished destination will be reconciled/deleted. Original service and all financial history remain unchanged. Unknown cleanup stays pending; recovery will not activate an aborting migration.',{inline_keyboard:[[{text:'Confirm safe abort',callback_data:`sm:a:${token}`}]]});return;
+    await ctx.api.sendMessage(ctx.chatId,ctx.ui.t.migrationAbortPrompt,{inline_keyboard:[[{text:ctx.ui.t.migrationConfirmAbort,callback_data:`sm:a:${token}`}]]});return;
    }
   }
   if(action==='r')m=m.abort_requested?await cancelMigration(ctx.env,ctx.actor.id,id):await advanceMigration(ctx.env,id,ctx.actor.id,true);
   await notifyCustomer(ctx,m).catch(()=>{});await card(ctx,m);
- }catch(error){await ctx.api.sendMessage(ctx.chatId,safeFailure(error));}
+ }catch(error){await ctx.api.sendMessage(ctx.chatId,safeFailure(ctx.ui,error));}
 }
 
 /** At-least-once customer handoff; only the CURRENT active generation is sent.

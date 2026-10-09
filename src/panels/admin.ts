@@ -1,3 +1,5 @@
+import { renderPanelForm } from './form.ts';
+import { resolveLocale } from '../telegram/i18n.ts';
 import type { Env, UpdateContext, TelegramInlineKeyboardMarkup } from '../types.ts';
 import { getPanel, selection, resolvePanel, clientFor, audit, MAX_PANELS, validApiKey } from './registry.ts';
 import type { PanelRow } from './registry.ts';
@@ -32,7 +34,7 @@ async function formButton(ctx: UpdateContext, id: string, text: string): Promise
     if (!origin) { await ctx.api.sendMessage(ctx.chatId, 'Secure form unavailable: configure PANEL_ADMIN_ORIGIN once.'); return; }
     const token = await arm(ctx.env, ctx.actor.id, 'configure', id);
     await ctx.api.sendMessage(ctx.chatId, 'Open the secure Telegram form. Do not send API keys in chat.', {
-        inline_keyboard: [[{ text, web_app: { url: `${origin}/admin/panels?nonce=${token}` } }]],
+        inline_keyboard: [[{ text, web_app: { url: `${origin}/admin/panels?nonce=${token}&lang=${ctx.ui.locale}` } }]],
     });
 }
 export async function showPanels(ctx: UpdateContext, page = 0): Promise<void> {
@@ -79,7 +81,7 @@ async function verifyConfiguration(config: PanelConfig, groups: number[] | null)
         if(!groups.length) return 'groups_missing';
         for (const group of groups) {
             const read = await client.getGroup(group);
-            if(!read.ok || Number(read.data?.id)!==group) return 'group_access_unverified';
+            if(!read.ok || Number(read.data?.id)!==group || read.data?.is_disabled===true) return 'group_access_unverified';
         }
     }
     return 'ok';
@@ -187,15 +189,15 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
         if(!token || !/^[a-f0-9]{32}$/.test(token)) return reply(400,'Open the form from /panels.');
         // A URL/nonce is not an identity. Serve no registry or session metadata.
         const scriptNonce=nonce();
-        return new Response(form(token,scriptNonce),{headers:{...headers,'content-security-policy':headers['content-security-policy'].replaceAll('nonce-panel-form',`nonce-${scriptNonce}`),'content-type':'text/html; charset=utf-8'}});
+        return new Response(renderPanelForm(token,scriptNonce,resolveLocale(url.searchParams.get('lang'))),{headers:{...headers,'content-security-policy':headers['content-security-policy'].replaceAll('nonce-panel-form',`nonce-${scriptNonce}`),'content-type':'text/html; charset=utf-8'}});
     }
-    if(request.method!=='POST' || !['/admin/panels/configure','/admin/panels/metadata'].includes(url.pathname) || request.headers.get('origin')!==origin || !request.headers.get('content-type')?.startsWith('application/json')) return reply(403,'Not authorized.');
+    if(request.method!=='POST' || !['/admin/panels/configure','/admin/panels/metadata','/admin/panels/groups'].includes(url.pathname) || request.headers.get('origin')!==origin || !request.headers.get('content-type')?.startsWith('application/json')) return reply(403,'Not authorized.');
     try {
         const body=JSON.parse(await limitedText(new Response(request.body),16384)) as Record<string,unknown>;
         if(typeof body.initData!=='string') return reply(403,'Not authorized.');
         const actor=await verifyInitData(env,body.initData);
         if(!actor) return reply(403,'Not authorized.');
-        if(url.pathname==='/admin/panels/metadata') {
+        if(url.pathname==='/admin/panels/metadata' || url.pathname==='/admin/panels/groups') {
             // Read-only session lookup: never consume the configure nonce here.
             // Caller identity is freshly verified above, not inferred from a link.
             const token=body.nonce;
@@ -205,6 +207,33 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
             if(!session) return reply(403,'Expired or unavailable form; open a new form.');
             const p=await getPanel(env.DB,session.panel_id);
             if((p?.revision ?? 0)!==session.panel_revision) return reply(409,'Configuration changed; reopen form.');
+            if(url.pathname==='/admin/panels/groups') {
+                const fail=(status:number,code:string)=>new Response(JSON.stringify({code}),{status,headers:{...headers,'content-type':'application/json'}});
+                if(session.panel_id==='legacy')return fail(400,'legacy_configuration');
+                const destination=typeof body.url==='string'?panelOrigin(body.url):null;
+                if(!destination)return fail(400,'invalid_origin');
+                if(p && destination!==p.origin) {
+                    const refs=await env.DB.prepare('SELECT (SELECT COUNT(*) FROM orders WHERE panel_id=?1)+(SELECT COUNT(*) FROM service_migrations WHERE source_panel_id=?1 OR destination_panel_id=?1) n').bind(p.id).first<{n:number}>();
+                    if(refs?.n)return fail(409,'origin_locked');
+                }
+                let supplied:unknown=body.apiKey;
+                // A stored credential is bound to its exact origin and revision.
+                // Never send a retained key to an edited hostname.
+                if((supplied==='' || supplied===undefined) && p?.credentials && destination===p.origin)
+                    supplied=(await decrypt<{apiKey:string}>(env,`panel:${p.id}:${p.revision}:${p.origin}:credentials`,p.credentials)).apiKey;
+                if(!validApiKey(supplied))return fail(400,'key_required');
+                const result=await clientFor({baseUrl:destination,apiKey:supplied,validateDestination:()=>publicDestination(destination)}).listGroups();
+                if(!result.ok)return fail(result.kind==='auth'?401:result.kind==='permission'?403:502,
+                    result.kind==='auth'?'key_rejected':result.kind==='permission'?'permission_denied':result.status===404?'unsupported_api':result.kind==='bad_url'?'invalid_origin':'discovery_failed');
+                // A malicious upstream must not reflect our credential in a group name.
+                if(result.data.some(group=>group.name.includes(supplied as string)))return fail(502,'discovery_failed');
+                // Read-only discovery doesn't consume the one-time save nonce.
+                const stillValid=await env.DB.prepare("SELECT nonce FROM panel_admin_sessions WHERE nonce=?1 AND actor=?2 AND action='configure' AND expires_at>?3 AND panel_revision=?4")
+                    .bind(token,String(actor),Date.now(),session.panel_revision).first();
+                const latest=await getPanel(env.DB,session.panel_id);
+                if(!stillValid || (latest?.revision??0)!==session.panel_revision)return fail(409,'session_changed');
+                return new Response(JSON.stringify({groups:result.data}),{status:200,headers:{...headers,'content-type':'application/json'}});
+            }
             const groups=JSON.parse(p?.group_ids ?? '[]') as unknown;
             if(!Array.isArray(groups) || groups.some(v=>!Number.isSafeInteger(v) || v<1 || v>1000000)) return reply(400,'Configuration unavailable.');
             // Explicit DTO: never serialize PanelRow, ciphertext, keys or bindings.
@@ -242,7 +271,7 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
         const duplicates=await env.DB.prepare('SELECT id FROM panels WHERE origin=?1 AND id<>?2').bind(destination,id).first<{id:string}>();
         if(duplicates) return reply(409,'This origin is already registered.');
         let key:unknown=apiKey;
-        if((apiKey==='' || apiKey===undefined) && old?.credentials) key=(await decrypt<{apiKey:string}>(env,`panel:${id}:${old.revision}:${old.origin}:credentials`,old.credentials)).apiKey;
+        if((apiKey==='' || apiKey===undefined) && old?.credentials && destination===old.origin) key=(await decrypt<{apiKey:string}>(env,`panel:${id}:${old.revision}:${old.origin}:credentials`,old.credentials)).apiKey;
         if(!validApiKey(key)) return reply(400,'A valid API key is required.');
         const config:PanelConfig={baseUrl:destination,apiKey:key,panelId:id,validateDestination:()=>publicDestination(destination)};
         const result=await verifyConfiguration(config,groups as number[]);
@@ -263,17 +292,4 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
         const won=await env.DB.prepare('SELECT last_change FROM panels WHERE id=?1').bind(id).first<{last_change:string}>();
         return won?.last_change===token ? reply(200,'API key validated and encrypted configuration saved. Return to /panels; enable/select explicitly for new services.') : reply(409,'Panel limit or concurrent configuration change; reopen form.');
     } catch { return reply(400,'Configuration could not be saved. No credential details are returned.'); }
-}
-function form(token:string,scriptNonce:string): string {
-    // Static shell only. Existing configuration is fetched AFTER Telegram auth.
-    return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Manage API-key panel</title>
-<style nonce="${scriptNonce}">body{font:16px system-ui;max-width:520px;margin:24px auto;padding:16px;background:#f6f7f9;color:#17212b}input,button{font:inherit;box-sizing:border-box;width:100%;padding:12px;margin:8px 0}label{display:block}button{background:#1767ba;color:white;border:0;border-radius:8px}fieldset{border:0;padding:0;margin:0}</style>
-<h1 id="title">Manage API-key panel</h1><p id="intro">Authenticate through Telegram to load this form. Do not send API keys in chat.</p>
-<form id="f"><fieldset id="fields" disabled hidden><label>Display name<input id="name" maxlength="64" required></label><label id="url-row">Public HTTPS origin<input id="url" type="url" required placeholder="https://panel.example.com"></label><label id="groups-row">Group IDs, comma-separated<input id="groups" required inputmode="numeric"></label><label id="key-row"><span id="key-label">API key</span><input id="key" type="password" autocomplete="off" maxlength="4096" required></label><button>Test and save encrypted configuration</button></fieldset></form><p id="status" role="status">Authenticating…</p>
-<script src="https://telegram.org/js/telegram-web-app.js"></script><script nonce="${scriptNonce}">
-const f=document.getElementById('f'),fields=document.getElementById('fields'),out=document.getElementById('status'),key=document.getElementById('key'),button=f.querySelector('button');let ready=false;
-const initData=()=>window.Telegram?.WebApp?.initData;
-async function load(){try{if(!initData())throw Error();const r=await fetch('/admin/panels/metadata',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({nonce:'${token}',initData:initData()})});if(!r.ok)throw Error();const data=await r.json();document.getElementById('name').value=data.name;document.getElementById('url').value=data.url;document.getElementById('groups').value=data.groups.join(',');key.value='';key.required=!data.legacy&&!data.hasApiKey;for(const id of ['url','groups','key']){document.getElementById(id+'-row').hidden=data.legacy;document.getElementById(id).disabled=data.legacy;}document.getElementById('title').textContent=data.legacy?'Legacy panel name':data.hasApiKey?'Edit API-key panel':'Configure API-key panel';document.getElementById('intro').textContent=data.legacy?'The legacy URL/API key remain in Worker configuration and cannot be replaced here.':'API keys go directly to this HTTPS endpoint, never into chat. We test authentication, permissions and groups before saving.';document.getElementById('key-label').textContent=data.hasApiKey?'API key (leave blank to keep stored key)':'API key';fields.disabled=false;fields.hidden=false;ready=true;out.textContent='';}catch{out.textContent='Unable to authorize this form. Open a fresh form from /panels.';}}
-f.onsubmit=async e=>{e.preventDefault();if(!ready)return;button.disabled=true;try{if(!initData())throw Error();const body={nonce:'${token}',initData:initData(),name:document.getElementById('name').value,url:document.getElementById('url').value,apiKey:key.value,groups:document.getElementById('groups').value.split(',').map(v=>Number(v.trim()))};const r=await fetch('/admin/panels/configure',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});out.textContent=(await r.json()).message;if(r.ok){ready=false;fields.disabled=true;}}catch{out.textContent='Unable to save. Open a fresh form from /panels.';}finally{key.value='';button.disabled=false;}};
-window.Telegram?.WebApp?.ready();load();</script></html>`;
 }

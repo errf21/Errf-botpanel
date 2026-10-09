@@ -1,3 +1,4 @@
+import {panelFormDom} from './panelFormDom.ts';
 /** Permanent regressions for the two reproduced Mini App authorization gaps.
  * Synthetic credentials, in-memory D1, mocked network; no production access. */
 import { test, beforeEach, afterEach } from 'node:test';
@@ -31,6 +32,7 @@ beforeEach(async()=>{
         assert.ok([PANEL,NEW_PANEL].includes(u.origin),'Unexpected network call');
         assert.equal(init?.method,'GET','Metadata/configuration tests must never mutate panel users');
         assert.equal(new Headers(init?.headers).get('x-api-key'),KEY);panelCalls.push(u.pathname);
+        if(u.pathname==='/api/groups')return Response.json({groups:[{id:17,name:'First group'},{id:18,name:'Second group'}],total:2});
         return Response.json(u.pathname==='/api/admin' ? {username:'bot',status:'active',role:{is_owner:true}} : {id:Number(u.pathname.split('/').at(-1))});
     }) as typeof fetch;
 });
@@ -50,7 +52,7 @@ async function open(id='authpanel'):Promise<{url:string;token:string}> {
     return {url,token:new URL(url).searchParams.get('nonce')!};
 }
 function call(request:Request):Promise<Response>{return worker.fetch(request,env,execution);}
-function post(path:'metadata'|'configure',body:unknown,origin=WEB):Promise<Response>{
+function post(path:'metadata'|'configure'|'groups',body:unknown,origin=WEB):Promise<Response>{
     return call(new Request(`${WEB}/admin/panels/${path}`,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(body)}));
 }
 async function metadata(session:{token:string},initData?:string):Promise<Response>{
@@ -135,7 +137,7 @@ test('forged admin requests with a valid outstanding session fail closed on EVER
         const before=JSON.stringify(sqlite.prepare('SELECT * FROM panels ORDER BY id').all());
         if(token===undefined)delete (env as Partial<Env>).TELEGRAM_BOT_TOKEN;else env.TELEGRAM_BOT_TOKEN=token;
         const forged=await signed(ADMIN.id,token??'');
-        for(const endpoint of ['metadata','configure'] as const){
+        for(const endpoint of ['metadata','configure','groups'] as const){
             assert.equal((await post(endpoint,{nonce:f.token,initData:forged,name:'Forged rename'})).status,403);
         }
         assert.equal(JSON.stringify(sqlite.prepare('SELECT * FROM panels ORDER BY id').all()),before);
@@ -172,22 +174,18 @@ test('new-panel metadata loading leaves the successful add/configure workflow in
 test('generic form frontend authenticates before prefill and keeps stored keys out of the browser',async()=>{
     const f=await open();const html=await (await call(new Request(f.url))).text();
     const script=/<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(html)![1]!;
-    const elements=new Map<string,Record<string,unknown>>();
-    const get=(id:string)=>{if(!elements.has(id))elements.set(id,{value:'',hidden:false,disabled:false,required:false,textContent:''});return elements.get(id)!;};
-    get('fields').disabled=true;get('fields').hidden=true;
-    get('f').querySelector=()=>get('button');
+    const dom=panelFormDom(),get=dom.get;
     const auth=await signed();const uiCalls:string[]=[];
     const browserFetch=async(path:string,init:RequestInit)=>{uiCalls.push(path);return call(new Request(WEB+path,{...init,headers:{...(init.headers as Record<string,string>),origin:WEB}}));};
-    await runInNewContext(script,{document:{getElementById:get},window:{Telegram:{WebApp:{initData:auth,ready:()=>{}}}},fetch:browserFetch});
-    assert.deepEqual(uiCalls,['/admin/panels/metadata']);assert.equal(get('name').value,NAME);assert.equal(get('url').value,PANEL);assert.equal(get('groups').value,'17,18');
+    await runInNewContext(script,{document:dom.document,URL,setTimeout:dom.setTimeout,clearTimeout:dom.clearTimeout,window:{Telegram:{WebApp:{initData:auth,ready:()=>{}}}},fetch:browserFetch});
+    assert.deepEqual(uiCalls,['/admin/panels/metadata','/admin/panels/groups']);assert.equal(get('name').value,NAME);assert.equal(get('url').value,PANEL);assert.deepEqual(dom.checkboxes().filter((v:any)=>v.checked).map((v:any)=>Number(v.value)),[17,18]);assert.equal(get('select-all').checked,true);assert.equal(get('save').disabled,false);
     assert.equal(get('key').value,'');assert.equal(get('key').required,false);assert.equal(get('fields').hidden,false);assert.equal(get('fields').disabled,false);
     await (get('f').onsubmit as (e:{preventDefault():void})=>Promise<void>)({preventDefault:()=>{}});
-    assert.deepEqual(uiCalls,['/admin/panels/metadata','/admin/panels/configure']);assert.equal(get('key').value,'');assert.equal(get('fields').disabled,true);
+    assert.deepEqual(uiCalls,['/admin/panels/metadata','/admin/panels/groups','/admin/panels/configure']);assert.equal(get('key').value,'');assert.equal(get('fields').disabled,true);
 });
 test('frontend never enables or prefills an unauthorized borrowed-link form',async()=>{
     const f=await open();const html=await (await call(new Request(f.url))).text();const script=/<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(html)![1]!;
-    const elements=new Map<string,Record<string,unknown>>();const get=(id:string)=>{if(!elements.has(id))elements.set(id,{value:'',hidden:false,disabled:false,textContent:''});return elements.get(id)!;};
-    get('fields').disabled=true;get('fields').hidden=true;get('f').querySelector=()=>get('button');
-    await runInNewContext(script,{document:{getElementById:get},window:{Telegram:{WebApp:{initData:await signed(USER.id),ready:()=>{}}}},fetch:async(path:string,init:RequestInit)=>call(new Request(WEB+path,{...init,headers:{...(init.headers as Record<string,string>),origin:WEB}}))});
+    const dom=panelFormDom(),get=dom.get;
+    await runInNewContext(script,{document:dom.document,URL,setTimeout:dom.setTimeout,clearTimeout:dom.clearTimeout,window:{Telegram:{WebApp:{initData:await signed(USER.id),ready:()=>{}}}},fetch:async(path:string,init:RequestInit)=>call(new Request(WEB+path,{...init,headers:{...(init.headers as Record<string,string>),origin:WEB}}))});
     assert.equal(get('fields').disabled,true);assert.equal(get('fields').hidden,true);assert.equal(get('name').value,'');assert.equal(get('url').value,'');assert.equal(get('key').value,'');assert.equal(panelCalls.length,0);
 });

@@ -59,6 +59,22 @@ export type PanelResult<T> =
   | { ok: true; data: T }
   | { ok: false; kind: PanelErrorKind; status: number; detail: string };
 
+/** Verified upstream GroupsResponse; expose no inbound/user/admin metadata. */
+export interface PanelGroup { id:number; name:string; }
+interface GroupPage { groups:PanelGroup[]; total:number; }
+function groupPage(value:unknown):GroupPage|null {
+  const object=asRecord(value);
+  if (!object || !Array.isArray(object.groups) || !Number.isSafeInteger(object.total) || Number(object.total)<0 || Number(object.total)>1000 || object.groups.length>100) return null;
+  const groups:PanelGroup[]=[],seen=new Set<number>();
+  for(const value of object.groups) {
+    const group=asRecord(value);
+    if(!group || typeof group.id!=='number' || !Number.isSafeInteger(group.id) || group.id<1 || group.id>1000000 ||
+      typeof group.name!=='string' || !group.name.trim() || group.name.length>64 || /[\x00-\x1f\x7f]/.test(group.name) || seen.has(group.id))return null;
+    seen.add(group.id);groups.push({id:group.id,name:group.name});
+  }
+  return {groups,total:Number(object.total)};
+}
+
 /** Subset of the panel user object this bot understands. */
 export interface PanelUser {
   id: string | null;
@@ -73,6 +89,8 @@ export interface PanelUser {
   usedTraffic: number | null;
   /** Phase 18: concurrent-device cap as reported by the panel (null = unknown). */
   hwidLimit: number | null;
+  /** PasarGuard 5.4.1 UserResponse.group_ids; absent/malformed stays unverified. */
+  groupIds?: number[] | null;
   /** Features outside the bot's fixed finite plan model require explicit manual review. */
   migrationRestrictions?: string[];
 }
@@ -244,6 +262,7 @@ export function extractPanelUser(json: unknown): PanelUser | null {
         dataLimit: coerceBytes(numberField(record, ['data_limit'])),
         usedTraffic: (() => { const n = numberField(record, ['used_traffic']); return n !== null && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER ? Math.floor(n) : null; })(),
         hwidLimit: coerceBytes(numberField(record, ['hwid_limit'])),
+        groupIds: (() => {const ids=record['group_ids'];return Array.isArray(ids)&&ids.length>0&&ids.length<=50&&ids.every(id=>Number.isSafeInteger(id)&&id>=1&&id<=1000000)&&new Set(ids).size===ids.length ? [...ids] as number[] : null;})(),
         ...(() => {
           const features:string[]=[];
           if(record['data_limit_reset_strategy'] && record['data_limit_reset_strategy']!=='no_reset')features.push('periodic_quota_reset');
@@ -453,9 +472,31 @@ export class PasarGuardClient {
     return data.is_owner === true || data.role?.is_owner === true || read === true ||
       (typeof read === 'object' && read !== null && (read as {scope?:unknown}).scope === 2);
   }
-  getGroup(id: number): Promise<PanelResult<Record<string, unknown> | null>> {
+  getGroup(id: number, timeoutMs = PANEL_TIMEOUT_MS): Promise<PanelResult<Record<string, unknown> | null>> {
     if (!Number.isSafeInteger(id) || id < 1) return Promise.resolve(failure(0,'group_invalid','rejected'));
-    return this.#request('GET', `/api/group/${id}`, undefined, asRecord);
+    return this.#request('GET', `/api/group/${id}`, undefined, asRecord, timeoutMs);
+  }
+
+  /** PasarGuard app/routers/group.py: prefix /api/group + route "s".
+   * Full read permission matches existing getGroup verification. No invented
+   * fallback endpoints, guessed IDs or partial list accepted as complete. */
+  async listGroups():Promise<PanelResult<PanelGroup[]>> {
+    const groups:PanelGroup[]=[],seen=new Set<number>();let total:number|null=null;
+    const deadline=Date.now()+20000;
+    for(let page=0;page<10;page++) {
+      const remaining=deadline-Date.now();if(remaining<=0)return failure(0,'group_discovery_timeout','timeout');
+      const result=await this.#request('GET',`/api/groups?offset=${groups.length}&limit=100`,undefined,groupPage,remaining);
+      if(!result.ok)return result;
+      if(!result.data || (total!==null && total!==result.data.total))return failure(0,'group_list_changed','parse');
+      total=result.data.total;
+      for(const group of result.data.groups) {
+        if(seen.has(group.id))return failure(0,'group_list_changed','parse');
+        seen.add(group.id);groups.push(group);
+      }
+      if(groups.length===total)return {ok:true,data:groups};
+      if(groups.length>total || !result.data.groups.length)return failure(0,'group_list_incomplete','parse');
+    }
+    return failure(0,'group_list_incomplete','parse');
   }
 
   async #request<T>(
@@ -463,6 +504,7 @@ export class PasarGuardClient {
     path: string,
     body?: unknown,
     parser?: (json: unknown) => T | null,
+    timeoutMs = PANEL_TIMEOUT_MS,
   ): Promise<PanelResult<T | null>> {
     const url = `${this.#baseUrl}${path}`;
     let response: Response;
@@ -476,7 +518,7 @@ export class PasarGuardClient {
           ...(body === undefined ? {} : {'content-type': 'application/json'}),
         },
         ...(body === undefined ? {} : {body: JSON.stringify(body)}),
-        signal: AbortSignal.timeout(PANEL_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(PANEL_TIMEOUT_MS,timeoutMs)),
       });
       response = await send();
     } catch (error) {

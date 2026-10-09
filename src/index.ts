@@ -20,7 +20,7 @@ export default {
     executionCtx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === '/admin/panels' || url.pathname === '/admin/panels/configure' || url.pathname === '/admin/panels/metadata') return panelAdminRoute(request,env);
+    if (url.pathname === '/admin/panels' || url.pathname === '/admin/panels/configure' || url.pathname === '/admin/panels/metadata' || url.pathname === '/admin/panels/groups') return panelAdminRoute(request,env);
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return handleHealth(env);

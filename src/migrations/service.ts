@@ -62,6 +62,25 @@ async function client(env:Env,panel:string,id?:string,expectedOrigin?:string):Pr
 async function absenceVisibleToPrincipal(c:PasarGuardClient):Promise<boolean>{
  return c.canVerifyAbsence();
 }
+/** The reviewed panel defaults are immutable for this operation. Recheck actual
+ * 5.4.1 group resources before writes; never substitute a newer default. */
+async function groupsValid(c:PasarGuardClient,policy:unknown):Promise<string|null>{
+ const ids=(policy as {groupIds?:unknown}|null)?.groupIds;
+ if(!Array.isArray(ids)||!ids.length||ids.length>50||ids.some(id=>!Number.isSafeInteger(id)||id<1||id>1000000)||new Set(ids).size!==ids.length)return 'panel_groups_invalid';
+ const deadline=Date.now()+30000;
+ for(const id of ids){
+  const remaining=deadline-Date.now();if(remaining<=0)return 'destination_groups_unverified';
+  const found=await c.getGroup(id,remaining);
+  if(Date.now()>=deadline)return 'destination_groups_unverified';
+  if(!found.ok||!found.data||found.data.id!==id||typeof found.data.is_disabled!=='boolean')return 'destination_groups_unverified';
+  if(found.data.is_disabled)return 'destination_groups_disabled';
+ }
+ return null;
+}
+function sameGroups(m:Migration,u:PanelUser):boolean{
+ const ids=JSON.parse(m.destination_config).groupIds as number[];
+ return Array.isArray(u.groupIds)&&u.groupIds.length===ids.length&&ids.every(id=>u.groupIds!.includes(id));
+}
 async function idle(env:Env,service:string):Promise<boolean>{
  return !await env.DB.prepare(`SELECT id FROM orders WHERE renews_order_id=?1
   AND (state IN ('pending_payment','awaiting_review','approved','provisioning') OR
@@ -78,6 +97,8 @@ export async function proposeMigration(env:Env,actor:number,serviceId:string,cus
   const p=await resolvePanel(env,destination),config=await loadProvisioningConfig(env.DB);
   if(destination===s.panel_id||!p.ok||!p.row.enabled_new||!config.ok||!config.config.enabled||(destination!=='legacy'&&p.row.last_test!=='ok'))throw Error('destination_not_ready');
   const policy=provisioningForPanel(p.row,config.config);
+  const groupError=await groupsValid(new PasarGuardClient(p.config),policy);
+  if(groupError)throw Error(groupError);
   const active=await env.DB.prepare('SELECT migration_id FROM active_service_resources WHERE service_id=?1').bind(serviceId).first<{migration_id:string}>();
   const sourcePanel=await resolvePanel(env,s.panel_id);
   const cached=await env.DB.prepare(`SELECT origin FROM service_observations WHERE service_id=?1 AND panel_id=?2 AND user_id=?3 AND username=?4
@@ -179,7 +200,7 @@ function safeUrl(base:string,value:string|null):string|null {
 function verifyDestination(m:Migration,u:PanelUser,e:Entitlement,creation:boolean):boolean{
  return u.id!==null&&u.username===m.destination_username&&u.note===`migration:${m.id}:${m.service_id}:${m.customer_id}`&&
   u.dataLimit===e.remaining&&u.expire===e.expire&&u.hwidLimit===e.hwid&&
-  (creation ? u.usedTraffic===0&&u.status==='disabled' : u.status==='active');
+  sameGroups(m,u)&&(creation ? u.usedTraffic===0&&u.status==='disabled' : u.status==='active');
 }
 /** Retry is explicit; recovery may reconcile a previous create but never blindly reissue it. */
 export async function advanceMigration(env:Env,id:string,actor:number,allowCreate=false,automatic=false):Promise<Migration>{
@@ -194,6 +215,8 @@ export async function advanceMigration(env:Env,id:string,actor:number,allowCreat
   const resolved=await resolvePanel(env,m.destination_panel_id);if(!resolved.ok)return state(env,m,actor,m.state,'destination_configuration_unavailable');
   if(resolved.config.baseUrl!==m.destination_origin)return state(env,m,actor,m.state,'destination_origin_changed');
   let c=new PasarGuardClient({...resolved.config,stableIdentity:true,expectedUserId:m.destination_user_id??undefined});
+  const groupError=await groupsValid(c,JSON.parse(m.destination_config));
+  if(groupError)return state(env,m,actor,m.state,groupError);
   let remote=await c.getUserByUsername(m.destination_username);
   if(m.state==='creating'){
    if(!remote.ok&&remote.kind==='not_found'){
@@ -209,6 +232,7 @@ export async function advanceMigration(env:Env,id:string,actor:number,allowCreat
     // Always reconcile, including timeout/409/invalid-envelope outcomes. Never trust POST alone.
     remote=await c.getUserByUsername(m.destination_username);
    }
+   if(remote.ok&&remote.data&&!sameGroups(m,remote.data))return state(env,m,actor,m.state,'destination_groups_mismatch');
    if(!remote.ok||!remote.data||!['active','disabled'].includes(remote.data.status??'')||!verifyDestination(m,{...remote.data,status:'disabled'},e,true))return state(env,m,actor,m.state,'destination_creation_unverified');
    if(await env.DB.prepare('SELECT id FROM effective_orders WHERE panel_id=?1 AND pasarguard_user_id=?2 AND id<>?3').bind(m.destination_panel_id,remote.data.id,m.service_id).first())return state(env,m,actor,m.state,'destination_identity_owned_elsewhere');
    // Official UserCreate rejects disabled and on_hold + absolute expiry.
@@ -233,6 +257,7 @@ export async function advanceMigration(env:Env,id:string,actor:number,allowCreat
    c=new PasarGuardClient({...resolved.config,stableIdentity:true,expectedUserId:m.destination_user_id!});
    let live=await c.getUserById(m.destination_user_id!);
    if(!live.ok||!live.data||live.data.username!==m.destination_username||live.data.note!==`migration:${m.id}:${m.service_id}:${m.customer_id}`)return state(env,m,actor,m.state,'activation_identity_unverified');
+   if(!sameGroups(m,live.data))return state(env,m,actor,m.state,'destination_groups_mismatch');
    if(live.data.status==='disabled'){
     await c.modifyUserByUsername(m.destination_username,{status:'active',data_limit:e.remaining,expire:e.expire,hwid_limit:e.hwid});
     live=await c.getUserById(m.destination_user_id!);

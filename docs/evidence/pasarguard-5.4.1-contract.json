@@ -1,0 +1,86 @@
+{
+  "tag": "v5.4.1",
+  "commit": "b56ffe369f542152c52c69733205baeaf3f6e4cd",
+  "repository": "https://github.com/PasarGuard/panel",
+  "source_files": [
+    {
+      "path": "app/routers/user.py",
+      "url": "https://github.com/PasarGuard/panel/blob/b56ffe369f542152c52c69733205baeaf3f6e4cd/app/routers/user.py",
+      "sha256": "20c6bd41baeb10285aeab45685ce97ae11ce7352ace0b5378617c350bb1e7da4"
+    },
+    {
+      "path": "app/models/user.py",
+      "url": "https://github.com/PasarGuard/panel/blob/b56ffe369f542152c52c69733205baeaf3f6e4cd/app/models/user.py",
+      "sha256": "d8102b329129f388638a6ff2b8033c682d717b97108124e20b10f9427a85ae37"
+    },
+    {
+      "path": "app/routers/authentication.py",
+      "url": "https://github.com/PasarGuard/panel/blob/b56ffe369f542152c52c69733205baeaf3f6e4cd/app/routers/authentication.py",
+      "sha256": "009dc2f1d0b111efbfd1852054dda157d99fd994c8dc40b0a77b456f9cc8b388"
+    },
+    {
+      "path": "app/routers/group.py",
+      "url": "https://github.com/PasarGuard/panel/blob/b56ffe369f542152c52c69733205baeaf3f6e4cd/app/routers/group.py",
+      "sha256": "1aaeb7c180a3e17207d2af378837ff2c32c9a6063482a4cc5ca82eaca5aa1a3e"
+    },
+    {
+      "path": "app/models/group.py",
+      "url": "https://github.com/PasarGuard/panel/blob/b56ffe369f542152c52c69733205baeaf3f6e4cd/app/models/group.py",
+      "sha256": "bcac871bfa5e62b945aec23c8f26cd7e7cbc00f48064c83eb293d2bb735fef1b"
+    },
+    {
+      "path": "app/routers/dependencies/group.py",
+      "url": "https://github.com/PasarGuard/panel/blob/b56ffe369f542152c52c69733205baeaf3f6e4cd/app/routers/dependencies/group.py",
+      "sha256": "b8e1a133b312561d692b18144164c92e17f3ebe7786fe6f62c64137388091888"
+    }
+  ],
+  "live_panel_verified": false,
+  "contracts": {
+    "groups": "GET /api/groups?offset=0&limit=100",
+    "group": "GET /api/group/{id}",
+    "create": "POST /api/user",
+    "read": "GET /api/user/by-id/{id}",
+    "update": "PUT /api/user/by-id/{id}",
+    "delete": "DELETE /api/user/by-id/{id}",
+    "key_header": "X-Api-Key",
+    "group_permission": "groups.read",
+    "user_permissions": [
+      "users.create",
+      "users.read",
+      "users.update",
+      "users.delete"
+    ],
+    "absence_scope": "Owner or ALL-user read; OWN scope can hide users"
+  },
+  "groups_response": {
+    "groups": [
+      {
+        "id": 71,
+        "name": "Destination group",
+        "inbound_tags": [
+          "fixture-inbound"
+        ],
+        "is_disabled": false,
+        "total_users": 0
+      }
+    ],
+    "total": 1
+  },
+  "user_response": {
+    "id": 201,
+    "username": "mgfixtureuser",
+    "note": "fixture",
+    "status": "active",
+    "data_limit": 7000000000,
+    "used_traffic": 0,
+    "lifetime_used_traffic": 0,
+    "expire": "2030-01-01T00:00:00Z",
+    "hwid_limit": 3,
+    "group_ids": [
+      71
+    ],
+    "subscription_url": "/sub/fixture",
+    "data_limit_reset_strategy": "no_reset",
+    "next_plan": null
+  }
+}
