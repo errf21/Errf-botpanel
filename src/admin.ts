@@ -32,10 +32,12 @@ export async function resolveIsAdmin(
   env: Env,
   db: D1Database,
   actorId: number,
+  currentCustomerAdmin?: number,
 ): Promise<boolean> {
   const configured = env.ADMIN_CHAT_ID?.trim() ?? '';
   if (configured !== '' && configured === String(actorId)) return true;
-  return isAdminUserId(db, actorId);
+  // Optional value is the same-request DB identity read, never client input.
+  return currentCustomerAdmin === undefined ? isAdminUserId(db, actorId) : currentCustomerAdmin === 1;
 }
 
 function parseSnapshot(order: OrderRow): Record<string, unknown> {

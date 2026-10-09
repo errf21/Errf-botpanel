@@ -17,3 +17,10 @@ PASARGUARD_API_KEY=
 # instructions — never the settings doc, never code, never committed.
 # Production: npx wrangler secret put PAYMENT_CARD_NUMBER
 PAYMENT_CARD_NUMBER=
+
+# Optional multi-panel development settings (no production credentials here).
+# PANEL_ENCRYPTION_KEY=<base64-encoded 32 random bytes; keep private>
+# PANEL_ADMIN_ORIGIN=https://your-worker.example.com
+# PANEL_ADMIN_IDS=
+# Enter EACH dynamic panel API key ONLY through the authenticated HTTPS form.
+# No per-panel environment bindings or redeployment are required.

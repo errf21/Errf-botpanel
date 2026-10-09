@@ -23,6 +23,11 @@ export interface OrderRow {
   verified_at: string | null;
   pasarguard_username: string | null;
   pasarguard_user_id: string | null;
+  panel_id?: string | null;
+  active_migration_id?: string | null;
+  panel_provision_config?: string | null;
+  create_target_unix?: number | null;
+  provision_claim?: string | null;
   subscription_url: string | null;
   service_created_at: string | null;
   service_expires_at: string | null;
@@ -148,7 +153,7 @@ export async function findOrderByIdempotencyKey(
   key: string,
 ): Promise<OrderRow | null> {
   return db
-    .prepare('SELECT * FROM orders WHERE idempotency_key = ?1')
+    .prepare('SELECT * FROM effective_orders WHERE idempotency_key = ?1')
     .bind(key)
     .first<OrderRow>();
 }
@@ -157,7 +162,7 @@ export async function getOrderById(
   db: D1Database,
   orderId: string,
 ): Promise<OrderRow | null> {
-  return db.prepare('SELECT * FROM orders WHERE id = ?1').bind(orderId).first<OrderRow>();
+  return db.prepare('SELECT * FROM effective_orders WHERE id = ?1').bind(orderId).first<OrderRow>();
 }
 
 /** D1 and the test shim both report affected rows through `meta.changes`. */
@@ -349,7 +354,7 @@ export async function listOrdersAwaitingReview(
               (SELECT MAX(e.created_at) FROM order_events e
                 WHERE e.order_id = o.id AND e.action IN ('receipt_uploaded','receipt_replaced')
               ) AS receipt_uploaded_at
-         FROM orders o
+         FROM effective_orders o
          JOIN customers c ON c.id = o.customer_id
         WHERE o.state = 'awaiting_review'
         ORDER BY o.updated_at ASC
@@ -367,7 +372,7 @@ export async function listRecentOrdersForCustomer(
 ): Promise<OrderRow[]> {
   const result = await db
     .prepare(
-      `SELECT * FROM orders WHERE customer_id = ?1 ORDER BY created_at DESC LIMIT ?2`,
+      `SELECT * FROM effective_orders WHERE customer_id = ?1 ORDER BY created_at DESC LIMIT ?2`,
     )
     .bind(customerId, limit)
     .all<OrderRow>();
@@ -391,7 +396,7 @@ export async function listOrdersForCustomerAdmin(
 ): Promise<OrderRow[]> {
   const result = await db
     .prepare(
-      `SELECT * FROM orders WHERE customer_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3`,
+      `SELECT * FROM effective_orders WHERE customer_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3`,
     )
     .bind(customerId, limit, offset)
     .all<OrderRow>();
@@ -404,7 +409,7 @@ export async function countOrdersForCustomer(
   customerId: number,
 ): Promise<number> {
   const row = await db
-    .prepare('SELECT COUNT(*) AS total FROM orders WHERE customer_id = ?1')
+    .prepare('SELECT COUNT(*) AS total FROM effective_orders WHERE customer_id = ?1')
     .bind(customerId)
     .first<{ total: number }>();
   return typeof row?.total === 'number' ? row.total : 0;
@@ -420,7 +425,7 @@ export async function listServicesForCustomerAdmin(
   const result = await db
     .prepare(
       `SELECT o.*, ${SERVICE_AGGREGATES}
-         FROM orders o
+         FROM effective_orders o
         WHERE o.customer_id = ?1 AND o.kind = 'purchase' AND o.state = 'completed'
         ORDER BY o.service_created_at DESC, o.created_at DESC, o.id DESC
         LIMIT ?2 OFFSET ?3`,
@@ -437,7 +442,7 @@ export async function countServicesForCustomerAdmin(
 ): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT COUNT(*) AS total FROM orders
+      `SELECT COUNT(*) AS total FROM effective_orders
         WHERE customer_id = ?1 AND kind = 'purchase' AND state = 'completed'`,
     )
     .bind(customerId)
@@ -452,7 +457,7 @@ export async function countActiveServicesForCustomer(
 ): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT COUNT(*) AS total FROM orders
+      `SELECT COUNT(*) AS total FROM effective_orders
         WHERE customer_id = ?1 AND kind = 'purchase' AND state = 'completed'
           AND panel_deleted_at IS NULL`,
     )
@@ -465,7 +470,7 @@ export async function countActiveServicesForCustomer(
 export async function countAllServices(db: D1Database): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT COUNT(*) AS total FROM orders WHERE kind = 'purchase' AND state = 'completed'`,
+      `SELECT COUNT(*) AS total FROM effective_orders WHERE kind = 'purchase' AND state = 'completed'`,
     )
     .first<{ total: number }>();
   return typeof row?.total === 'number' ? row.total : 0;
@@ -475,7 +480,7 @@ export async function countAllServices(db: D1Database): Promise<number> {
 export async function countAliveServices(db: D1Database): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT COUNT(*) AS total FROM orders
+      `SELECT COUNT(*) AS total FROM effective_orders
         WHERE kind = 'purchase' AND state = 'completed' AND panel_deleted_at IS NULL`,
     )
     .first<{ total: number }>();
@@ -487,7 +492,7 @@ export async function countActiveRepurchases(db: D1Database): Promise<number> {
   try {
     const row = await db
       .prepare(
-        `SELECT COUNT(*) AS total FROM orders
+        `SELECT COUNT(*) AS total FROM effective_orders
           WHERE kind = 'renewal' AND repurchase_mode IS NOT NULL
             AND state IN ${ACTIVE_REPURCHASE_STATES}`,
       )
@@ -511,7 +516,7 @@ export async function listActiveRepurchasesForCustomer(
                 (SELECT MAX(e.created_at) FROM order_events e
                   WHERE e.order_id = o.id AND e.action IN ('receipt_uploaded','receipt_replaced')
                 ) AS receipt_uploaded_at
-           FROM orders o
+           FROM effective_orders o
            JOIN customers c ON c.id = o.customer_id
           WHERE o.customer_id = ?1 AND o.kind = 'renewal' AND o.repurchase_mode IS NOT NULL
             AND o.state IN ${ACTIVE_REPURCHASE_STATES}
@@ -539,7 +544,8 @@ export type ProvisionClaimOutcome =
 /** approved → provisioning (claims an attempt); failed → provisioning (admin retry). */
 export async function claimOrderForProvisioning(
   db: D1Database,
-  opts: { orderId: string; fromState: 'approved' | 'failed'; maxAttempts: number },
+  opts: { orderId: string; fromState: 'approved' | 'failed'; maxAttempts: number;
+    panelId?: string; panelRevision?: number; selectionRevision?: number; panelConfig?: string },
 ): Promise<ProvisionClaimOutcome> {
   const before = await getOrderById(db, opts.orderId);
   if (!before) return { ok: false, error: 'not_found' };
@@ -548,40 +554,29 @@ export async function claimOrderForProvisioning(
     return { ok: false, error: 'attempts_exhausted' };
   }
 
-  const updated = await db
-    .prepare(
-      `UPDATE orders
-          SET state = 'provisioning',
-              provision_attempts = provision_attempts + 1,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1 AND state = ?2 AND provision_attempts < ?3
-          AND panel_deleted_at IS NULL`,
-    )
-    .bind(opts.orderId, opts.fromState, opts.maxAttempts)
-    .run();
-  if (changeCount(updated) === 0) {
-    const fresh = await getOrderById(db, opts.orderId);
-    if (!fresh) return { ok: false, error: 'not_found' };
-    return {
-      ok: false,
-      error:
-        fresh.provision_attempts >= opts.maxAttempts && fresh.state === opts.fromState
-          ? 'attempts_exhausted'
-          : 'state_changed',
-    };
-  }
+  const token = crypto.randomUUID();
+  const id = opts.panelId ?? 'legacy';
+  await db.batch([
+    db.prepare(`UPDATE orders SET state='provisioning', provision_attempts=provision_attempts+1,
+      panel_id=COALESCE(panel_id,?4), panel_provision_config=COALESCE(panel_provision_config,?5),
+      provision_claim=?6, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE id=?1 AND state=?2 AND provision_attempts<?3 AND panel_deleted_at IS NULL
+      AND (panel_id IS NULL OR panel_id=?4)
+      AND EXISTS(SELECT 1 FROM panels WHERE id=?4 AND revision=?7)
+      AND (kind='renewal' OR panel_id IS NOT NULL OR
+        (EXISTS(SELECT 1 FROM panel_selection WHERE singleton=1 AND panel_id=?4 AND revision=?8)
+         AND EXISTS(SELECT 1 FROM panels WHERE id=?4 AND enabled_new=1)))`)
+      .bind(opts.orderId,opts.fromState,opts.maxAttempts,id,opts.panelConfig ?? null,token,
+        opts.panelRevision ?? 1,opts.selectionRevision ?? 1),
+    db.prepare(`INSERT INTO order_events(order_id,actor,action,from_state,to_state,data)
+      SELECT id,'system','provision_started',?2,'provisioning',?3 FROM effective_orders WHERE id=?1 AND provision_claim=?4`)
+      .bind(opts.orderId,opts.fromState,JSON.stringify({attempt:before.provision_attempts+1,panel_id:id}),token),
+  ]);
+  const won = await getOrderById(db,opts.orderId);
+  if (!won || won.provision_claim !== token) return {ok:false,error:'state_changed'};
 
-  await db
-    .prepare(
-      `INSERT INTO order_events (order_id, actor, action, from_state, to_state, data)
-       VALUES (?1, 'system', 'provision_started', ?2, 'provisioning', ?3)`,
-    )
-    .bind(opts.orderId, opts.fromState, JSON.stringify({ attempt: before.provision_attempts + 1 }))
-    .run();
-
-  const after = await getOrderById(db, opts.orderId);
-  if (!after) return { ok: false, error: 'not_found' };
-  return { ok: true, order: after };
+  // This post-claim row has already passed the ownership-token check.
+  return { ok: true, order: won };
 }
 
 export type UsernameClaimOutcome =
@@ -762,7 +757,7 @@ export async function listOrdersFailed(
 ): Promise<OrderRow[]> {
   const result = await db
     .prepare(
-      `SELECT * FROM orders WHERE state = 'failed' AND panel_deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?1`,
+      `SELECT * FROM effective_orders WHERE state = 'failed' AND panel_deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?1`,
     )
     .bind(limit)
     .all<OrderRow>();
@@ -785,11 +780,11 @@ export interface ServiceRow extends OrderRow {
 }
 
 const SERVICE_AGGREGATES = `(
-   SELECT COUNT(*) FROM orders r
+   SELECT COUNT(*) FROM effective_orders r
     WHERE r.renews_order_id = o.id AND r.kind = 'renewal' AND r.state = 'completed'
   ) AS applied_renewals,
   (
-   SELECT COUNT(*) FROM orders r
+   SELECT COUNT(*) FROM effective_orders r
     WHERE r.renews_order_id = o.id AND r.kind = 'renewal'
       AND r.state IN ${ACTIVE_RENEWAL_STATES}
   ) AS active_renewals`;
@@ -805,7 +800,7 @@ export async function listServicesForCustomer(
   const result = await db
     .prepare(
       `SELECT o.*, ${SERVICE_AGGREGATES}
-         FROM orders o
+         FROM effective_orders o
         WHERE o.customer_id = ?1 AND o.kind = 'purchase' AND o.state = 'completed'
           AND o.panel_deleted_at IS NULL
         ORDER BY o.service_created_at DESC, o.created_at DESC
@@ -827,7 +822,7 @@ export async function getOwnedService(
   return db
     .prepare(
       `SELECT o.*, ${SERVICE_AGGREGATES}
-         FROM orders o
+         FROM effective_orders o
         WHERE o.id = ?1 AND o.customer_id = ?2 AND o.kind = 'purchase' AND o.state = 'completed'
           AND o.panel_deleted_at IS NULL`,
     )
@@ -842,7 +837,7 @@ export async function findActiveRenewalForService(
 ): Promise<OrderRow | null> {
   return db
     .prepare(
-      `SELECT * FROM orders
+      `SELECT * FROM effective_orders
         WHERE renews_order_id = ?1 AND kind = 'renewal' AND state IN ${ACTIVE_RENEWAL_STATES}
         ORDER BY created_at DESC LIMIT 1`,
     )
@@ -930,16 +925,15 @@ export async function bookRenewalOnService(
   db: D1Database,
   opts: { serviceOrderId: string; renewalOrderId: string; expiresIso: string },
 ): Promise<boolean> {
-  const updated = await db
-    .prepare(
-      `UPDATE orders
-          SET service_expires_at = ?2,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1 AND kind = 'purchase' AND state = 'completed'
-          AND (service_expires_at IS NULL OR service_expires_at < ?2)`,
-    )
-    .bind(opts.serviceOrderId, opts.expiresIso)
-    .run();
+  const results = await db.batch([
+    db.prepare(`UPDATE active_service_resources SET expires_at=?2 WHERE service_id=?1 AND expires_at<?2`)
+      .bind(opts.serviceOrderId,opts.expiresIso),
+    db.prepare(`UPDATE orders SET service_expires_at=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE id=?1 AND kind='purchase' AND state='completed' AND (service_expires_at IS NULL OR service_expires_at<?2)
+        AND NOT EXISTS(SELECT 1 FROM active_service_resources WHERE service_id=?1)`)
+      .bind(opts.serviceOrderId,opts.expiresIso),
+  ]);
+  const updated = {meta:{changes:results.reduce((n,r)=>n+changeCount(r),0)}};
   if (changeCount(updated) === 0) {
     const current = await getOrderById(db, opts.serviceOrderId);
     if (!current) return false;
@@ -1030,7 +1024,7 @@ export async function listActiveRepurchases(
                 (SELECT MAX(e.created_at) FROM order_events e
                   WHERE e.order_id = o.id AND e.action IN ('receipt_uploaded','receipt_replaced')
                 ) AS receipt_uploaded_at
-           FROM orders o
+           FROM effective_orders o
            JOIN customers c ON c.id = o.customer_id
           WHERE o.kind = 'renewal' AND o.repurchase_mode IS NOT NULL
             AND o.state IN ${ACTIVE_REPURCHASE_STATES}
@@ -1149,7 +1143,7 @@ export async function findActiveRepurchaseForService(
   try {
     return await db
       .prepare(
-        `SELECT * FROM orders
+        `SELECT * FROM effective_orders
           WHERE renews_order_id = ?1 AND kind = 'renewal' AND repurchase_mode IS NOT NULL
             AND state IN ${ACTIVE_REPURCHASE_STATES}
           ORDER BY created_at DESC LIMIT 1`,
@@ -1282,7 +1276,7 @@ export async function completeRepurchasedOrder(
     targetUnix: number;
     quotaBytes: number;
     hwid: number;
-    /** Current subscription URL (audit event only — never a column write). */
+    /** Current subscription URL, durably retained for interrupted booking recovery. */
     subscriptionUrl: string | null;
   },
 ): Promise<ProvisionFinalizeOutcome> {
@@ -1293,10 +1287,11 @@ export async function completeRepurchasedOrder(
         `UPDATE orders
             SET state = 'completed',
                 failure_reason = NULL,
+                subscription_url = ?2,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           WHERE id = ?1 AND state = 'provisioning' AND kind = 'renewal' AND repurchase_mode IS NOT NULL`,
       )
-      .bind(opts.orderId)
+      .bind(opts.orderId, opts.subscriptionUrl)
       .run();
   } catch {
     return { ok: false, error: 'state_changed' };
@@ -1342,36 +1337,41 @@ export async function bookRepurchaseOnService(
   },
 ): Promise<boolean> {
   const current = await getOrderById(db, opts.serviceOrderId);
-  if (!current || current.kind !== 'purchase') return false;
-  const updated = await db
-    .prepare(
-      `UPDATE orders
+  if (!current || current.kind !== 'purchase' || current.state !== 'completed' || current.panel_deleted_at) return false;
+  const unbooked = `NOT EXISTS (SELECT 1 FROM order_events WHERE order_id=?1
+    AND action='service_repurchased' AND json_extract(data,'$.repurchase_order_id')=?4)`;
+  // D1 batch is transactional. The event is written last so all three statements
+  // share the same one-time guard; replay cannot clear a newly emitted notice.
+  await db.batch([
+    db.prepare(`UPDATE active_service_resources SET expires_at=CASE WHEN expires_at<?2 THEN ?2 ELSE expires_at END,
+      subscription_url=COALESCE(?3,subscription_url) WHERE service_id=?1 AND ${unbooked}`)
+      .bind(opts.serviceOrderId, opts.expiresIso, opts.subscriptionUrl, opts.repurchaseOrderId),
+    db.prepare(`UPDATE orders
           SET service_expires_at = CASE
                 WHEN service_expires_at IS NULL OR service_expires_at < ?2 THEN ?2
                 ELSE service_expires_at
               END,
               subscription_url = COALESCE(?3, subscription_url),
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1 AND kind = 'purchase' AND state = 'completed'`,
-    )
-    .bind(opts.serviceOrderId, opts.expiresIso, opts.subscriptionUrl)
-    .run();
-  if (changeCount(updated) === 0) return current.service_expires_at !== null;
-  await db
-    .prepare(
-      `INSERT INTO order_events (order_id, actor, action, data)
-       VALUES (?1, 'system', 'service_repurchased', ?2)`,
-    )
-    .bind(
-      opts.serviceOrderId,
-      JSON.stringify({
-        repurchase_order_id: opts.repurchaseOrderId,
-        expires_at: opts.expiresIso,
-        subscription_url: opts.subscriptionUrl,
-      }),
-    )
-    .run();
-  return true;
+        WHERE id=?1 AND kind='purchase' AND state='completed' AND panel_deleted_at IS NULL AND ${unbooked}
+          AND NOT EXISTS(SELECT 1 FROM active_service_resources WHERE service_id=?1)`)
+      .bind(opts.serviceOrderId, opts.expiresIso, opts.subscriptionUrl, opts.repurchaseOrderId),
+    db.prepare(`DELETE FROM service_notifications WHERE order_id=?1 AND kind IN ('usage90','expiring')
+      AND EXISTS(SELECT 1 FROM effective_orders WHERE id=?1 AND kind='purchase' AND state='completed' AND panel_deleted_at IS NULL)
+      AND NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=?1 AND action='service_repurchased'
+        AND json_extract(data,'$.repurchase_order_id')=?2)`)
+      .bind(opts.serviceOrderId, opts.repurchaseOrderId),
+    db.prepare(`INSERT INTO order_events(order_id,actor,action,data)
+      SELECT ?1,'system','service_repurchased',?3
+      WHERE EXISTS(SELECT 1 FROM effective_orders WHERE id=?1 AND kind='purchase' AND state='completed' AND panel_deleted_at IS NULL)
+        AND NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=?1 AND action='service_repurchased'
+          AND json_extract(data,'$.repurchase_order_id')=?2)`)
+      .bind(opts.serviceOrderId, opts.repurchaseOrderId, JSON.stringify({
+        repurchase_order_id: opts.repurchaseOrderId, expires_at: opts.expiresIso, subscription_url: opts.subscriptionUrl,
+      })),
+  ]);
+  return !!await db.prepare(`SELECT 1 FROM order_events WHERE order_id=?1 AND action='service_repurchased'
+    AND json_extract(data,'$.repurchase_order_id')=?2`).bind(opts.serviceOrderId, opts.repurchaseOrderId).first();
 }
 
 /* —— Phase 16: panel-service deletion (admin command + reconciliation) ———
@@ -1391,7 +1391,7 @@ export async function getOrderByPanelUsername(
   username: string,
 ): Promise<OrderRow | null> {
   return db
-    .prepare('SELECT * FROM orders WHERE pasarguard_username = ?1')
+    .prepare('SELECT * FROM effective_orders WHERE pasarguard_username = ?1')
     .bind(username)
     .first<OrderRow>();
 }
@@ -1421,7 +1421,8 @@ export async function markPanelDeleted(
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         WHERE id = ?1 AND kind = 'purchase' AND pasarguard_username IS NOT NULL
           AND state IN ('completed', 'failed')
-          AND panel_deleted_at IS NULL`,
+          AND panel_deleted_at IS NULL
+          AND EXISTS(SELECT 1 FROM effective_orders e WHERE e.id=orders.id AND e.pasarguard_username=?2)`,
     )
     .bind(opts.orderId, opts.panelUsername, opts.via.slice(0, 64))
     .run();
@@ -1504,7 +1505,7 @@ export async function countCustomersByFilter(db: D1Database, filter: UsersFilter
   if (filter === 'all') return countCustomers(db);
   const row = await db
     .prepare(
-      `SELECT COUNT(DISTINCT o.customer_id) AS total FROM orders o WHERE ${usersFilterOrderPredicate(filter)}`,
+      `SELECT COUNT(DISTINCT o.customer_id) AS total FROM effective_orders o WHERE ${usersFilterOrderPredicate(filter)}`,
     )
     .first<{ total: number }>();
   return typeof row?.total === 'number' ? row.total : 0;
@@ -1523,7 +1524,7 @@ export async function listCustomersPageByFilter(
       `SELECT c.id, c.telegram_user_id, c.telegram_username, c.first_name, c.last_name,
               c.language_code, c.language, c.is_admin, c.created_at, c.updated_at, c.balance_irt
          FROM customers c
-        WHERE EXISTS (SELECT 1 FROM orders o
+        WHERE EXISTS (SELECT 1 FROM effective_orders o
                        WHERE o.customer_id = c.id AND ${usersFilterOrderPredicate(filter)})
         ORDER BY c.created_at DESC, c.id DESC
         LIMIT ?1 OFFSET ?2`,

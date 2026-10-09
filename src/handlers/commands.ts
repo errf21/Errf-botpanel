@@ -1,3 +1,5 @@
+import { migrationCommand } from './serviceMigration.ts';
+import { showPanels } from '../panels/admin.ts';
 import type { UpdateContext } from '../types.ts';
 import { clearSession } from '../db/states.ts';
 import { mainMenuKeyboard } from '../telegram/menu.ts';
@@ -39,6 +41,9 @@ export async function handleCommand(
   if (!parsed) return;
 
   switch (parsed.name) {
+    case 'migrate': await migrationCommand(ctx,parsed.args);return;
+    case 'panels':
+      await showPanels(ctx);return;
     case 'myid': {
       // Phase 17: numeric Telegram id straight from the verified update —
       // no DB read/write, no admin gate, never another user's id.

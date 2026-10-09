@@ -377,7 +377,7 @@ test('panel rejects the name after local validation → honest notice, order & p
     provision_attempts: number;
   };
   assert.equal(order.state, 'failed', 'nothing lost: durable failed row');
-  assert.match(String(order.failure_reason ?? ''), /invalid username/);
+  assert.match(String(order.failure_reason ?? ''), /username_rejected/);
   assert.equal(order.provision_attempts, 1);
 
   const ginaTexts = textsTo(GINA.id).join('\n');

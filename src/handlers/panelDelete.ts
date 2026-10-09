@@ -1,3 +1,4 @@
+import { acquireServiceLock,releaseServiceLock } from '../panels/registry.ts';
 /**
  * Phase 16 — ADMIN panel-service delete, with an explicit two-step
  * confirmation, and the two passive reconciliation points.
@@ -144,7 +145,16 @@ export async function handlePanelDeleteCallback(
   }
   const username = order.pasarguard_username;
 
-  const panel = await deletePanelService(ctx.env, username);
+  const owner=crypto.randomUUID();
+  if (!await acquireServiceLock(ctx.db,order.id,owner)) {
+    await ctx.api.answerCallbackQuery(callbackQueryId,'Service operation in progress; retry later.',true);return;
+  }
+  try {
+  const latest = await getOrderById(ctx.db,order.id);
+  if (!latest || latest.panel_id!==order.panel_id || latest.pasarguard_user_id!==order.pasarguard_user_id || latest.pasarguard_username!==username) {
+    await ctx.api.answerCallbackQuery(callbackQueryId,'Service changed; reopen the service.',true);return;
+  }
+  const panel = await deletePanelService(ctx.env, username, order);
   if (!panel.ok) {
     // FAIL CLOSED: D1 state, history and the row stay untouched beyond one
     // edit — the card is RE-SENT with the same buttons so the admin can
@@ -177,6 +187,7 @@ export async function handlePanelDeleteCallback(
   await ctx.api.answerCallbackQuery(callbackQueryId, fa.pdlToastDone);
   await retireCard(ctx, messageChatId, messageId, cardText);
   if (marked.ok) await notifyCustomerOfRevocation(ctx, order);
+  } finally { await releaseServiceLock(ctx.db,order.id,owner); }
 }
 
 /** Best-effort, recipient-language notice; never fails the admin flow. */

@@ -1,3 +1,4 @@
+import { resolvePanel, resolveServicePanel, selection, provisioningForPanel, clientFor, acquireServiceLock, releaseServiceLock } from '../panels/registry.ts';
 /**
  * Provisioning orchestration (Phase 5 + 6): the ONLY module that writes to
  * PasarGuard. Two kinds of work, chosen by the order row's `kind`:
@@ -30,7 +31,7 @@
  */
 import type { Env, TelegramApiLike } from '../types.ts';
 import type { CreateUserPayload, PanelUser } from '../pasarguard/client.ts';
-import { loadPanelConfig, PasarGuardClient, resolveSubscriptionUrl } from '../pasarguard/client.ts';
+import { PasarGuardClient, resolveSubscriptionUrl } from '../pasarguard/client.ts';
 import { loadProvisioningConfig } from '../catalog/provisioning.ts';
 import type { ProvisioningConfig } from '../catalog/provisioning.ts';
 import { MB_BYTES } from '../catalog/freeTest.ts';
@@ -54,7 +55,6 @@ import {
   failProvisionedOrder,
   getOrderById,
 } from '../db/orders.ts';
-import { rearmPaidNoticesForRepurchase } from '../db/serviceNotifications.ts';
 import type { OrderRow } from '../db/orders.ts';
 import { getCustomerContact, resolveAdminChatIds } from '../db/customers.ts';
 import { isValidOrderId } from '../lib/validate.ts';
@@ -125,10 +125,14 @@ export type PanelDeleteOutcome =
 export async function deletePanelService(
   env: Env,
   username: string,
+  service: OrderRow,
 ): Promise<PanelDeleteOutcome> {
-  const panel = loadPanelConfig(env);
+  if (!service.panel_id) return {ok:false,reason:'service_panel_missing'};
+  const panel = await resolveServicePanel(env,service);
   if (!panel.ok) return { ok: false, reason: `panel_${panel.kind}` };
-  const client = new PasarGuardClient(panel.config);
+  const client = clientFor(panel.config,service.pasarguard_user_id);
+  const before = await client.getUserByUsername(username);
+  if (!before.ok && before.kind !== 'not_found') return {ok:false,reason:`delete_precheck_${before.kind}`};
   const attempt = await client.deleteUserByUsername(username);
   const readBack = await client.getUserByUsername(username);
   if (readBack.ok && readBack.data !== null) {
@@ -435,7 +439,11 @@ async function finalizeCreate(
   user: PanelUser | null,
   targetUnix: number,
 ): Promise<ProvisionOutcome> {
-  const verified = await ensureCreateExpiry(client, username, user, targetUnix);
+  if (!user?.id || user.username !== username) return finalizeFailure(deps,order.id,'create_identity_unverified');
+  if (order.panel_id !== 'legacy' && user.note !== `telbot:${order.id}`) {
+    return finalizeFailure(deps,order.id,'create_ownership_unverified');
+  }
+  const verified = await ensureCreateExpiry(client.withExpectedUserId(user.id), username, user, targetUnix);
   if (!verified.ok) {
     return finalizeFailure(deps, order.id, verified.reason);
   }
@@ -870,10 +878,8 @@ export async function provisionRepurchase(
     return finalizeFailure(deps, order.id, 'repurchase_target_invalid', 'repurchase');
   }
 
-  const usedIsZero = (used: number | null): boolean => used === null || used === 0;
-  // NOTE: the panel reports used_traffic 0 as null (coerceBytes maps 0 to
-  // null = none), so "zero" reads as null here. A null read is accepted ONLY
-  // together with an issued-or-adopted reset claim below — never alone.
+  const usedIsZero = (used: number | null): boolean => used === 0;
+  // Zero is distinct from missing/unknown usage; unknown never proves a reset.
 
   // ———— reset usage (exactly one POST per order; losers verify via GET) ————
   const resetClaim = await claimRepurchaseReset(db, { orderId: order.id });
@@ -969,7 +975,7 @@ export async function provisionRepurchase(
     // live), so this branch should not trigger there.
     return finalizeFailure(deps, order.id, 'repurchase_hwid_unverified', 'repurchase');
   }
-  return finalizeRepurchaseSuccess(deps, order, service.id, targetUnix, quotaTarget, hwidTarget, verified.data);
+  return finalizeRepurchaseSuccess(deps, order, service.id, targetUnix, quotaTarget, hwidTarget, verified.data,client.baseUrl);
 }
 
 /** Close out a successful REPURCHASE: complete order → book service → notify. */
@@ -981,10 +987,8 @@ async function finalizeRepurchaseSuccess(
   quotaBytes: number,
   hwid: number,
   user: PanelUser | null,
+  baseUrl: string,
 ): Promise<ProvisionOutcome> {
-  const baseUrl = loadPanelConfig(deps.env).ok
-    ? (deps.env.PASARGUARD_PANEL_URL ?? '')
-    : '';
   // The subscription URL MAY rotate on reset (verified live — old URL keeps
   // working). It is not identity: always persist the CURRENT value.
   const subscriptionUrl = resolveSubscriptionUrl(baseUrl, user?.subscriptionUrl ?? null);
@@ -1010,9 +1014,7 @@ async function finalizeRepurchaseSuccess(
     // The panel reconfiguration IS applied — only local bookkeeping raced.
     console.error(`repurchase_booking_skipped service=${serviceOrderId.slice(0, 32)}`);
   }
-  // Fresh paid lifecycle: re-arm exactly the paid usage90 + expiring notices
-  // for the SERVICE row (free-test rows and other services untouched).
-  await rearmPaidNoticesForRepurchase(deps.db, serviceOrderId).catch(() => undefined);
+  // Paid notice re-arming is atomic with idempotent service booking.
   await notifyCustomer(deps, result.order, (ui) => ({
     text: ui.t.repApplied(result.order.id, expiresIso.slice(0, 10)),
     parseMode: subscriptionUrl !== null ? 'HTML' : undefined,
@@ -1074,24 +1076,49 @@ export async function provisionOrder(
   // One master switch over ALL panel writes (creates AND extensions).
   if (!config.config.enabled) return { ok: false, skip: 'disabled' };
 
-  const panel = loadPanelConfig(env);
-  if (!panel.ok) {
-    // Unconfigured panel: leave the order untouched (still approved/failed).
-    return { ok: false, skip: 'unconfigured' };
+  let originService: OrderRow | null = null;
+  if (kindProbe.kind === 'renewal') {
+    const linked = isRepurchase ? parseRepurchaseSelections(kindProbe)?.serviceOrderId : parseRenewalSelections(kindProbe)?.serviceOrderId;
+    originService = linked ? await getOrderById(db,linked) : null;
+    if (!originService?.panel_id) return {ok:false,skip:'unconfigured'};
   }
-
+  // Only unassigned NEW provisioning consults the mutable default.
+  const assignedPanel = originService?.panel_id ?? kindProbe.panel_id;
+  const selected = assignedPanel ? null : await selection(db);
+  const panelId = assignedPanel ?? selected!.panel_id;
+  const panel = originService ? await resolveServicePanel(env,originService) : await resolvePanel(env,panelId);
+  if (!panel.ok) return {ok:false,skip:'unconfigured'};
+  if (kindProbe.kind === 'purchase' && !kindProbe.panel_id &&
+      (!panel.row.enabled_new || (panelId!=='legacy' && panel.row.last_test!=='ok'))) return {ok:false,skip:'disabled'};
+  let effectiveConfig: ProvisioningConfig;
+  try {
+    effectiveConfig = kindProbe.panel_provision_config
+      ? JSON.parse(kindProbe.panel_provision_config) as ProvisioningConfig
+      : provisioningForPanel(panel.row,config.config);
+  } catch {return {ok:false,skip:'config_invalid'};}
+  const lockId=originService?.id ?? kindProbe.id;
+  const lockOwner=crypto.randomUUID();
+  if (!await acquireServiceLock(db,lockId,lockOwner)) return {ok:false,error:'state_changed'};
+  try {
+  if (originService) {
+    const latest = await getOrderById(db,originService.id);
+    if (!latest || latest.panel_id!==originService.panel_id || latest.pasarguard_user_id!==originService.pasarguard_user_id || latest.pasarguard_username!==originService.pasarguard_username) return {ok:false,error:'state_changed'};
+  }
   const fromState = opts.retry === true ? 'failed' : 'approved';
   const claim = await claimOrderForProvisioning(db, {
     orderId: opts.orderId,
     fromState,
     maxAttempts: config.config.maxAttempts,
+    panelId,panelRevision:panel.row.revision,selectionRevision:selected?.revision,
+    panelConfig:JSON.stringify(effectiveConfig),
   });
   if (!claim.ok) {
     return { ok: false, error: claim.error };
   }
   const order = claim.order;
-  const client = new PasarGuardClient(panel.config);
+  const client = clientFor(panel.config,originService?.pasarguard_user_id ?? order.pasarguard_user_id);
 
+  return await (async (): Promise<ProvisionOutcome> => {
   if (order.kind === 'renewal' && (order.repurchase_mode === 'same' || order.repurchase_mode === 'custom')) {
     return provisionRepurchase(deps, order, client);
   }
@@ -1104,15 +1131,17 @@ export async function provisionOrder(
   if (selections === null) {
     return finalizeFailure(deps, order.id, 'selections_invalid');
   }
-  // Absolute expiry is CLAIMED here (before any panel write), like a renewal
-  // target: retries re-derive the same shape, and the verification step makes
-  // a re-application a no-op — no stacking, ever.
-  const targetUnix = createExpiryTargetUnix(selections.durationDays);
+  // Persist the first absolute expiry before any remote write. Retries reuse
+  // this value, even after a panel switch or a Worker restart.
+  const candidate = createExpiryTargetUnix(selections.durationDays);
+  if (candidate !== null) await db.prepare(`UPDATE orders SET create_target_unix=?2 WHERE id=?1 AND state='provisioning' AND create_target_unix IS NULL`)
+    .bind(order.id,candidate).run();
+  const targetUnix = (await getOrderById(db,order.id))?.create_target_unix ?? null;
   if (targetUnix === null) {
     return finalizeFailure(deps, order.id, 'create_target_overflow');
   }
 
-  const username = provisionUsername(order.id, config.config.usernamePrefix);
+  const username = provisionUsername(order.id, effectiveConfig.usernamePrefix);
   const claimed = await claimOrderUsername(db, { orderId: order.id, username });
   if (!claimed.ok) {
     if (claimed.error === 'not_found') return { ok: false, error: 'not_found' };
@@ -1133,7 +1162,7 @@ export async function provisionOrder(
   }
 
   const created = await client.createUser(
-    buildCreatePayload(order.id, selections, config.config, serviceUsername, targetUnix),
+    buildCreatePayload(order.id, selections, effectiveConfig, serviceUsername, targetUnix),
   );
   if (!created.ok) {
     if (created.kind === 'rejected' && created.status === 409) {
@@ -1157,6 +1186,11 @@ export async function provisionOrder(
   return finalizeCreate(
     deps, order, panel.config.baseUrl, client, serviceUsername, user, targetUnix,
   );
+  })();
+  } catch {
+    // No raw exception messages: DB/transport errors can contain sensitive material.
+    return await finalizeFailure(deps,opts.orderId,'panel_operation_interrupted',isRepurchase?'repurchase':isRenewal);
+  } finally { await releaseServiceLock(db,lockId,lockOwner); }
 }
 
 function buildCreatePayload(

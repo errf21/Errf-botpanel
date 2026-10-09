@@ -1,3 +1,5 @@
+import { migrationCallback } from './serviceMigration.ts';
+import { panelCallback } from '../panels/admin.ts';
 import type { TelegramCallbackQuery, UpdateContext } from '../types.ts';
 import {
   extractCallbackTarget,
@@ -103,6 +105,9 @@ export async function handleCallback(
   }
 
   const { callbackQueryId, messageChatId, messageId } = target;
+
+  if (data.startsWith('sm:')) {await migrationCallback(ctx,data,callbackQueryId);return;}
+  if (data.startsWith('pnl:')) {await panelCallback(ctx,data,callbackQueryId);return;}
 
   // ———— admin review callbacks: authorization BEFORE anything else ————
   if (data.startsWith('adm:')) {

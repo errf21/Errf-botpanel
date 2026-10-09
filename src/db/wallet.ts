@@ -34,61 +34,38 @@ export interface WalletMutation {
   kind: WalletEntryKind;
   actor: string;
   orderId?: string | null;
+  /** Stable intent key: required for retries of the same administrative action. */
+  operationKey?: string;
 }
 
-/**
- * Apply one atomic mutation: the UPDATE carries BOTH the sign guard and the
- * absolute bounds (SQLite integer arithmetic; balance_after is re-read after
- * the write so the ledger mirror is exact, never inferred from a guess).
- */
+/** Ledger claim and balance effect share a single D1 transaction. A supplied
+ * stable intent key makes retries converge; identity/amount substitution fails
+ * closed. Callers without a key explicitly create a new distinct intent. */
 export async function applyWalletMutation(
-  db: D1Database,
-  mutation: WalletMutation,
-): Promise<{ ok: true; balance: number; entryId: string } | { ok: false; reason: 'insufficient' | 'cap' | 'state' }> {
-  const { amountIrt } = mutation;
-  if (
-    !Number.isSafeInteger(amountIrt) ||
-    amountIrt === 0 ||
-    Math.abs(amountIrt) > MAX_WALLET_AMOUNT
-  ) {
-    return { ok: false, reason: 'cap' };
-  }
-  const entryId = newOrderId();
-  const updated = await db
-    .prepare(
-      `UPDATE customers
-          SET balance_irt = balance_irt + ?2,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1
-          AND balance_irt >= CASE WHEN ?2 < 0 THEN -?2 ELSE 0 END
-          AND balance_irt + ?2 BETWEEN 0 AND ?3`,
-    )
-    .bind(mutation.customerId, amountIrt, MAX_WALLET_AMOUNT)
-    .run();
-  const meta = (updated as { meta?: { changes?: number } } | null)?.meta;
-  if (!meta || meta.changes !== 1) {
-    const current = await getBalance(db, mutation.customerId);
-    if (current === null) return { ok: false, reason: 'state' };
-    return { ok: false, reason: amountIrt < 0 ? 'insufficient' : 'cap' };
-  }
-  const balance = await getBalance(db, mutation.customerId);
-  if (balance === null) return { ok: false, reason: 'state' };
-  await db
-    .prepare(
-      `INSERT INTO wallet_entries (id, customer_id, delta_irt, kind, order_id, actor, balance_after)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
-    )
-    .bind(
-      entryId,
-      mutation.customerId,
-      amountIrt,
-      mutation.kind,
-      mutation.orderId ?? null,
-      mutation.actor,
-      balance,
-    )
-    .run();
-  return { ok: true, balance, entryId };
+  db:D1Database, mutation:WalletMutation,
+):Promise<{ok:true;balance:number;entryId:string}|{ok:false;reason:'insufficient'|'cap'|'state'}>{
+ const {amountIrt}=mutation;
+ if(!Number.isSafeInteger(amountIrt)||amountIrt===0||Math.abs(amountIrt)>MAX_WALLET_AMOUNT)return {ok:false,reason:'cap'};
+ const entryId=newOrderId(),key=mutation.operationKey??`intent:${entryId}`;
+ if(!key||key.length>200)return {ok:false,reason:'state'};
+ let failed=false;
+ try{await db.batch([
+  db.prepare(`INSERT INTO wallet_entries(id,customer_id,delta_irt,kind,order_id,actor,balance_after,operation_key)
+   SELECT ?1,id,?2,?3,?4,?5,balance_irt+?2,?6 FROM customers WHERE id=?7
+   AND balance_irt>=CASE WHEN ?2<0 THEN -?2 ELSE 0 END AND balance_irt+?2 BETWEEN 0 AND ?8
+   AND NOT EXISTS(SELECT 1 FROM wallet_entries WHERE operation_key=?6)`)
+   .bind(entryId,amountIrt,mutation.kind,mutation.orderId??null,mutation.actor,key,mutation.customerId,MAX_WALLET_AMOUNT),
+  db.prepare(`UPDATE customers SET balance_irt=balance_irt+?2,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   WHERE id=?1 AND EXISTS(SELECT 1 FROM wallet_entries WHERE id=?3 AND customer_id=?1)`)
+   .bind(mutation.customerId,amountIrt,entryId),
+ ]);}catch{failed=true;}
+ const paid=await db.prepare('SELECT id,customer_id,delta_irt,kind,actor,order_id,balance_after FROM wallet_entries WHERE operation_key=?1')
+  .bind(key).first<{id:string;customer_id:number;delta_irt:number;kind:string;actor:string;order_id:string|null;balance_after:number}>();
+ if(paid){if(paid.customer_id!==mutation.customerId||paid.delta_irt!==amountIrt||paid.kind!==mutation.kind||paid.actor!==mutation.actor||paid.order_id!==(mutation.orderId??null))return {ok:false,reason:'state'};
+  return {ok:true,balance:paid.balance_after,entryId:paid.id};}
+ if(failed)return {ok:false,reason:'state'};
+ const balance=await getBalance(db,mutation.customerId);
+ return {ok:false,reason:balance===null?'state':amountIrt<0?'insufficient':'cap'};
 }
 
 export async function getBalance(db: D1Database, customerId: number): Promise<number | null> {
@@ -123,16 +100,10 @@ export async function listWalletEntries(
 
 /**
  * Debit exactly `amountIrt` for an order being paid from the wallet.
- * Exactly-once, atomically: the claim UPDATE and the ledger INSERT run in
- * ONE db.batch (single transaction). The INSERT re-proves the claim —
- * `NOT EXISTS` for THIS order plus a balance that equals the pre-debit
- * snapshot minus the amount, which can only hold if OUR UPDATE applied —
- * so two truly concurrent claims can never both debit: the later one finds
- * the order already paid, moves nothing, and converges on the winner's
- * ledger row. The partial UNIQUE index idx_wallet_payment_once
- * (order_id WHERE kind='order_payment') is the hard backstop. After the
- * batch, the ledger row IS the truth: present ⇒ paid (by us or the winner),
- * absent ⇒ insufficient balance (or the customer is gone).
+ * Ledger claim and balance effect are one D1 transaction; a stable payment
+ * token survives the order-link handoff. Different orders never rely on a
+ * balance read performed outside that transaction. Retries converge on the
+ * same owner/amount claim; refunded or substituted claims fail closed.
  */
 export async function payOrderWithWallet(
   db: D1Database,
@@ -152,129 +123,61 @@ export async function payOrderWithWallet(
   }
   const pre = await getBalance(db, opts.customerId);
   if (pre === null) return { ok: false, reason: 'state' };
-  const expected = pre - opts.amountIrt;
-  const ledgerId = newOrderId();
+  const ledgerId = newOrderId();let writeFailed=false;
   try {
+    // The ledger INSERT is the claim. Both its balance snapshot and the debit
+    // execute in the same transaction, not against a pre-transaction balance.
     await db.batch([
-      db
-        .prepare(
-          `UPDATE customers
-              SET balance_irt = balance_irt - ?2,
-                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            WHERE id = ?1
-              AND balance_irt >= ?2
-              AND NOT EXISTS (
-                SELECT 1 FROM wallet_entries WHERE order_id = ?3 AND kind = 'order_payment'
-              )`,
-        )
-        .bind(opts.customerId, opts.amountIrt, opts.orderId),
-      db
-        .prepare(
-          `INSERT INTO wallet_entries (id, customer_id, delta_irt, kind, order_id, actor, balance_after)
-           SELECT ?1, ?2, ?3, 'order_payment', ?4, ?5,
-                  (SELECT balance_irt FROM customers WHERE id = ?2)
-             WHERE NOT EXISTS (
-               SELECT 1 FROM wallet_entries WHERE order_id = ?4 AND kind = 'order_payment'
-             )
-               AND (SELECT balance_irt FROM customers WHERE id = ?2) = ?6`,
-        )
-        .bind(ledgerId, opts.customerId, -opts.amountIrt, opts.orderId, opts.actor, expected),
+      db.prepare(`INSERT INTO wallet_entries(id,customer_id,delta_irt,kind,order_id,actor,balance_after,payment_token)
+        SELECT ?1,c.id,-?2,'order_payment',?3,?4,c.balance_irt-?2,?3 FROM customers c
+        WHERE c.id=?5 AND c.balance_irt>=?2
+          AND NOT EXISTS(SELECT 1 FROM wallet_entries WHERE kind='order_payment' AND (payment_token=?3 OR order_id=?3))`)
+        .bind(ledgerId,opts.amountIrt,opts.orderId,opts.actor,opts.customerId),
+      db.prepare(`UPDATE customers SET balance_irt=balance_irt-?2,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id=?1 AND EXISTS(SELECT 1 FROM wallet_entries WHERE id=?3 AND customer_id=?1 AND kind='order_payment')`)
+        .bind(opts.customerId,opts.amountIrt,ledgerId),
     ]);
-  } catch {
-    console.error(`wallet_ledger_insert_failed orderId=${opts.orderId.slice(0, 32)}`);
+  } catch { writeFailed=true;console.error(`wallet_ledger_insert_failed orderId=${opts.orderId.slice(0,32)}`); }
+  const paid=await db.prepare(`SELECT customer_id,delta_irt,balance_after,order_id FROM wallet_entries
+    WHERE kind='order_payment' AND (payment_token=?1 OR order_id=?1) LIMIT 1`).bind(opts.orderId)
+    .first<{customer_id:number;delta_irt:number;balance_after:number;order_id:string}>();
+  if(paid){
+    if(paid.customer_id!==opts.customerId||paid.delta_irt!==-opts.amountIrt)return {ok:false,reason:'state'};
+    if(await db.prepare("SELECT 1 FROM wallet_entries WHERE kind='order_refund' AND order_id=?1").bind(paid.order_id).first())return {ok:false,reason:'state'};
+    return {ok:true,balance:paid.balance_after};
   }
-  const paid = await db
-    .prepare(
-      `SELECT balance_after FROM wallet_entries
-        WHERE order_id = ?1 AND kind = 'order_payment' LIMIT 1`,
-    )
-    .bind(opts.orderId)
-    .first<{ balance_after: number }>();
-  if (paid) return { ok: true, balance: paid.balance_after };
+  if(writeFailed)return {ok:false,reason:'state'};
   const balance = await getBalance(db, opts.customerId);
   if (balance === null) return { ok: false, reason: 'state' };
   return { ok: false, reason: 'insufficient' };
 }
 
-/** True only when THIS call moved the wallet for this order's refund.
- *  Exactly-once: the ledger INSERT claims with NOT EXISTS, the balance
- *  UPDATE then applies only for owners of that claim row. A crash between
- *  the two is repaired on the next retry (claim row blocks a second credit,
- *  the UPDATE re-applies the missing effect once), so neither a double
- *  refund nor a lost refund can persist. */
+/** Refund claim and balance effect are atomic. Repeated refunds cannot infer
+ * missing effects from a lower balance caused by an unrelated later payment.
+ * Optional orphan guard is checked INSIDE the refund transaction. */
 export async function refundOrderWalletPayment(
   db: D1Database,
-  opts: { customerId: number; orderId: string; actor: string },
+  opts: { customerId: number; orderId: string; actor: string; onlyIfUnlinkedBefore?: string },
 ): Promise<boolean> {
-  const payment = await db
-    .prepare(
-      `SELECT delta_irt FROM wallet_entries
-        WHERE order_id = ?1 AND kind = 'order_payment'
-        ORDER BY created_at ASC LIMIT 1`,
-    )
-    .bind(opts.orderId)
-    .first<{ delta_irt: number }>();
-  if (!payment || payment.delta_irt >= 0) return false; // nothing wallet-paid to refund
-  const amount = -payment.delta_irt;
+  const payment=await db.prepare("SELECT customer_id,delta_irt FROM wallet_entries WHERE order_id=?1 AND kind='order_payment' LIMIT 1")
+    .bind(opts.orderId).first<{customer_id:number;delta_irt:number}>();
+  if(!payment||payment.customer_id!==opts.customerId||payment.delta_irt>=0)return false;
+  const amount=-payment.delta_irt,claim=newOrderId();
+  await db.batch([
+    db.prepare(`INSERT INTO wallet_entries(id,customer_id,delta_irt,kind,order_id,actor,balance_after)
+      SELECT ?1,c.id,?2,'order_refund',?3,?4,c.balance_irt+?2 FROM customers c WHERE c.id=?5
+      AND c.balance_irt+?2 BETWEEN 0 AND ?6
+      AND NOT EXISTS(SELECT 1 FROM wallet_entries WHERE order_id=?3 AND kind='order_refund')
+      AND (?7 IS NULL OR (NOT EXISTS(SELECT 1 FROM orders WHERE id=?3 OR idempotency_key=?3)
+        AND EXISTS(SELECT 1 FROM wallet_entries WHERE kind='order_payment' AND order_id=?3 AND payment_token=?3 AND created_at<?7)))`)
+      .bind(claim,amount,opts.orderId,opts.actor,opts.customerId,MAX_WALLET_AMOUNT,opts.onlyIfUnlinkedBefore??null),
+    db.prepare(`UPDATE customers SET balance_irt=balance_irt+?2,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE id=?1 AND EXISTS(SELECT 1 FROM wallet_entries WHERE id=?3 AND kind='order_refund' AND customer_id=?1)`)
+      .bind(opts.customerId,amount,claim),
+  ]);
+  return !!await db.prepare("SELECT 1 FROM wallet_entries WHERE order_id=?1 AND kind='order_refund' AND customer_id=?2")
+    .bind(opts.orderId,opts.customerId).first();
 
-  // If a previous attempt crashed with the credit not yet applied, repair it now.
-  await db
-    .prepare(
-      `UPDATE customers
-          SET balance_irt = balance_irt + ?2,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1
-          AND balance_irt + ?2 BETWEEN 0 AND ?4
-          AND EXISTS (
-            SELECT 1 FROM wallet_entries WHERE order_id = ?3 AND kind = 'order_refund'
-          )
-          AND balance_irt < (SELECT balance_after FROM wallet_entries
-                              WHERE order_id = ?3 AND kind = 'order_refund')`,
-    )
-    .bind(opts.customerId, amount, opts.orderId, MAX_WALLET_AMOUNT)
-    .run();
-
-  const claimed = await db
-    .prepare(
-      `INSERT INTO wallet_entries (id, customer_id, delta_irt, kind, order_id, actor, balance_after)
-       SELECT ?1, ?2, ?3, 'order_refund', ?4, ?5,
-              (SELECT balance_irt FROM customers WHERE id = ?2)
-        WHERE NOT EXISTS (
-          SELECT 1 FROM wallet_entries WHERE order_id = ?4 AND kind = 'order_refund'
-        )`,
-    )
-    .bind(newOrderId(), opts.customerId, amount, opts.orderId, opts.actor)
-    .run();
-  if (((claimed as { meta?: { changes?: number } } | null)?.meta?.changes ?? 0) !== 1) {
-    // Claim belongs to an earlier (already-applied above, or complete) attempt.
-    const current = await getBalance(db, opts.customerId);
-    const entry = await db
-      .prepare(
-        `SELECT balance_after FROM wallet_entries WHERE order_id = ?1 AND kind = 'order_refund' LIMIT 1`,
-      )
-      .bind(opts.orderId)
-      .first<{ balance_after: number }>();
-    return current !== null && entry !== null && entry !== undefined && current >= entry.balance_after;
-  }
-  const applied = await db
-    .prepare(
-      `UPDATE customers
-          SET balance_irt = balance_irt + ?2,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1 AND balance_irt + ?2 BETWEEN 0 AND ?3`,
-    )
-    .bind(opts.customerId, amount, MAX_WALLET_AMOUNT)
-    .run();
-  if (((applied as { meta?: { changes?: number } } | null)?.meta?.changes ?? 0) !== 1) {
-    console.error(`wallet_refund_apply_failed orderId=${opts.orderId.slice(0, 32)}`);
-    return false;
-  }
-  const balance = await getBalance(db, opts.customerId);
-  await db
-    .prepare('UPDATE wallet_entries SET balance_after = ?2 WHERE order_id = ?1 AND kind = ?3')
-    .bind(opts.orderId, balance ?? amount, 'order_refund')
-    .run();
-  return true;
 }
 
 /** Re-point a wallet payment (and its future refund) from the draft token
@@ -299,4 +202,16 @@ export async function setPaidLedgerOrder(
     )
     .bind(tokenOrderId, realOrderId)
     .run();
+}
+
+/** Interrupted pre-order checkout is a durable payment reservation, not a lost
+ * debit. Refund only a confirmed missing order after 15 minutes; late funded
+ * insertion fails the SQL refund guard. Never infer absence on a DB error. */
+export async function recoverUnlinkedWalletPayments(db:D1Database,now=Date.now()):Promise<void>{
+ const cutoff=new Date(now-900000).toISOString();
+ const rows=await db.prepare(`SELECT customer_id,order_id FROM wallet_entries w WHERE kind='order_payment'
+  AND payment_token=order_id AND created_at<?1 AND NOT EXISTS(SELECT 1 FROM orders WHERE id=w.order_id OR idempotency_key=w.payment_token)
+  AND NOT EXISTS(SELECT 1 FROM wallet_entries r WHERE r.order_id=w.order_id AND r.kind='order_refund') ORDER BY created_at,id LIMIT 2`)
+  .bind(cutoff).all<{customer_id:number;order_id:string}>();
+ for(const row of rows.results)await refundOrderWalletPayment(db,{customerId:row.customer_id,orderId:row.order_id,actor:'system:wallet-checkout-recovery',onlyIfUnlinkedBefore:cutoff});
 }

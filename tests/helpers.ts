@@ -66,7 +66,7 @@ export function makeFetchStub(panel?: {
       text: payload['text'],
       payload: { chat_id: payload['chat_id'], ...payload },
     });
-    return Response.json({ ok: true, result: {} });
+    return Response.json({ ok: true, result: {message_id:1} });
   }) as typeof fetch;
   return {
     sent,
@@ -172,8 +172,16 @@ export function freshDb(): DatabaseSync {
     'migrations/0017_wallet_topup.sql',
     'migrations/0018_renewal_volume.sql',
     'migrations/0019_repurchase.sql',
+    'migrations/0020_multi_panel.sql',
+    'migrations/0021_dynamic_api_key_panels.sql',
+    'migrations/0022_service_migrations.sql',
+    'migrations/0023_reliability_delivery.sql',
+    'migrations/0024_financial_optimization.sql',
   ]) {
+    // Wrangler migration files run transactionally in D1. Match that here.
+    sqlite.exec('BEGIN');
     sqlite.exec(readFileSync(`${here}../${file}`, 'utf8'));
+    sqlite.exec('COMMIT');
   }
   return sqlite;
 }

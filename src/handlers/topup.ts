@@ -335,7 +335,7 @@ export async function showTopupQueue(ctx: UpdateContext): Promise<void> {
       ? `@${row.telegram_username}`
       : String(row.telegram_user_id);
     lines.push(
-      `${index + 1}. 🆔 ${row.id}\n   ${FA_UI.f.price(row.amount_irt, 'IRT')} — ${faAdmin.payerLine(uploader)}`,
+      `${index + 1}. 🆔 ${row.id}\n   ${FA_UI.f.price(row.amount_irt, 'IRT')} — ${faAdmin.payerLine(uploader)}${row.state==='approved'?`\n   Credit NOT applied (${row.credit_status}); Approve retries credit only.`:''}`,
     );
   });
   await ctx.api.sendMessage(

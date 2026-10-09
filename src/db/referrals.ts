@@ -97,100 +97,28 @@ export interface ReferralPayoutOutcome {
   amountIrt: number;
 }
 
-/**
- * Pay the referrer for THIS referee's first approved purchase — or report
- * why nothing happened. `rewardIrt` is the percentage-computed reward
- * (already floored to whole IRT by the payout caller). Single guarded-INSERT
- * decision:
- *   INSERT ... SELECT ... WHERE <referee attributed & not yet paid>
- *                        AND <referrer cap not reached>
- * The PK collision is the concurrency guard; a false return NEVER means an
- * error — always "no payout for this order" (unattributed, already paid,
- * capped, or kill switch). The wallet credit runs only when this call
- * inserted the row, and the row itself is the ledger reconciliation anchor.
- */
-export async function maybePayReferralReward(
-  db: D1Database,
-  opts: {
-    refereeCustomerId: number;
-    orderId: string;
-    rewardIrt: number;
-    config: ReferralConfig;
-  },
-): Promise<ReferralPayoutOutcome | null> {
-  if (
-    !opts.config.enabled ||
-    !Number.isSafeInteger(opts.rewardIrt) ||
-    opts.rewardIrt <= 0
-  ) {
-    return null;
-  }
-  const referee = await db
-    .prepare('SELECT referred_by FROM customers WHERE id = ?1')
-    .bind(opts.refereeCustomerId)
-    .first<{ referred_by: number | null }>();
-  const referrerId = referee?.referred_by ?? null;
-  if (referrerId === null) return null;
-
-  const inserted = await db
-    .prepare(
-      `INSERT INTO referral_rewards (referred_customer_id, referrer_customer_id, order_id, amount_irt)
-       SELECT ?1, c.referred_by, ?2, ?3
-         FROM customers c
-        WHERE c.id = ?1 AND c.referred_by IS NOT NULL
-          AND c.referred_by != c.id
-          AND (
-            SELECT COUNT(*) FROM referral_rewards r
-             WHERE r.referrer_customer_id = c.referred_by
-          ) < ?4
-          AND NOT EXISTS (
-            SELECT 1 FROM referral_rewards p WHERE p.referred_customer_id = ?1
-          )`,
-    )
-    .bind(
-      opts.refereeCustomerId,
-      opts.orderId,
-      opts.rewardIrt,
-      opts.config.maxRewardsPerReferrer,
-    )
-    .run();
-  const won = ((inserted as { meta?: { changes?: number } } | null)?.meta?.changes ?? 0) === 1;
-  if (!won) return null;
-
-  // Credit the referrer exactly once (their balance is the effect; if this
-  // write fails the reward row stands — a later admin audit can reconcile;
-  // in practice both are D1 statements on the same isolate).
-  const credited = await db
-    .prepare(
-      `UPDATE customers
-          SET balance_irt = balance_irt + ?2,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ?1 AND balance_irt + ?2 <= 1000000000000`,
-    )
-    .bind(referrerId, opts.rewardIrt)
-    .run();
-  if (((credited as { meta?: { changes?: number } } | null)?.meta?.changes ?? 0) !== 1) {
-    console.error(`referral_credit_failed referrer=${String(referrerId)}`);
-    return null;
-  }
-  const balance = await db
-    .prepare('SELECT balance_irt FROM customers WHERE id = ?1')
-    .bind(referrerId)
-    .first<{ balance_irt: number }>();
-  await db
-    .prepare(
-      `INSERT INTO wallet_entries (id, customer_id, delta_irt, kind, order_id, actor, balance_after)
-       VALUES (?1, ?2, ?3, 'referral_reward', ?4, 'system', ?5)`,
-    )
-    .bind(
-      newOrderId(),
-      referrerId,
-      opts.rewardIrt,
-      opts.orderId,
-      balance?.balance_irt ?? opts.rewardIrt,
-    )
-    .run();
-  return { referrerCustomerId: referrerId, amountIrt: opts.rewardIrt };
+/** Eligibility, once-per-referee anchor, ledger claim and credit are one atomic
+ * transaction. A failed SQL operation rolls all effects back. Historical
+ * anchors remain once-only even when their legacy ledger evidence is missing. */
+export async function maybePayReferralReward(db:D1Database,opts:{refereeCustomerId:number;orderId:string;rewardIrt:number;config:ReferralConfig}):Promise<ReferralPayoutOutcome|null>{
+ if(!opts.config.enabled||!Number.isSafeInteger(opts.rewardIrt)||opts.rewardIrt<=0)return null;
+ const ledger=newOrderId();
+ try{await db.batch([
+  db.prepare(`INSERT INTO wallet_entries(id,customer_id,delta_irt,kind,order_id,actor,balance_after,operation_key)
+   SELECT ?1,ref.id,?2,'referral_reward',?3,'system',ref.balance_irt+?2,?6 FROM customers c JOIN customers ref ON ref.id=c.referred_by
+   WHERE c.id=?4 AND c.referred_by<>c.id AND ref.balance_irt+?2 BETWEEN 0 AND 1000000000000
+   AND (SELECT COUNT(*) FROM referral_rewards WHERE referrer_customer_id=ref.id)<?5
+   AND NOT EXISTS(SELECT 1 FROM referral_rewards WHERE referred_customer_id=c.id)`)
+   .bind(ledger,opts.rewardIrt,opts.orderId,opts.refereeCustomerId,opts.config.maxRewardsPerReferrer,`referral:${opts.refereeCustomerId}`),
+  db.prepare(`INSERT INTO referral_rewards(referred_customer_id,referrer_customer_id,order_id,amount_irt,ledger_id)
+   SELECT ?1,customer_id,?2,delta_irt,id FROM wallet_entries WHERE id=?3`)
+   .bind(opts.refereeCustomerId,opts.orderId,ledger),
+  db.prepare(`UPDATE customers SET balance_irt=balance_irt+?1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   WHERE id=(SELECT customer_id FROM wallet_entries WHERE id=?2)`).bind(opts.rewardIrt,ledger),
+ ]);}catch{ /* An uncertain committed response is reconciled against THIS claim. */ }
+ const result=await db.prepare('SELECT referrer_customer_id,amount_irt FROM referral_rewards WHERE referred_customer_id=?1 AND ledger_id=?2')
+  .bind(opts.refereeCustomerId,ledger).first<{referrer_customer_id:number;amount_irt:number}>();
+ return result?{referrerCustomerId:result.referrer_customer_id,amountIrt:result.amount_irt}:null;
 }
 
 /** Light stats for the invite screen. */

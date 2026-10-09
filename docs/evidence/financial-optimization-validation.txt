@@ -1,0 +1,16 @@
+FINAL LOCAL VALIDATION
+Exact baseline: 203 files / 639 tests / migrations0001-0023 /29application tables.
+Baseline source SHA manifest:32128cab09350cc8ae11c1b4bb374e5b7646a652347cf6b64e2a30acaf7b90bc
+Final complete suite:680 tests,680pass,0fail,0cancelled,0skipped,0todo.
+41 additional tests; no existing test cases deleted or skipped.
+Two duplicate-polling count assertions tightened to exactly one read to reflect authorized optimization; functional assertions retained.
+TypeScript:npm run typecheck PASS.
+Worker build:Wrangler4.131.1 deploy --dry-run PASS; no deployment.
+Fresh local Wrangler D1:0001-0024 PASS.
+Copied local Wrangler D1 upgrade:0023->0024 PASS; all29original application tables and original columns/rows preserved.
+Versioned migration repeat:no migrations to apply PASS.
+Foreign-key violations:0.
+SQL migration transactional rollback/rawrepeat failure tests:PASS.
+Independent SQLite connections:existing wallet concurrency scenarios retained; six new admin/referral/topup scenarios PASS.
+Live Cloudflare distributed D1 concurrency, Telegram and PasarGuard behavior:NOT TESTED.
+No dependency install/upgrade, production data/query/secret/config/migration, deployment, commit or push.

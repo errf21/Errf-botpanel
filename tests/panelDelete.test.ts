@@ -263,7 +263,7 @@ test('admin delete via username: explicit card, one DELETE + confirm read, guard
   await dispatch(callbackUpdateAs(`pdel:ok:${orderId}`, nextId(), ADMIN, ADMIN.id));
   await flush();
   const methods = stub.panel.calls.map((c) => `${c.method} ${c.path}`);
-  assert.deepEqual(methods, [`DELETE /api/user/by-username/${username}`, `GET /api/user/by-username/${username}`]);
+  assert.deepEqual(methods, [`GET /api/user/by-username/${username}`, `DELETE /api/user/by-username/${username}`, `GET /api/user/by-username/${username}`]);
   assert.equal(users.has(username), false, 'service gone from the panel');
   const row = orderById(orderId);
   assert.equal(row['state'], 'completed', 'history state preserved');

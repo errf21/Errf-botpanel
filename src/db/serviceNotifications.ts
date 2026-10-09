@@ -47,6 +47,8 @@ export const NOTICE_STALE_MINUTES = 30;
 export const USAGE_BACKOFF_MINUTES = 60;
 
 export interface NoticeCandidate {
+  panel_id: string | null;
+  pasarguard_user_id: string | null;
   order_id: string;
   customer_id: number;
   telegram_user_id: string;
@@ -77,7 +79,7 @@ export interface NoticeCandidate {
 function eligibilitySql(kind: NoticeKind): string {
   if (kind === 'expiring') {
     return `EXISTS (
-         SELECT 1 FROM orders o
+         SELECT 1 FROM effective_orders o
           WHERE o.id = service_notifications.order_id
             AND o.kind = 'purchase' AND o.state = 'completed'
             AND o.service_expires_at IS NOT NULL
@@ -92,7 +94,7 @@ function eligibilitySql(kind: NoticeKind): string {
   }
   if (kind === 'free_test_expiring') {
     return `EXISTS (
-         SELECT 1 FROM orders o
+         SELECT 1 FROM effective_orders o
           WHERE o.id = service_notifications.order_id
             AND o.kind = 'purchase' AND o.state = 'completed'
             AND o.service_expires_at IS NOT NULL
@@ -107,7 +109,7 @@ function eligibilitySql(kind: NoticeKind): string {
   }
   if (kind === 'free_test_usage90' || kind === 'free_test_exhausted') {
     return `EXISTS (
-         SELECT 1 FROM orders o
+         SELECT 1 FROM effective_orders o
           WHERE o.id = service_notifications.order_id
             AND o.kind = 'purchase' AND o.state = 'completed'
             AND o.pasarguard_username IS NOT NULL
@@ -121,7 +123,7 @@ function eligibilitySql(kind: NoticeKind): string {
   }
   // usage90
   return `EXISTS (
-         SELECT 1 FROM orders o
+         SELECT 1 FROM effective_orders o
           WHERE o.id = service_notifications.order_id
             AND o.kind = 'purchase' AND o.state = 'completed'
             AND o.pasarguard_username IS NOT NULL
@@ -151,8 +153,8 @@ export async function listExpiryCandidates(
   const result = await db
     .prepare(
       `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
-              o.service_expires_at, o.pasarguard_username, o.selections
-         FROM orders o
+              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id
+         FROM effective_orders o
          JOIN customers c ON c.id = o.customer_id
         WHERE o.kind = 'purchase'
           AND o.state = 'completed'
@@ -195,8 +197,8 @@ export async function listFreeTestExpiryCandidates(
   const result = await db
     .prepare(
       `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
-              o.service_expires_at, o.pasarguard_username, o.selections
-         FROM orders o
+              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id
+         FROM effective_orders o
          JOIN customers c ON c.id = o.customer_id
         WHERE o.kind = 'purchase'
           AND o.state = 'completed'
@@ -239,8 +241,8 @@ export async function listUsageCandidates(
   const result = await db
     .prepare(
       `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
-              o.service_expires_at, o.pasarguard_username, o.selections
-         FROM orders o
+              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id
+         FROM effective_orders o
          JOIN customers c ON c.id = o.customer_id
         WHERE o.kind = 'purchase'
           AND o.state = 'completed'
@@ -279,8 +281,8 @@ export async function listUsageCandidates(
 function freeTestUsageCandidatesSql(kind: NoticeKind): string {
   void kind;
   return `SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,
-              o.service_expires_at, o.pasarguard_username, o.selections
-         FROM orders o
+              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id
+         FROM effective_orders o
          JOIN customers c ON c.id = o.customer_id
         WHERE o.kind = 'purchase'
           AND o.state = 'completed'

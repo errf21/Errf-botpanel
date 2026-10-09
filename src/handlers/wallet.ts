@@ -192,6 +192,7 @@ async function applyWalletAdminAction(
     amountIrt: grant ? amountIrt : -amountIrt,
     kind: grant ? 'admin_grant' : 'admin_debit',
     actor: `admin:${String(ctx.actor.id)}`,
+    operationKey:ctx.updateId===undefined?undefined:`telegram-wallet:${ctx.actor.id}:${ctx.updateId}`,
   });
   if (!result.ok) {
     await ctx.api.sendMessage(

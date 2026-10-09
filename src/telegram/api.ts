@@ -1,3 +1,5 @@
+import type {MessageDelivery} from './delivery.ts';
+import {limitedText} from '../panels/http.ts';
 import type {
   TelegramApiLike,
   TelegramInlineKeyboardMarkup,
@@ -57,7 +59,9 @@ export class TelegramApi implements TelegramApiLike {
     if (parsed?.ok) return parsed.result ?? null;
 
     // No-op callback edits are benign; anything else gets a sanitized one-line log.
-    const description = parsed?.description ?? 'unknown';
+    const description = typeof parsed?.description==='string' ? parsed.description : '';
+    const reported=parsed?.error_code;
+    const code=typeof reported==='number' && Number.isInteger(reported) && reported>=100 && reported<=599 ? reported : response.status;
     const benignEditMiss =
       (method === 'editMessageText' || method === 'editMessageCaption') &&
       (description.includes('not modified') ||
@@ -65,10 +69,32 @@ export class TelegramApi implements TelegramApiLike {
         description.includes("there is no caption"));
     if (!benignEditMiss) {
       console.error(
-        `telegram_api_error method=${method} code=${String(parsed?.error_code ?? response.status)} description=${description}`,
+        `telegram_api_error method=${method} code=${code}`,
       );
     }
     return null;
+  }
+
+  /** Bounded, classified transport for recoverable delivery jobs only. Never
+   * logs upstream descriptions, request bodies, token URLs or raw exceptions. */
+  async sendMessageDelivery(chatId:number,text:string,buttons?:TelegramReplyMarkup,parseMode?:TelegramParseMode):Promise<MessageDelivery>{
+    let response:Response;
+    try {
+      response=await fetch(`https://api.telegram.org/bot${this.#token}/sendMessage`,{
+        method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),
+        headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chatId,text,
+          ...(buttons?{reply_markup:buttons}:{}),...(parseMode?{parse_mode:parseMode}:{})})});
+    }catch{return {kind:'unknown',code:'telegram_transport_uncertain'};}
+    let data:{ok?:unknown;result?:{message_id?:unknown};error_code?:number;parameters?:{retry_after?:unknown}}|null=null;
+    try{data=JSON.parse(await limitedText(response,131072));}catch{}
+    if(response.ok&&data?.ok===true&&Number.isSafeInteger(data.result?.message_id)&&Number(data.result?.message_id)>0)
+      return {kind:'sent',messageId:Number(data.result!.message_id)};
+    const code=data?.error_code??response.status;
+    if(code===429){const n=Number(data?.parameters?.retry_after);return {kind:'rate_limited',retryAfter:Number.isSafeInteger(n)&&n>0?n:60};}
+    if(code===401)return {kind:'configuration',code:'telegram_auth_unavailable'};
+    if(code===400||code===403||code===404)return {kind:'permanent',code:'telegram_recipient_rejected'};
+    if(code>=500)return {kind:'retryable',code:'telegram_unavailable'};
+    return {kind:'unknown',code:'telegram_response_unverified'};
   }
 
   sendMessage(

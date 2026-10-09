@@ -30,6 +30,8 @@ export interface TopupRow {
   customer_id: number;
   amount_irt: number;
   state: TopupState;
+  credit_status: 'uncredited'|'credited'|'blocked'|'review_required';
+  credit_error: string|null;
   receipt_file_id: string | null;
   receipt_kind: string | null;
   payment_reference: string | null;
@@ -193,68 +195,38 @@ export async function guardedTopupTransition(
   return after ? { ok: true, topup: after } : { ok: false, error: 'not_found' };
 }
 
-/**
- * Credit exactly `amountIrt` for an APPROVED top-up, exactly once.
- * The top-up id is the durable unique identity (also the ledger order_id):
- * the balance UPDATE and the ledger INSERT run in ONE db.batch, each guarded
- * by NOT EXISTS on (order_id, kind='topup_credit'), with the partial UNIQUE
- * index idx_wallet_topup_once as the hard backstop. After the batch the
- * ledger row IS the truth: present ⇒ credited (by us or the race winner),
- * absent ⇒ customer gone (state error). Duplicate approvals converge.
- */
-export async function creditTopupOnce(
-  db: D1Database,
-  opts: { customerId: number; topupId: string; amountIrt: number; actor: string },
-): Promise<{ ok: true; balance: number } | { ok: false; reason: 'cap' | 'state' }> {
-  if (
-    !Number.isSafeInteger(opts.amountIrt) ||
-    opts.amountIrt <= 0 ||
-    opts.amountIrt > MAX_TOPUP_AMOUNT
-  ) {
-    return { ok: false, reason: 'cap' };
-  }
-  const ledgerId = newOrderId();
-  try {
-    await db.batch([
-      db
-        .prepare(
-          `UPDATE customers
-              SET balance_irt = balance_irt + ?2,
-                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            WHERE id = ?1
-              AND balance_irt + ?2 BETWEEN 0 AND ?3
-              AND NOT EXISTS (
-                SELECT 1 FROM wallet_entries WHERE order_id = ?4 AND kind = 'topup_credit'
-              )`,
-        )
-        .bind(opts.customerId, opts.amountIrt, MAX_TOPUP_AMOUNT, opts.topupId),
-      db
-        .prepare(
-          `INSERT INTO wallet_entries (id, customer_id, delta_irt, kind, order_id, actor, balance_after)
-           SELECT ?1, ?2, ?3, 'topup_credit', ?4, ?5,
-                  (SELECT balance_irt FROM customers WHERE id = ?2)
-             WHERE NOT EXISTS (
-               SELECT 1 FROM wallet_entries WHERE order_id = ?4 AND kind = 'topup_credit'
-             )`,
-        )
-        .bind(ledgerId, opts.customerId, opts.amountIrt, opts.topupId, opts.actor),
-    ]);
-  } catch {
-    console.error(`topup_ledger_insert_failed topupId=${opts.topupId.slice(0, 32)}`);
-  }
-  const credited = await db
-    .prepare(
-      `SELECT balance_after FROM wallet_entries
-        WHERE order_id = ?1 AND kind = 'topup_credit' LIMIT 1`,
-    )
-    .bind(opts.topupId)
-    .first<{ balance_after: number }>();
-  if (credited) return { ok: true, balance: credited.balance_after };
-  const balance = await getBalance(db, opts.customerId);
-  if (balance === null) return { ok: false, reason: 'state' };
-  // No ledger row and customer exists: the guarded UPDATE refused (should not
-  // happen for a positive credit inside bounds) — surface as cap, never retry-blindly.
-  return { ok: false, reason: 'cap' };
+/** Approval is a durable decision, not proof of wallet credit. This atomic
+ * batch records ledger, actual credit and credit_status together. Cap rejection
+ * leaves no credit ledger; blocked/uncredited approvals are explicitly retryable.
+ * Pre-0024 approvals require financial review, never speculative re-crediting. */
+export async function creditTopupOnce(db:D1Database,opts:{customerId:number;topupId:string;amountIrt:number;actor:string}):Promise<{ok:true;balance:number}|{ok:false;reason:'cap'|'state'}>{
+ if(!Number.isSafeInteger(opts.amountIrt)||opts.amountIrt<=0||opts.amountIrt>MAX_TOPUP_AMOUNT)return {ok:false,reason:'cap'};
+ const ledger=newOrderId();let failed=false;
+ try{await db.batch([
+  db.prepare(`INSERT INTO wallet_entries(id,customer_id,delta_irt,kind,order_id,actor,balance_after)
+   SELECT ?1,c.id,?2,'topup_credit',?3,?4,c.balance_irt+?2 FROM customers c JOIN wallet_topups t ON t.customer_id=c.id
+   WHERE c.id=?5 AND t.id=?3 AND t.state='approved' AND t.amount_irt=?2 AND t.credit_status IN ('uncredited','blocked')
+   AND c.balance_irt+?2 BETWEEN 0 AND ?6 AND NOT EXISTS(SELECT 1 FROM wallet_entries WHERE order_id=?3 AND kind='topup_credit')`)
+   .bind(ledger,opts.amountIrt,opts.topupId,opts.actor,opts.customerId,MAX_TOPUP_AMOUNT),
+  db.prepare(`UPDATE customers SET balance_irt=balance_irt+?2,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   WHERE id=?1 AND EXISTS(SELECT 1 FROM wallet_entries WHERE id=?3 AND customer_id=?1)`)
+   .bind(opts.customerId,opts.amountIrt,ledger),
+  db.prepare(`UPDATE wallet_topups SET credit_status='credited',credit_error=NULL WHERE id=?1
+   AND EXISTS(SELECT 1 FROM wallet_entries WHERE id=?2 AND customer_id=?3)`)
+   .bind(opts.topupId,ledger,opts.customerId),
+  db.prepare(`UPDATE wallet_topups SET credit_status='blocked',credit_error='balance_cap' WHERE id=?1 AND customer_id=?2
+   AND state='approved' AND amount_irt=?3 AND credit_status IN ('uncredited','blocked')
+   AND NOT EXISTS(SELECT 1 FROM wallet_entries WHERE order_id=?1 AND kind='topup_credit')
+   AND EXISTS(SELECT 1 FROM customers WHERE id=?2 AND balance_irt+?3>?4)`)
+   .bind(opts.topupId,opts.customerId,opts.amountIrt,MAX_TOPUP_AMOUNT),
+ ]);}catch{failed=true;}
+ const credited=await db.prepare(`SELECT w.balance_after,w.customer_id,w.delta_irt,t.credit_status FROM wallet_entries w
+  JOIN wallet_topups t ON t.id=w.order_id WHERE w.order_id=?1 AND w.kind='topup_credit'`).bind(opts.topupId)
+  .first<{balance_after:number;customer_id:number;delta_irt:number;credit_status:string}>();
+ if(credited)return credited.customer_id===opts.customerId&&credited.delta_irt===opts.amountIrt&&credited.credit_status==='credited'?{ok:true,balance:credited.balance_after}:{ok:false,reason:'state'};
+ if(failed)return {ok:false,reason:'state'};
+ const t=await getTopupById(db,opts.topupId);
+ return {ok:false,reason:t?.customer_id===opts.customerId&&t.credit_status==='blocked'?'cap':'state'};
 }
 
 export interface TopupQueueRow extends TopupRow {
@@ -272,7 +244,7 @@ export async function listPendingTopups(
       `SELECT w.*, c.telegram_user_id, c.telegram_username
          FROM wallet_topups w
          JOIN customers c ON c.id = w.customer_id
-        WHERE w.state = 'pending_review'
+        WHERE w.state = 'pending_review' OR (w.state='approved' AND w.credit_status IN ('uncredited','blocked'))
         ORDER BY w.created_at ASC LIMIT ?1`,
     )
     .bind(limit)

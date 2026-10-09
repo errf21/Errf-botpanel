@@ -23,6 +23,7 @@ export interface CustomerRecord {
 export interface CustomerIdentity {
   id: number;
   language: string | null;
+  is_admin: number;
 }
 
 /**
@@ -60,11 +61,11 @@ export async function upsertCustomer(
     .run();
 
   const row = await db
-    .prepare('SELECT id, language FROM customers WHERE telegram_user_id = ?1')
+    .prepare('SELECT id, language, is_admin FROM customers WHERE telegram_user_id = ?1')
     .bind(telegramUserId)
-    .first<{ id: number; language: string | null }>();
+    .first<{ id: number; language: string | null; is_admin: number }>();
   if (!row) throw new Error('customer_load_failed');
-  return { id: row.id, language: row.language };
+  return { id: row.id, language: row.language, is_admin: row.is_admin };
 }
 
 /**

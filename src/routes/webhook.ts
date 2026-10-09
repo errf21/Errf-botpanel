@@ -1,4 +1,5 @@
 import type { Env, TelegramUpdate } from '../types.ts';
+import { UpdateClaimUnavailable } from '../db/dedupe.ts';
 import { json } from '../lib/http.ts';
 import { timingSafeEqual } from '../lib/security.ts';
 import { processTelegramUpdate } from '../dispatch.ts';
@@ -35,13 +36,16 @@ export async function handleWebhook(
     return json({ error: 'invalid_json' }, 400);
   }
 
-  // ACK unconditionally — a failing DB/edge case here must not trigger a
-  // Telegram retry storm; real failures are logged by the dispatcher.
+  // Admission failures return 503 for safe redelivery. Once admitted, existing
+  // handler-error containment remains unchanged; do not reinterpret it as dedupe.
   try {
     await processTelegramUpdate(update, env, executionCtx
       ? { waitUntil: (promise) => executionCtx.waitUntil(promise) }
       : undefined);
-  } catch {
+  } catch(error) {
+    if(error instanceof UpdateClaimUnavailable){
+      const response=json({error:'update_claim_unavailable'},503);response.headers.set('retry-after','5');return response;
+    }
     console.error(`webhook_dispatch_error update_id=${String(update.update_id)}`);
   }
   return json({ ok: true });

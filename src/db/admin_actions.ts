@@ -92,18 +92,17 @@ export async function getPendingAdminAction(
   db: D1Database,
   adminUserId: number,
 ): Promise<Omit<AdminActionRow, 'admin_user_id'> | null> {
-  const row = await db
-    .prepare(
-      `SELECT order_id, action, target_id FROM admin_actions
-        WHERE admin_user_id = ?1 AND expires_at > ?2`,
-    )
-    .bind(String(adminUserId), new Date().toISOString())
-    .first<Omit<AdminActionRow, 'admin_user_id'>>();
-  if (!row) {
-    await clearPendingAdminAction(db, adminUserId);
+  const now=new Date().toISOString();
+  const row=await db.prepare(`SELECT order_id,action,target_id,expires_at FROM admin_actions WHERE admin_user_id=?1`)
+    .bind(String(adminUserId)).first<Omit<AdminActionRow,'admin_user_id'>&{expires_at:string}>();
+  if (!row) return null; // A miss must not delete a concurrently armed action.
+  if (row.expires_at<=now) {
+    await db.prepare('DELETE FROM admin_actions WHERE admin_user_id=?1 AND expires_at<=?2')
+      .bind(String(adminUserId),now).run();
     return null;
   }
-  return row;
+  const {expires_at,...action}=row;
+  return action;
 }
 
 export async function clearPendingAdminAction(

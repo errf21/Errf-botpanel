@@ -1,3 +1,4 @@
+import { resolveServicePanel,clientFor,acquireServiceLock,releaseServiceLock } from '../panels/registry.ts';
 /**
  * Phase 6 "My Services": list + detail for the customer's OWN completed
  * purchases. A service IS a completed purchase order (no separate table).
@@ -23,7 +24,7 @@ import type { Ui } from '../telegram/i18n.ts';
 import { loadRenewalConfig, type RenewalConfig } from '../catalog/renewal.ts';
 import { loadRepurchaseConfig, type RepurchaseConfig } from '../catalog/repurchase.ts';
 import { isSalesStopped } from '../catalog/sales.ts';
-import { loadPanelConfig, PasarGuardClient, type PanelUser } from '../pasarguard/client.ts';
+import { type PanelUser } from '../pasarguard/client.ts';
 // Shared with the provisioning/payload layer: ONE GB↔bytes truth (2^30) so
 // the usage display matches what the panel shows, never a split unit.
 import { GB_BYTES } from '../provision/provision.ts';
@@ -197,8 +198,12 @@ async function renderServiceDetail(
   parseMode: TelegramParseMode | undefined;
 } | null> {
   const { t, f } = ctx.ui;
-  const service = await getOwnedService(ctx.db, ctx.customerId, orderId);
+  let service = await getOwnedService(ctx.db, ctx.customerId, orderId);
   if (!service) return null;
+  const readOwner=crypto.randomUUID();
+  const readLocked=live && await acquireServiceLock(ctx.db,service.id,readOwner);
+  try {
+  if(readLocked){service=await getOwnedService(ctx.db,ctx.customerId,orderId);if(!service)return null;}
   const asHtml = service.subscription_url !== null;
   const esc = (value: string): string => (asHtml ? tgEscapeHtml(value) : value);
 
@@ -217,11 +222,11 @@ async function renderServiceDetail(
   const localExpiry = effectiveExpiryIso(service);
   let panelUser: PanelUser | null = null;
   let panelGone = false;
-  const attemptedPanel = live && service.pasarguard_username !== null;
+  const attemptedPanel = live && readLocked && service.pasarguard_username !== null;
   if (attemptedPanel && service.pasarguard_username !== null) {
-    const panel = loadPanelConfig(ctx.env);
-    if (panel.ok) {
-      const result = await new PasarGuardClient(panel.config).getUserByUsername(
+    const panel = service.panel_id ? await resolveServicePanel(ctx.env,service) : null;
+    if (panel?.ok) {
+      const result = await clientFor(panel.config,service.pasarguard_user_id).getUserByUsername(
         service.pasarguard_username,
       );
       if (result.ok && result.data !== null) panelUser = result.data;
@@ -334,7 +339,9 @@ async function renderServiceDetail(
   // Phase 19: repurchase REPLACES renewal for EVERY paid service (active,
   // expiring, expired or finished). Fresh expiry/duration starts at
   // repurchase time, so the guard + summary state the forfeiture rule.
+  const migrating=await ctx.db.prepare("SELECT id FROM service_migrations WHERE service_id=?1 AND state IN ('review','creating','verified','activating')").bind(service.id).first();
   const canRepurchase =
+    !migrating &&
     repurchaseCfg.enabled &&
     !salesStopped &&
     active === null &&
@@ -352,6 +359,7 @@ async function renderServiceDetail(
     live: panelUser !== null,
     parseMode: asHtml ? 'HTML' : undefined,
   };
+  } finally {if(readLocked)await releaseServiceLock(ctx.db,orderId,readOwner);}
 }
 
 /** `svc:det` — fresh detail message; neutral toast when not owned/known. */

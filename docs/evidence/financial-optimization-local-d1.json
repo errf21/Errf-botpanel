@@ -1,0 +1,10 @@
+{
+  "local_wrangler_upgrade": "0023->0024 PASS",
+  "fresh_install": "0001-0024 PASS",
+  "versioned_repeat": "no migrations to apply PASS",
+  "application_tables": 29,
+  "preserved_original_columns_rows": true,
+  "foreign_key_violations": 0,
+  "production_access": false,
+  "scope": "copied isolated representative legacy/multi-panel/migrated-service fixture; not production safety proof"
+}

@@ -41,7 +41,11 @@ async function notifyTopupCustomer(
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return;
   const { t, f } = uiFor(contact.language);
   const text =
-    decision === 'approve'
+    decision === 'approve' && topup.credit_status!=='credited'
+      ? contact.language==='en'
+        ? `Payment ${topup.id} is approved, but wallet credit is NOT applied. Administrator review/retry is required; you have not been charged again.`
+        : `پرداخت ${topup.id} تأیید شده، اما اعتبار کیف پول هنوز اعمال نشده است. بررسی و تلاش مجدد توسط مدیریت لازم است؛ مبلغی دوباره از شما دریافت نشده است.`
+      : decision === 'approve'
       ? t.topupApproved(topup.id, f.price(topup.amount_irt, 'IRT'))
       : t.topupRejected(topup.id, reason ?? t.adminRejectDefaultReason);
   await api.sendMessage(chatId, text);
@@ -78,7 +82,9 @@ export async function performTopupReview(opts: {
       ? (sanitizeRejectionReason(opts.reason ?? '') ?? fa.adminRejectDefaultReason)
       : null;
 
-  const result = await guardedTopupTransition(
+  const before=await getTopupById(db,topupId);
+  const recoverable=opts.decision==='approve'&&before?.state==='approved'&&['uncredited','blocked'].includes(before.credit_status);
+  const result = recoverable ? {ok:true as const,topup:before!} : await guardedTopupTransition(
     db,
     topupId,
     opts.decision === 'approve' ? 'approved' : 'rejected',
@@ -135,6 +141,7 @@ export async function finishTopupReview(
     return;
   }
   const approved = result.topup.state === 'approved';
+  if(approved&&!result.credited){await api.answerCallbackQuery(callbackQueryId,'Payment approved; wallet credit NOT applied. Review /topups and retry after resolving the cap/error.',true);return;}
   await api.answerCallbackQuery(
     callbackQueryId,
     approved ? fa.adminTopupApprovedToast : fa.adminTopupRejectedToast,

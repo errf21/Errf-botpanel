@@ -12,6 +12,9 @@ export interface Env {
   PASARGUARD_API_KEY?: string;
   PASARGUARD_PANEL_URL?: string;
   ADMIN_CHAT_ID?: string;
+  PANEL_ADMIN_IDS?: string;
+  PANEL_ADMIN_ORIGIN?: string;
+  PANEL_ENCRYPTION_KEY?: string;
   /** Official DIRECT-support Telegram handle (plain var, never a secret), shown
    *  by «🆘 پشتیبانی». The bot builds `https://t.me/<handle>` from it and NEVER
    *  invents a destination: unset/invalid → the support button fails closed to
@@ -160,6 +163,7 @@ export interface TelegramInlineKeyboardButton {
   text: string;
   /** Exactly one of callback_data / url is ever set (menu.ts builders). */
   callback_data?: string;
+  web_app?: { url: string };
   /**
    * Phase 9: opens the EXISTING panel subscription page — never invented
    * URLs: builders accept only values that already passed
@@ -211,6 +215,7 @@ export type TelegramParseMode = 'HTML';
 
 /** Structural subset of TelegramApi that handlers need (avoids import cycles). */
 export interface TelegramApiLike {
+  sendMessageDelivery?(chatId:number,text:string,buttons?:TelegramReplyMarkup,parseMode?:TelegramParseMode):Promise<import("./telegram/delivery.ts").MessageDelivery>;
   sendMessage(
     chatId: number,
     text: string,
@@ -258,6 +263,8 @@ export interface UpdateContext {
   chatId: number;
   /** Internal customers.id — resolved before any handler runs. */
   customerId: number;
+  /** Verified Telegram update identity; stable administrative mutation intent. */
+  updateId?: number;
   /** ADMIN_CHAT_ID env OR customers.is_admin — computed once per update. */
   isAdmin: boolean;
   /**

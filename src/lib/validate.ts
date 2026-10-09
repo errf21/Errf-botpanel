@@ -46,6 +46,8 @@ const PANEL_DELETE_CALLBACK_PATTERN = /^pdel:(ok|no):[0-9A-HJKMNP-TV-Z]{28}$/;
  * Produced ONLY by topupReviewKeyboard(), consumed ONLY by
  * parseTopupCallback(); every tap re-checks admin + top-up state server-side.
  */
+const PANEL_CALLBACK_PATTERN = /^pnl:(?:(?:test|select|toggle|edit|delete):[a-z0-9_-]{1,32}|(?:confirm|cancel):[a-f0-9]{32}|list:[0-9]{1,3}|add)$/;
+
 const TOPUP_CALLBACK_PATTERN = /^tup:(ok|no):[0-9A-HJKMNP-TV-Z]{28}$/;
 
 export function isValidCallbackData(data: unknown): data is string {
@@ -57,6 +59,8 @@ export function isValidCallbackData(data: unknown): data is string {
       TICKET_CALLBACK_PATTERN.test(data) ||
       ANNOUNCE_CALLBACK_PATTERN.test(data) ||
       PANEL_DELETE_CALLBACK_PATTERN.test(data) ||
+      PANEL_CALLBACK_PATTERN.test(data) ||
+      /^sm:[sdcnvrxka]:(?:[0-9A-HJKMNP-TV-Z]{28}|[a-f0-9]{32})$/.test(data) ||
       TOPUP_CALLBACK_PATTERN.test(data) ||
       USERS_CALLBACK_PATTERN.test(data))
   );

@@ -76,6 +76,10 @@ npm run dev                           # http://localhost:8787/health
 The complete from-zero → production path is
 [setup](docs/en/setup.md) + [deployment](docs/en/deployment.md).
 
+## Multi-panel operation
+
+Dynamic multi-panel support preserves the legacy API key and allows up to 100 independently configured API-key panels. Add, validate, edit, enable/disable, select and safely delete panels from private admin-only `/panels`, using its authenticated HTTPS Mini App for keys. New services use the persistent selected panel; existing services and retries stay on their assigned panel. Apply migrations `0020` and `0021` in order. No username/password or bearer-token flow exists. See [the setup and rollout guide](docs/en/multi-panel.md).
+
 ## Configuration in one table
 
 | Name | Kind | Purpose |

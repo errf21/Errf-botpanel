@@ -341,7 +341,7 @@ test('panel 500 → failed + admin push; adm:rt retry → completed', async () =
   let order = orderById(orderId);
   assert.equal(order?.state, 'failed');
   assert.equal(order?.provision_attempts, 1);
-  assert.match(String(order?.failure_reason), /^server:500:panel down$/);
+  assert.match(String(order?.failure_reason), /^server:500:panel_request_rejected$/);
   assert.ok(eventsOf(orderId).includes('provision_failed'));
   assert.equal(postCreateCalls().length, 1); // never auto-retried inside one attempt
 
@@ -573,7 +573,7 @@ test('/failed lists failures with retry buttons for admins only', async () => {
   const queue = sentTo(ADMIN.id).find((s) => String(s.text).includes('سفارش‌های ناموفق'));
   assert.ok(queue);
   assert.ok(String(queue.text).includes(orderId));
-  assert.ok(String(queue.text).includes('panel down'));
+  assert.ok(String(queue.text).includes('panel_request_rejected'));
   const kb = queue.payload['reply_markup'] as {
     inline_keyboard: { callback_data: string }[][];
   };

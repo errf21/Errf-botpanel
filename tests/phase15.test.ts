@@ -668,7 +668,7 @@ test('P15-12 proofs#2/#3/#4: paid legs ignore a test; its 2h notice fires once; 
   // backoff); the PAID usage90 row must never exist for a claimed order.
   assert.equal(noticeKinds(orderId).filter((k) => k.kind === 'usage90').length, 0);
   assert.equal(noticeKinds(orderId).filter((k) => k.kind === 'expiring').length, 0);
-  assert.equal(getsByTestUsername(orderId).length, 2, 'both isolated test legs poll once, then back off');
+  assert.equal(getsByTestUsername(orderId).length, 1, 'both isolated test legs share one fresh read, then back off');
   assert.equal(
     noticeKinds(orderId).find((k) => k.kind === 'free_test_usage90')?.status,
     'pending',

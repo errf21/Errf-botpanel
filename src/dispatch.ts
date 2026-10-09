@@ -26,7 +26,7 @@ export async function processTelegramUpdate(
   options?: { waitUntil?: (promise: Promise<unknown>) => void },
 ): Promise<void> {
   if (!isTelegramUpdate(update)) return;
-  if ((await claimUpdate(env.DB, update.update_id)) !== 'fresh') return; // webhook replay
+  if ((await claimUpdate(env.DB, update.update_id, { prune: false })) !== 'fresh') return; // webhook replay
 
   try {
     const callback = update.callback_query;
@@ -59,7 +59,7 @@ export async function processTelegramUpdate(
 
     // Phase 10: the upsert's own row read carries the explicit language
     // choice — resolution costs ZERO extra queries (NULL/Persian default).
-    const { id: customerId, language } = await upsertCustomer(env.DB, actor);
+    const { id: customerId, language, is_admin } = await upsertCustomer(env.DB, actor);
     const ctx: UpdateContext = {
       env,
       db: env.DB,
@@ -67,7 +67,8 @@ export async function processTelegramUpdate(
       actor,
       chatId,
       customerId,
-      isAdmin: await resolveIsAdmin(env, env.DB, actor.id),
+      updateId:update.update_id,
+      isAdmin: await resolveIsAdmin(env, env.DB, actor.id, is_admin),
       ui: uiFor(language),
       waitUntil: options?.waitUntil,
       ...(pendingReferralCode ? { pendingReferralCode } : {}),
@@ -94,7 +95,7 @@ export async function processTelegramUpdate(
     if (receipt) await handleMedia(ctx, receipt);
   } catch (error) {
     // Never leak internals; keep a safe one-line record.
-    const name = error instanceof Error ? `${error.name}:${error.message}` : 'unknown';
+    const name = error instanceof Error ? error.name : 'unknown';
     console.error(`update_dispatch_failed update_id=${update.update_id} error=${name.slice(0, 200)}`);
     // Swallow (caller still returns 200 to stop retry storms) but release the
     // dedupe claim so a re-delivered update can be retried instead of dropped.

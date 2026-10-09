@@ -1,0 +1,489 @@
+{
+  "baseline": "exact203-file639-test delivered tree",
+  "measurement_scope": "isolated SQLite D1 shim; mocked Telegram/PasarGuard; no production metrics",
+  "statement_counts": {
+    "before": [
+      {
+        "label": "empty scheduled run: no customers/work",
+        "statements": 15,
+        "byVerb": {
+          "SELECT": 12,
+          "INSERT": 1,
+          "UPDATE": 2
+        },
+        "sql_frequency": {
+          "SELECT customer_id,order_id FROM wallet_entries w WHERE kind='order_payment'\n  AND payment_token=order_id AND created_at<?1 AND NOT EXISTS(SELECT 1 FROM orders WHERE id=w.order_id OR idempotency_key=w.payment_token)\n  AND NOT EXISTS(SELECT 1 FROM wallet_entries r WHERE r.order_id=w.order_id AND r.kind='order_refund') ORDER BY created_at,id LIMIT 2": 1,
+          "SELECT * FROM announcements WHERE state='sending' AND started_at IS NOT NULL AND (audience_seeded=0 OR recipient_count=sent_count+failed_count OR EXISTS(SELECT 1 FROM announcement_deliveries d WHERE d.announcement_id=announcements.id AND ((d.status='pending' AND d.next_attempt_at<=?1) OR (d.status='sending' AND COALESCE(d.lease_until,0)<=?1)))) ORDER BY updated_at,id LIMIT 1": 1,
+          "INSERT INTO service_migration_events(migration_id,actor,action,data) SELECT id,'system','review_expired','{}'\n   FROM service_migrations WHERE state='review' AND review_expires_at<?1": 1,
+          "UPDATE service_migrations SET state='cancelled',error='review_expired' WHERE state='review' AND review_expires_at<?1": 1,
+          "SELECT id,operator FROM service_migrations WHERE state IN ('creating','verified','activating') AND abort_requested=0 ORDER BY updated_at LIMIT 2": 1,
+          "SELECT m.* FROM service_migrations m JOIN active_service_resources r ON r.migration_id=m.id\n  WHERE m.state IN ('cleanup_pending','completed') AND m.customer_notified_at IS NULL ORDER BY m.updated_at LIMIT 2": 1,
+          "UPDATE orders SET state='failed',failure_reason='interrupted_verify_before_retry',\n    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')\n    WHERE state='provisioning' AND updated_at<?1 AND panel_id IS NOT NULL\n      AND NOT EXISTS(SELECT 1 FROM panel_service_locks l WHERE l.service_id=COALESCE(orders.renews_order_id,orders.id) AND l.expires_at>?2)": 1,
+          "SELECT o.id,o.renews_order_id FROM orders o JOIN effective_orders s ON s.id=o.renews_order_id\n      WHERE o.kind='renewal' AND o.state='completed' AND s.state='completed' AND s.panel_deleted_at IS NULL\n      AND o.panel_id=s.panel_id\n      AND NOT EXISTS (SELECT 1 FROM order_events e WHERE e.order_id=s.id\n        AND (e.action IN ('service_extended','service_repurchased') OR (e.action='service_booking_recovered' AND o.repurchase_mode IS NULL))\n        AND (json_extract(e.data,'$.renewal_order_id')=o.id OR json_extract(e.data,'$.repurchase_order_id')=o.id OR json_extract(e.data,'$.operation')=o.id))\n      AND NOT EXISTS(SELECT 1 FROM orders newer WHERE newer.renews_order_id=s.id AND newer.state='completed'\n        AND (newer.updated_at>o.updated_at OR (newer.updated_at=o.updated_at AND newer.id>o.id)))\n      AND COALESCE(o.repurchase_target_unix,o.renew_target_unix) IS NOT NULL\n      AND (o.repurchase_mode IS NOT NULL OR s.service_expires_at IS NULL\n        OR datetime(s.service_expires_at)<datetime(o.renew_target_unix,'unixepoch')) ORDER BY o.updated_at LIMIT 5": 1,
+          "SELECT id,updated_at,provision_attempts FROM orders\n      WHERE state='approved' AND panel_deleted_at IS NULL ORDER BY updated_at,id LIMIT 20": 1,
+          "SELECT p.order_id, p.created_at, p.reminded_stage, o.customer_id, c.telegram_user_id, c.language\n         FROM payment_reminders p\n         JOIN orders o ON o.id = p.order_id\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.state = 'awaiting_review'\n          AND p.reminded_stage < ?3\n          AND (julianday(?1) - julianday(p.created_at)) * 1440.0\n              >= ?2 * (p.reminded_stage + 1) - 1.0\n        ORDER BY p.created_at ASC\n        LIMIT ?4": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.service_expires_at IS NOT NULL\n          AND julianday(o.service_expires_at) > julianday(?1)\n          AND julianday(o.service_expires_at)\n              <= julianday(?1) + ?2 + 1.0 / 1440.0\n          AND NOT EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = 'expiring'\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?4 / 1440.0) )\n          )\n        ORDER BY o.service_expires_at ASC\n        LIMIT ?3": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.service_expires_at IS NOT NULL\n          AND julianday(o.service_expires_at) > julianday(?1) - ?5 / 1440.0\n          AND julianday(o.service_expires_at)\n              <= julianday(?1) + ?2 / 24.0 + 1.0 / 1440.0\n          AND EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = 'free_test_expiring'\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?4 / 1440.0) )\n          )\n        ORDER BY o.service_expires_at ASC\n        LIMIT ?3": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.pasarguard_username IS NOT NULL\n          AND (o.service_expires_at IS NULL\n               OR julianday(o.service_expires_at) > julianday(?1))\n          AND NOT EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = 'usage90'\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?2 / 1440.0)\n                  OR (sn.status = 'pending'\n                      AND sn.last_checked_at IS NOT NULL\n                      AND julianday(sn.last_checked_at) > julianday(?1) - ?3 / 1440.0) )\n          )\n        ORDER BY (o.service_expires_at IS NULL) ASC, o.service_expires_at ASC, o.id ASC\n        LIMIT ?4": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.pasarguard_username IS NOT NULL\n          AND (o.service_expires_at IS NULL\n               OR julianday(o.service_expires_at) > julianday(?1))\n          AND EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = ?5\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?2 / 1440.0)\n                  OR (sn.status = 'pending'\n                      AND sn.last_checked_at IS NOT NULL\n                      AND julianday(sn.last_checked_at) > julianday(?1) - ?3 / 1440.0) )\n          )\n        ORDER BY (o.service_expires_at IS NULL) ASC, o.service_expires_at ASC, o.id ASC\n        LIMIT ?4": 2
+        }
+      },
+      {
+        "label": "existing/new ordinary /myid update",
+        "statements": 5,
+        "byVerb": {
+          "DELETE": 1,
+          "INSERT": 2,
+          "SELECT": 2
+        },
+        "sql_frequency": {
+          "DELETE FROM update_dedupe WHERE received_at < ?1": 1,
+          "INSERT INTO update_dedupe(update_id) VALUES(?1) ON CONFLICT(update_id) DO NOTHING": 1,
+          "INSERT INTO customers (telegram_user_id, telegram_username, first_name, last_name, language_code)\n       VALUES (?1, ?2, ?3, ?4, ?5)\n       ON CONFLICT (telegram_user_id) DO UPDATE SET\n         telegram_username = excluded.telegram_username,\n         first_name        = excluded.first_name,\n         last_name         = excluded.last_name,\n         language_code     = excluded.language_code,\n         updated_at        = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')": 1,
+          "SELECT id, language FROM customers WHERE telegram_user_id = ?1": 1,
+          "SELECT is_admin FROM customers WHERE telegram_user_id = ?1": 1
+        }
+      },
+      {
+        "label": "existing ordinary /myid update",
+        "statements": 5,
+        "byVerb": {
+          "DELETE": 1,
+          "INSERT": 2,
+          "SELECT": 2
+        },
+        "sql_frequency": {
+          "DELETE FROM update_dedupe WHERE received_at < ?1": 1,
+          "INSERT INTO update_dedupe(update_id) VALUES(?1) ON CONFLICT(update_id) DO NOTHING": 1,
+          "INSERT INTO customers (telegram_user_id, telegram_username, first_name, last_name, language_code)\n       VALUES (?1, ?2, ?3, ?4, ?5)\n       ON CONFLICT (telegram_user_id) DO UPDATE SET\n         telegram_username = excluded.telegram_username,\n         first_name        = excluded.first_name,\n         last_name         = excluded.last_name,\n         language_code     = excluded.language_code,\n         updated_at        = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')": 1,
+          "SELECT id, language FROM customers WHERE telegram_user_id = ?1": 1,
+          "SELECT is_admin FROM customers WHERE telegram_user_id = ?1": 1
+        }
+      },
+      {
+        "label": "first successful 20-recipient chunk",
+        "statements": 115,
+        "byVerb": {
+          "UPDATE": 89,
+          "SELECT": 25,
+          "INSERT": 1
+        },
+        "telegramCalls": 20,
+        "sql_frequency": {
+          "UPDATE announcement_dispatch SET owner=?1,lease_until=?2 WHERE singleton=1 AND lease_until<=?3 AND pause_until<=?3": 1,
+          "SELECT * FROM announcements WHERE id=?1": 3,
+          "UPDATE announcements SET started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),\n  audience_highwater=COALESCE((SELECT MAX(id) FROM customers),0),total_estimate=MAX(recipient_count,(SELECT COUNT(*) FROM customers))\n  WHERE id=?1 AND state='sending' AND started_at IS NULL": 1,
+          "UPDATE announcements SET audience_highwater=COALESCE((SELECT MAX(id) FROM customers),0),\n  total_estimate=MAX(recipient_count,(SELECT COUNT(*) FROM customers))\n  WHERE id=?1 AND state='sending' AND started_at IS NOT NULL AND audience_highwater IS NULL": 1,
+          "UPDATE announcement_deliveries SET status=CASE WHEN failure_attempts+(attempt_started_at IS NOT NULL)>=3 THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+(attempt_started_at IS NOT NULL),attempt_started_at=NULL,\n  claim_owner=NULL,lease_until=NULL,next_attempt_at=MAX(next_attempt_at,?2),last_error='delivery_outcome_unknown',updated_at=?2\n  WHERE announcement_id=?1 AND status='sending' AND COALESCE(lease_until,0)<=?2": 1,
+          "SELECT MAX(id) last FROM (SELECT id FROM customers WHERE id>?1 AND id<=?2 ORDER BY id LIMIT ?3)": 1,
+          "INSERT INTO announcement_deliveries(announcement_id,customer_id,status)\n   SELECT ?1,c.id,'pending' FROM customers c WHERE c.id>?2 AND c.id<=?3\n    AND EXISTS(SELECT 1 FROM announcements WHERE id=?1 AND state='sending' AND audience_cursor=?2)\n   ON CONFLICT(announcement_id,customer_id) DO NOTHING": 1,
+          "UPDATE announcements SET audience_cursor=?3,audience_seeded=CASE WHEN NOT EXISTS(\n   SELECT 1 FROM customers WHERE id>?3 AND id<=audience_highwater) THEN 1 ELSE 0 END,\n   updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND audience_cursor=?2 AND state='sending'": 1,
+          "UPDATE announcement_deliveries SET status='sending',claim_owner=?2,lease_until=?3,updated_at=?4,attempt_started_at=NULL\n   WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 AND customer_id IN (\n    SELECT customer_id FROM announcement_deliveries WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 ORDER BY customer_id LIMIT ?5)": 1,
+          "SELECT d.customer_id customerId,c.telegram_user_id telegramUserId FROM announcement_deliveries d JOIN customers c ON c.id=d.customer_id\n   WHERE d.announcement_id=?1 AND d.status='sending' AND d.claim_owner=?2 ORDER BY d.customer_id": 1,
+          "UPDATE announcement_dispatch SET lease_until=?2 WHERE singleton=1 AND owner=?1 AND lease_until>?3 AND pause_until<=?3": 20,
+          "SELECT next_send_at FROM announcement_dispatch WHERE singleton=1": 20,
+          "UPDATE announcement_deliveries SET attempts=attempts+1,lease_until=?4,attempt_started_at=?5 WHERE announcement_id=?1 AND customer_id=?2 AND claim_owner=?3 AND status='sending' AND lease_until>?5": 20,
+          "UPDATE announcement_deliveries SET status=CASE WHEN ?4='sent' THEN 'sent' WHEN ?5=1 OR (failure_attempts+?6>=3) THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+?6,last_error=?7,telegram_message_id=?8,next_attempt_at=?9,claim_owner=NULL,lease_until=NULL,updated_at=?10\n  WHERE announcement_id=?1 AND customer_id=?2 AND status='sending' AND claim_owner=?3 AND lease_until>?10": 20,
+          "UPDATE announcement_dispatch SET next_send_at=?2 WHERE singleton=1 AND owner=?1": 20,
+          "UPDATE announcement_deliveries SET status='pending',claim_owner=NULL,lease_until=NULL WHERE announcement_id=?1 AND status='sending' AND claim_owner=?2 AND attempt_started_at IS NULL": 1,
+          "UPDATE announcement_dispatch SET owner=NULL,lease_until=0 WHERE singleton=1 AND owner=?1": 1,
+          "UPDATE announcements SET state='done',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')\n  WHERE id=?1 AND state='sending' AND started_at IS NOT NULL AND audience_seeded=1 AND active_count=0 AND recipient_count=sent_count+failed_count": 1
+        }
+      },
+      {
+        "label": "steady successful 20-recipient chunk; already seeded",
+        "statements": 112,
+        "byVerb": {
+          "UPDATE": 88,
+          "SELECT": 24
+        },
+        "telegramCalls": 20,
+        "sql_frequency": {
+          "UPDATE announcement_dispatch SET owner=?1,lease_until=?2 WHERE singleton=1 AND lease_until<=?3 AND pause_until<=?3": 1,
+          "SELECT * FROM announcements WHERE id=?1": 3,
+          "UPDATE announcements SET started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),\n  audience_highwater=COALESCE((SELECT MAX(id) FROM customers),0),total_estimate=MAX(recipient_count,(SELECT COUNT(*) FROM customers))\n  WHERE id=?1 AND state='sending' AND started_at IS NULL": 1,
+          "UPDATE announcements SET audience_highwater=COALESCE((SELECT MAX(id) FROM customers),0),\n  total_estimate=MAX(recipient_count,(SELECT COUNT(*) FROM customers))\n  WHERE id=?1 AND state='sending' AND started_at IS NOT NULL AND audience_highwater IS NULL": 1,
+          "UPDATE announcement_deliveries SET status=CASE WHEN failure_attempts+(attempt_started_at IS NOT NULL)>=3 THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+(attempt_started_at IS NOT NULL),attempt_started_at=NULL,\n  claim_owner=NULL,lease_until=NULL,next_attempt_at=MAX(next_attempt_at,?2),last_error='delivery_outcome_unknown',updated_at=?2\n  WHERE announcement_id=?1 AND status='sending' AND COALESCE(lease_until,0)<=?2": 1,
+          "UPDATE announcement_deliveries SET status='sending',claim_owner=?2,lease_until=?3,updated_at=?4,attempt_started_at=NULL\n   WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 AND customer_id IN (\n    SELECT customer_id FROM announcement_deliveries WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 ORDER BY customer_id LIMIT ?5)": 1,
+          "SELECT d.customer_id customerId,c.telegram_user_id telegramUserId FROM announcement_deliveries d JOIN customers c ON c.id=d.customer_id\n   WHERE d.announcement_id=?1 AND d.status='sending' AND d.claim_owner=?2 ORDER BY d.customer_id": 1,
+          "UPDATE announcement_dispatch SET lease_until=?2 WHERE singleton=1 AND owner=?1 AND lease_until>?3 AND pause_until<=?3": 20,
+          "SELECT next_send_at FROM announcement_dispatch WHERE singleton=1": 20,
+          "UPDATE announcement_deliveries SET attempts=attempts+1,lease_until=?4,attempt_started_at=?5 WHERE announcement_id=?1 AND customer_id=?2 AND claim_owner=?3 AND status='sending' AND lease_until>?5": 20,
+          "UPDATE announcement_deliveries SET status=CASE WHEN ?4='sent' THEN 'sent' WHEN ?5=1 OR (failure_attempts+?6>=3) THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+?6,last_error=?7,telegram_message_id=?8,next_attempt_at=?9,claim_owner=NULL,lease_until=NULL,updated_at=?10\n  WHERE announcement_id=?1 AND customer_id=?2 AND status='sending' AND claim_owner=?3 AND lease_until>?10": 20,
+          "UPDATE announcement_dispatch SET next_send_at=?2 WHERE singleton=1 AND owner=?1": 20,
+          "UPDATE announcement_deliveries SET status='pending',claim_owner=NULL,lease_until=NULL WHERE announcement_id=?1 AND status='sending' AND claim_owner=?2 AND attempt_started_at IS NULL": 1,
+          "UPDATE announcement_dispatch SET owner=NULL,lease_until=0 WHERE singleton=1 AND owner=?1": 1,
+          "UPDATE announcements SET state='done',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')\n  WHERE id=?1 AND state='sending' AND started_at IS NOT NULL AND audience_seeded=1 AND active_count=0 AND recipient_count=sent_count+failed_count": 1
+        }
+      },
+      {
+        "label": "scheduled broadcast continuation during global pause",
+        "statements": 3,
+        "byVerb": {
+          "SELECT": 1,
+          "UPDATE": 2
+        },
+        "telegramCalls": 0,
+        "sql_frequency": {
+          "SELECT * FROM announcements WHERE state='sending' AND started_at IS NOT NULL AND (audience_seeded=0 OR recipient_count=sent_count+failed_count OR EXISTS(SELECT 1 FROM announcement_deliveries d WHERE d.announcement_id=announcements.id AND ((d.status='pending' AND d.next_attempt_at<=?1) OR (d.status='sending' AND COALESCE(d.lease_until,0)<=?1)))) ORDER BY updated_at,id LIMIT 1": 1,
+          "UPDATE announcement_dispatch SET owner=?1,lease_until=?2 WHERE singleton=1 AND lease_until<=?3 AND pause_until<=?3": 1,
+          "UPDATE announcements SET updated_at=?2 WHERE id=?1 AND state='sending'": 1
+        }
+      }
+    ],
+    "after": [
+      {
+        "label": "empty scheduled run: no customers/work",
+        "statements": 16,
+        "byVerb": {
+          "DELETE": 1,
+          "SELECT": 12,
+          "INSERT": 1,
+          "UPDATE": 2
+        },
+        "sql_frequency": {
+          "DELETE FROM update_dedupe WHERE update_id IN\n    (SELECT update_id FROM update_dedupe WHERE received_at < ?1 ORDER BY received_at LIMIT 1000)": 1,
+          "SELECT customer_id,order_id FROM wallet_entries w WHERE kind='order_payment'\n  AND payment_token=order_id AND created_at<?1 AND NOT EXISTS(SELECT 1 FROM orders WHERE id=w.order_id OR idempotency_key=w.payment_token)\n  AND NOT EXISTS(SELECT 1 FROM wallet_entries r WHERE r.order_id=w.order_id AND r.kind='order_refund') ORDER BY created_at,id LIMIT 2": 1,
+          "SELECT * FROM announcements WHERE state='sending' AND started_at IS NOT NULL AND EXISTS(SELECT 1 FROM announcement_dispatch WHERE singleton=1 AND pause_until<=?1 AND lease_until<=?1) AND (audience_seeded=0 OR recipient_count=sent_count+failed_count OR EXISTS(SELECT 1 FROM announcement_deliveries d WHERE d.announcement_id=announcements.id AND ((d.status='pending' AND d.next_attempt_at<=?1) OR (d.status='sending' AND COALESCE(d.lease_until,0)<=?1)))) ORDER BY updated_at,id LIMIT 1": 1,
+          "INSERT INTO service_migration_events(migration_id,actor,action,data) SELECT id,'system','review_expired','{}'\n   FROM service_migrations WHERE state='review' AND review_expires_at<?1": 1,
+          "UPDATE service_migrations SET state='cancelled',error='review_expired' WHERE state='review' AND review_expires_at<?1": 1,
+          "SELECT id,operator FROM service_migrations\n  WHERE state IN ('creating','verified','activating') AND abort_requested=0 AND next_recovery_at<=?1\n  AND operator IN (?2)\n  ORDER BY next_recovery_at,last_recovery_at,id LIMIT 2": 1,
+          "SELECT m.* FROM service_migrations m JOIN active_service_resources r ON r.migration_id=m.id\n  WHERE m.state IN ('cleanup_pending','completed') AND m.customer_notified_at IS NULL ORDER BY m.updated_at LIMIT 2": 1,
+          "UPDATE orders SET state='failed',failure_reason='interrupted_verify_before_retry',\n    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')\n    WHERE state='provisioning' AND updated_at<?1 AND panel_id IS NOT NULL\n      AND NOT EXISTS(SELECT 1 FROM panel_service_locks l WHERE l.service_id=COALESCE(orders.renews_order_id,orders.id) AND l.expires_at>?2)": 1,
+          "SELECT o.id,o.renews_order_id FROM orders o JOIN effective_orders s ON s.id=o.renews_order_id\n      WHERE o.kind='renewal' AND o.state='completed' AND s.state='completed' AND s.panel_deleted_at IS NULL\n      AND o.panel_id=s.panel_id\n      AND NOT EXISTS (SELECT 1 FROM order_events e WHERE e.order_id=s.id\n        AND (e.action IN ('service_extended','service_repurchased') OR (e.action='service_booking_recovered' AND o.repurchase_mode IS NULL))\n        AND (json_extract(e.data,'$.renewal_order_id')=o.id OR json_extract(e.data,'$.repurchase_order_id')=o.id OR json_extract(e.data,'$.operation')=o.id))\n      AND NOT EXISTS(SELECT 1 FROM orders newer WHERE newer.renews_order_id=s.id AND newer.state='completed'\n        AND (newer.updated_at>o.updated_at OR (newer.updated_at=o.updated_at AND newer.id>o.id)))\n      AND COALESCE(o.repurchase_target_unix,o.renew_target_unix) IS NOT NULL\n      AND (o.repurchase_mode IS NOT NULL OR s.service_expires_at IS NULL\n        OR datetime(s.service_expires_at)<datetime(o.renew_target_unix,'unixepoch')) ORDER BY o.updated_at LIMIT 5": 1,
+          "SELECT id,updated_at,provision_attempts FROM orders\n      WHERE state='approved' AND panel_deleted_at IS NULL ORDER BY updated_at,id LIMIT 20": 1,
+          "SELECT p.order_id, p.created_at, p.reminded_stage, o.customer_id, c.telegram_user_id, c.language\n         FROM payment_reminders p\n         JOIN orders o ON o.id = p.order_id\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.state = 'awaiting_review'\n          AND p.reminded_stage < ?3\n          AND (julianday(?1) - julianday(p.created_at)) * 1440.0\n              >= ?2 * (p.reminded_stage + 1) - 1.0\n        ORDER BY p.created_at ASC\n        LIMIT ?4": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.service_expires_at IS NOT NULL\n          AND julianday(o.service_expires_at) > julianday(?1)\n          AND julianday(o.service_expires_at)\n              <= julianday(?1) + ?2 + 1.0 / 1440.0\n          AND NOT EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = 'expiring'\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?4 / 1440.0) )\n          )\n        ORDER BY o.service_expires_at ASC\n        LIMIT ?3": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.service_expires_at IS NOT NULL\n          AND julianday(o.service_expires_at) > julianday(?1) - ?5 / 1440.0\n          AND julianday(o.service_expires_at)\n              <= julianday(?1) + ?2 / 24.0 + 1.0 / 1440.0\n          AND EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = 'free_test_expiring'\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?4 / 1440.0) )\n          )\n        ORDER BY o.service_expires_at ASC\n        LIMIT ?3": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.pasarguard_username IS NOT NULL\n          AND (o.service_expires_at IS NULL\n               OR julianday(o.service_expires_at) > julianday(?1))\n          AND NOT EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = 'usage90'\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?2 / 1440.0)\n                  OR (sn.status = 'pending'\n                      AND sn.last_checked_at IS NOT NULL\n                      AND julianday(sn.last_checked_at) > julianday(?1) - ?3 / 1440.0) )\n          )\n        ORDER BY (o.service_expires_at IS NULL) ASC, o.service_expires_at ASC, o.id ASC\n        LIMIT ?4": 1,
+          "SELECT o.id AS order_id, o.customer_id, c.telegram_user_id, c.language,\n              o.service_expires_at, o.pasarguard_username, o.selections, o.panel_id, o.pasarguard_user_id\n         FROM effective_orders o\n         JOIN customers c ON c.id = o.customer_id\n        WHERE o.kind = 'purchase'\n          AND o.state = 'completed'\n          AND o.panel_deleted_at IS NULL\n          AND o.pasarguard_username IS NOT NULL\n          AND (o.service_expires_at IS NULL\n               OR julianday(o.service_expires_at) > julianday(?1))\n          AND EXISTS (\n            SELECT 1 FROM free_test_claims f WHERE f.order_id = o.id\n          )\n          AND NOT EXISTS (\n            SELECT 1 FROM service_notifications sn\n             WHERE sn.order_id = o.id AND sn.kind = ?5\n               AND ( sn.status IN ('sent','skipped','failed')\n                  OR (sn.status = 'sending'\n                      AND julianday(sn.updated_at) > julianday(?1) - ?2 / 1440.0)\n                  OR (sn.status = 'pending'\n                      AND sn.last_checked_at IS NOT NULL\n                      AND julianday(sn.last_checked_at) > julianday(?1) - ?3 / 1440.0) )\n          )\n        ORDER BY (o.service_expires_at IS NULL) ASC, o.service_expires_at ASC, o.id ASC\n        LIMIT ?4": 2
+        }
+      },
+      {
+        "label": "existing/new ordinary /myid update",
+        "statements": 3,
+        "byVerb": {
+          "INSERT": 2,
+          "SELECT": 1
+        },
+        "sql_frequency": {
+          "INSERT INTO update_dedupe(update_id) VALUES(?1) ON CONFLICT(update_id) DO NOTHING": 1,
+          "INSERT INTO customers (telegram_user_id, telegram_username, first_name, last_name, language_code)\n       VALUES (?1, ?2, ?3, ?4, ?5)\n       ON CONFLICT (telegram_user_id) DO UPDATE SET\n         telegram_username = excluded.telegram_username,\n         first_name        = excluded.first_name,\n         last_name         = excluded.last_name,\n         language_code     = excluded.language_code,\n         updated_at        = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')": 1,
+          "SELECT id, language, is_admin FROM customers WHERE telegram_user_id = ?1": 1
+        }
+      },
+      {
+        "label": "existing ordinary /myid update",
+        "statements": 3,
+        "byVerb": {
+          "INSERT": 2,
+          "SELECT": 1
+        },
+        "sql_frequency": {
+          "INSERT INTO update_dedupe(update_id) VALUES(?1) ON CONFLICT(update_id) DO NOTHING": 1,
+          "INSERT INTO customers (telegram_user_id, telegram_username, first_name, last_name, language_code)\n       VALUES (?1, ?2, ?3, ?4, ?5)\n       ON CONFLICT (telegram_user_id) DO UPDATE SET\n         telegram_username = excluded.telegram_username,\n         first_name        = excluded.first_name,\n         last_name         = excluded.last_name,\n         language_code     = excluded.language_code,\n         updated_at        = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')": 1,
+          "SELECT id, language, is_admin FROM customers WHERE telegram_user_id = ?1": 1
+        }
+      },
+      {
+        "label": "first successful 20-recipient chunk",
+        "statements": 113,
+        "byVerb": {
+          "UPDATE": 87,
+          "SELECT": 25,
+          "INSERT": 1
+        },
+        "telegramCalls": 20,
+        "sql_frequency": {
+          "UPDATE announcement_dispatch SET owner=?1,lease_until=?2 WHERE singleton=1 AND lease_until<=?3 AND pause_until<=?3": 1,
+          "SELECT * FROM announcements WHERE id=?1": 3,
+          "UPDATE announcement_deliveries SET status=CASE WHEN failure_attempts+(attempt_started_at IS NOT NULL)>=3 THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+(attempt_started_at IS NOT NULL),attempt_started_at=NULL,\n  claim_owner=NULL,lease_until=NULL,next_attempt_at=MAX(next_attempt_at,?2),last_error='delivery_outcome_unknown',updated_at=?2\n  WHERE announcement_id=?1 AND status='sending' AND COALESCE(lease_until,0)<=?2": 1,
+          "SELECT MAX(id) last FROM (SELECT id FROM customers WHERE id>?1 AND id<=?2 ORDER BY id LIMIT ?3)": 1,
+          "INSERT INTO announcement_deliveries(announcement_id,customer_id,status)\n   SELECT ?1,c.id,'pending' FROM customers c WHERE c.id>?2 AND c.id<=?3\n    AND EXISTS(SELECT 1 FROM announcements WHERE id=?1 AND state='sending' AND audience_cursor=?2)\n   ON CONFLICT(announcement_id,customer_id) DO NOTHING": 1,
+          "UPDATE announcements SET audience_cursor=?3,audience_seeded=CASE WHEN NOT EXISTS(\n   SELECT 1 FROM customers WHERE id>?3 AND id<=audience_highwater) THEN 1 ELSE 0 END,\n   updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND audience_cursor=?2 AND state='sending'": 1,
+          "UPDATE announcement_deliveries SET status='sending',claim_owner=?2,lease_until=?3,updated_at=?4,attempt_started_at=NULL\n   WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 AND customer_id IN (\n    SELECT customer_id FROM announcement_deliveries WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 ORDER BY customer_id LIMIT ?5)": 1,
+          "SELECT d.customer_id customerId,c.telegram_user_id telegramUserId FROM announcement_deliveries d JOIN customers c ON c.id=d.customer_id\n   WHERE d.announcement_id=?1 AND d.status='sending' AND d.claim_owner=?2 ORDER BY d.customer_id": 1,
+          "UPDATE announcement_dispatch SET lease_until=?2 WHERE singleton=1 AND owner=?1 AND lease_until>?3 AND pause_until<=?3": 20,
+          "SELECT next_send_at FROM announcement_dispatch WHERE singleton=1": 20,
+          "UPDATE announcement_deliveries SET attempts=attempts+1,lease_until=?4,attempt_started_at=?5 WHERE announcement_id=?1 AND customer_id=?2 AND claim_owner=?3 AND status='sending' AND lease_until>?5": 20,
+          "UPDATE announcement_deliveries SET status=CASE WHEN ?4='sent' THEN 'sent' WHEN ?5=1 OR (failure_attempts+?6>=3) THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+?6,last_error=?7,telegram_message_id=?8,next_attempt_at=?9,claim_owner=NULL,lease_until=NULL,updated_at=?10\n  WHERE announcement_id=?1 AND customer_id=?2 AND status='sending' AND claim_owner=?3 AND lease_until>?10": 20,
+          "UPDATE announcement_dispatch SET next_send_at=?2 WHERE singleton=1 AND owner=?1": 20,
+          "UPDATE announcement_deliveries SET status='pending',claim_owner=NULL,lease_until=NULL WHERE announcement_id=?1 AND status='sending' AND claim_owner=?2 AND attempt_started_at IS NULL": 1,
+          "UPDATE announcement_dispatch SET owner=NULL,lease_until=0 WHERE singleton=1 AND owner=?1": 1,
+          "UPDATE announcements SET state='done',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')\n  WHERE id=?1 AND state='sending' AND started_at IS NOT NULL AND audience_seeded=1 AND active_count=0 AND recipient_count=sent_count+failed_count": 1
+        }
+      },
+      {
+        "label": "steady successful 20-recipient chunk; already seeded",
+        "statements": 110,
+        "byVerb": {
+          "UPDATE": 86,
+          "SELECT": 24
+        },
+        "telegramCalls": 20,
+        "sql_frequency": {
+          "UPDATE announcement_dispatch SET owner=?1,lease_until=?2 WHERE singleton=1 AND lease_until<=?3 AND pause_until<=?3": 1,
+          "SELECT * FROM announcements WHERE id=?1": 3,
+          "UPDATE announcement_deliveries SET status=CASE WHEN failure_attempts+(attempt_started_at IS NOT NULL)>=3 THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+(attempt_started_at IS NOT NULL),attempt_started_at=NULL,\n  claim_owner=NULL,lease_until=NULL,next_attempt_at=MAX(next_attempt_at,?2),last_error='delivery_outcome_unknown',updated_at=?2\n  WHERE announcement_id=?1 AND status='sending' AND COALESCE(lease_until,0)<=?2": 1,
+          "UPDATE announcement_deliveries SET status='sending',claim_owner=?2,lease_until=?3,updated_at=?4,attempt_started_at=NULL\n   WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 AND customer_id IN (\n    SELECT customer_id FROM announcement_deliveries WHERE announcement_id=?1 AND status='pending' AND next_attempt_at<=?4 ORDER BY customer_id LIMIT ?5)": 1,
+          "SELECT d.customer_id customerId,c.telegram_user_id telegramUserId FROM announcement_deliveries d JOIN customers c ON c.id=d.customer_id\n   WHERE d.announcement_id=?1 AND d.status='sending' AND d.claim_owner=?2 ORDER BY d.customer_id": 1,
+          "UPDATE announcement_dispatch SET lease_until=?2 WHERE singleton=1 AND owner=?1 AND lease_until>?3 AND pause_until<=?3": 20,
+          "SELECT next_send_at FROM announcement_dispatch WHERE singleton=1": 20,
+          "UPDATE announcement_deliveries SET attempts=attempts+1,lease_until=?4,attempt_started_at=?5 WHERE announcement_id=?1 AND customer_id=?2 AND claim_owner=?3 AND status='sending' AND lease_until>?5": 20,
+          "UPDATE announcement_deliveries SET status=CASE WHEN ?4='sent' THEN 'sent' WHEN ?5=1 OR (failure_attempts+?6>=3) THEN 'failed' ELSE 'pending' END,\n  failure_attempts=failure_attempts+?6,last_error=?7,telegram_message_id=?8,next_attempt_at=?9,claim_owner=NULL,lease_until=NULL,updated_at=?10\n  WHERE announcement_id=?1 AND customer_id=?2 AND status='sending' AND claim_owner=?3 AND lease_until>?10": 20,
+          "UPDATE announcement_dispatch SET next_send_at=?2 WHERE singleton=1 AND owner=?1": 20,
+          "UPDATE announcement_deliveries SET status='pending',claim_owner=NULL,lease_until=NULL WHERE announcement_id=?1 AND status='sending' AND claim_owner=?2 AND attempt_started_at IS NULL": 1,
+          "UPDATE announcement_dispatch SET owner=NULL,lease_until=0 WHERE singleton=1 AND owner=?1": 1,
+          "UPDATE announcements SET state='done',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')\n  WHERE id=?1 AND state='sending' AND started_at IS NOT NULL AND audience_seeded=1 AND active_count=0 AND recipient_count=sent_count+failed_count": 1
+        }
+      },
+      {
+        "label": "scheduled broadcast continuation during global pause",
+        "statements": 1,
+        "byVerb": {
+          "SELECT": 1
+        },
+        "telegramCalls": 0,
+        "sql_frequency": {
+          "SELECT * FROM announcements WHERE state='sending' AND started_at IS NOT NULL AND EXISTS(SELECT 1 FROM announcement_dispatch WHERE singleton=1 AND pause_until<=?1 AND lease_until<=?1) AND (audience_seeded=0 OR recipient_count=sent_count+failed_count OR EXISTS(SELECT 1 FROM announcement_deliveries d WHERE d.announcement_id=announcements.id AND ((d.status='pending' AND d.next_attempt_at<=?1) OR (d.status='sending' AND COALESCE(d.lease_until,0)<=?1)))) ORDER BY updated_at,id LIMIT 1": 1
+        }
+      }
+    ]
+  },
+  "trial_polling": {
+    "before": {
+      "case": "one eligible trial below both thresholds; actual sweep, mocked panel response",
+      "paths": [
+        "https://synthetic.example.com/api/user/by-username/trialuser",
+        "https://synthetic.example.com/api/user/by-username/trialuser"
+      ],
+      "result": {
+        "expirySent": 0,
+        "usageSent": 0,
+        "freeTestSent": 0,
+        "freeTestUsageSent": 0,
+        "freeTestExhaustedSent": 0,
+        "skipped": 0,
+        "sendFailed": 0
+      },
+      "observations": 2,
+      "notices": [
+        {
+          "kind": "free_test_usage90",
+          "status": "pending",
+          "last_checked_at": "2026-10-09T01:19:10.000Z"
+        },
+        {
+          "kind": "free_test_exhausted",
+          "status": "pending",
+          "last_checked_at": "2026-10-09T01:19:10.000Z"
+        }
+      ]
+    },
+    "after": {
+      "case": "one eligible trial below both thresholds; actual sweep, mocked panel response",
+      "paths": [
+        "https://synthetic.example.com/api/user/by-username/trialuser"
+      ],
+      "result": {
+        "expirySent": 0,
+        "usageSent": 0,
+        "freeTestSent": 0,
+        "freeTestUsageSent": 0,
+        "freeTestExhaustedSent": 0,
+        "skipped": 0,
+        "sendFailed": 0
+      },
+      "observations": 1,
+      "notices": [
+        {
+          "kind": "free_test_usage90",
+          "status": "pending",
+          "last_checked_at": "2026-10-09T01:19:10.624Z"
+        },
+        {
+          "kind": "free_test_exhausted",
+          "status": "pending",
+          "last_checked_at": "2026-10-09T01:19:10.624Z"
+        }
+      ]
+    }
+  },
+  "lifecycle": {
+    "before": {
+      "claim_order": {
+        "statements": 5,
+        "identity_reads": 3
+      },
+      "five_job_progress": {
+        "statements": 6
+      }
+    },
+    "after": {
+      "claim_order": {
+        "statements": 4,
+        "identity_reads": 2
+      },
+      "five_job_progress": {
+        "statements": 1
+      }
+    }
+  },
+  "queryplans": {
+    "method": "Independent in-memory SQLite, same audited fixture construction; ANALYZE; five warm SELECT repetitions. Physical dbstat pages are SQLite fixture measurements, not Cloudflare storage/billed reads. Rows examined/Cloudflare CPU not measured. BEFORE exact203/639 baseline; AFTER current0024 source.",
+    "results": {
+      "before": {
+        "wallet_orphan_stress": {
+          "plan": [
+            "SEARCH w USING INDEX idx_wallet_entries_customer (ANY(customer_id) AND created_at<?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "MULTI-INDEX OR",
+            "INDEX 1",
+            "SEARCH orders USING INDEX sqlite_autoindex_orders_1 (id=?)",
+            "INDEX 2",
+            "SEARCH orders USING INDEX idx_orders_idempotency (idempotency_key=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SCAN r",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "median_ms": 4250.557,
+          "returned_rows": 2,
+          "sql": "SELECT customer_id,order_id FROM wallet_entries w WHERE kind='order_payment' AND payment_token=order_id AND created_at<?1 AND NOT EXISTS(SELECT 1 FROM orders WHERE id=w.order_id OR idempotency_key=w.payment_token) AND NOT EXISTS(SELECT 1 FROM wallet_entries r WHERE r.order_id=w.order_id AND r.kind='order_refund') ORDER BY created_at,id LIMIT 2",
+          "parameters": [
+            "2030-01-01"
+          ]
+        },
+        "observation_identity": {
+          "plan": [
+            "SEARCH o USING INDEX idx_orders_state (state=?)",
+            "SEARCH r USING INDEX sqlite_autoindex_active_service_resources_1 (service_id=?) LEFT-JOIN"
+          ],
+          "median_ms": 2.0127,
+          "returned_rows": 1,
+          "sql": "SELECT id FROM effective_orders WHERE kind='purchase' AND state='completed' AND panel_deleted_at IS NULL AND panel_id=?1 AND pasarguard_user_id=?2 AND pasarguard_username=?3",
+          "parameters": [
+            "legacy",
+            "201",
+            "user201"
+          ]
+        },
+        "wallet_mostly_linked": {
+          "median_ms": 5.7364,
+          "returned_rows": 2,
+          "plan": [
+            "SEARCH w USING INDEX idx_wallet_entries_customer (ANY(customer_id) AND created_at<?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "MULTI-INDEX OR",
+            "INDEX 1",
+            "SEARCH orders USING INDEX sqlite_autoindex_orders_1 (id=?)",
+            "INDEX 2",
+            "SEARCH orders USING INDEX idx_orders_idempotency (idempotency_key=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SCAN r",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ]
+        },
+        "migration_due_queue": {
+          "plan": [
+            "SCAN service_migrations",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "returned_rows": 2,
+          "sql": "SELECT id,operator FROM service_migrations WHERE state IN ('creating','verified','activating') AND abort_requested=0 ORDER BY updated_at LIMIT 2"
+        },
+        "index_pages": [],
+        "foreign_key_violations": []
+      },
+      "after": {
+        "wallet_orphan_stress": {
+          "plan": [
+            "SEARCH w USING INDEX idx_wallet_recovery_due (created_at<?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "MULTI-INDEX OR",
+            "INDEX 1",
+            "SEARCH orders USING INDEX sqlite_autoindex_orders_1 (id=?)",
+            "INDEX 2",
+            "SEARCH orders USING INDEX idx_orders_idempotency (idempotency_key=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SEARCH r USING INDEX idx_wallet_refund_lookup (order_id=?)"
+          ],
+          "median_ms": 0.0055,
+          "returned_rows": 2,
+          "sql": "SELECT customer_id,order_id FROM wallet_entries w WHERE kind='order_payment' AND payment_token=order_id AND created_at<?1 AND NOT EXISTS(SELECT 1 FROM orders WHERE id=w.order_id OR idempotency_key=w.payment_token) AND NOT EXISTS(SELECT 1 FROM wallet_entries r WHERE r.order_id=w.order_id AND r.kind='order_refund') ORDER BY created_at,id LIMIT 2",
+          "parameters": [
+            "2030-01-01"
+          ]
+        },
+        "observation_identity": {
+          "plan": [
+            "MATERIALIZE identities",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH o USING INDEX sqlite_autoindex_orders_2 (pasarguard_username=?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH r USING COVERING INDEX sqlite_autoindex_active_service_resources_1 (service_id=?)",
+            "UNION ALL",
+            "SEARCH r USING INDEX sqlite_autoindex_active_service_resources_3 (username=?)",
+            "SEARCH o USING INDEX idx_orders_panel_alive (id=?)",
+            "SCAN identities",
+            "SCALAR SUBQUERY 4",
+            "SCAN identities"
+          ],
+          "median_ms": 0.0068,
+          "returned_rows": 1,
+          "sql": "WITH identities AS (\n            SELECT o.id FROM orders o\n            WHERE o.kind='purchase' AND o.state='completed' AND o.panel_deleted_at IS NULL\n              AND o.panel_id=?1 AND o.pasarguard_user_id=?2 AND o.pasarguard_username=?3\n              AND NOT EXISTS(SELECT 1 FROM active_service_resources r WHERE r.service_id=o.id)\n            UNION ALL\n            SELECT o.id FROM active_service_resources r JOIN orders o ON o.id=r.service_id\n            WHERE o.kind='purchase' AND o.state='completed' AND o.panel_deleted_at IS NULL\n              AND r.panel_id=?1 AND r.user_id=?2 AND r.username=?3\n          ) SELECT id FROM identities WHERE (SELECT COUNT(*) FROM identities)=1",
+          "parameters": [
+            "legacy",
+            "201",
+            "user201"
+          ]
+        },
+        "wallet_mostly_linked": {
+          "median_ms": 0.0041,
+          "returned_rows": 2,
+          "plan": [
+            "SEARCH w USING INDEX idx_wallet_recovery_due (created_at<?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "MULTI-INDEX OR",
+            "INDEX 1",
+            "SEARCH orders USING INDEX sqlite_autoindex_orders_1 (id=?)",
+            "INDEX 2",
+            "SEARCH orders USING INDEX idx_orders_idempotency (idempotency_key=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SEARCH r USING INDEX idx_wallet_refund_lookup (order_id=?)"
+          ]
+        },
+        "migration_due_queue": {
+          "plan": [
+            "SEARCH service_migrations USING INDEX idx_migration_recovery_due (next_recovery_at<?)"
+          ],
+          "returned_rows": 2,
+          "sql": "SELECT id,operator FROM service_migrations WHERE state IN ('creating','verified','activating') AND abort_requested=0 AND next_recovery_at<=?1 AND operator IN (?2) ORDER BY next_recovery_at,last_recovery_at,id LIMIT 2"
+        },
+        "index_pages": [
+          {
+            "name": "idx_migration_recovery_due",
+            "bytes": 4096,
+            "pages": 1
+          },
+          {
+            "name": "idx_wallet_operation_key",
+            "bytes": 4096,
+            "pages": 1
+          },
+          {
+            "name": "idx_wallet_recovery_due",
+            "bytes": 442368,
+            "pages": 108
+          },
+          {
+            "name": "idx_wallet_refund_lookup",
+            "bytes": 4096,
+            "pages": 1
+          }
+        ],
+        "foreign_key_violations": []
+      }
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { limitedText } from '../panels/http.ts';
 /**
  * PasarGuard panel API client (Phase 5 + 6).
  *
@@ -18,7 +19,7 @@
  *
  * Safety rules:
  *  - The API key is sent ONLY as the `x-api-key` header over HTTPS; it is
- *    never logged, never included in error details, never stored in D1.
+ *    never logged or included in error details; dynamic keys are encrypted in D1.
  *  - NO automatic retries here: a retry of an ambiguous write could double
  *    apply a write. Idempotency is handled one level up
  *    (`provision.ts`: pre-check by-username/claimed target before every
@@ -32,6 +33,13 @@ export const PANEL_TIMEOUT_MS = 15_000;
 export interface PanelConfig {
   baseUrl: string;
   apiKey: string;
+  panelId?: string;
+  validateDestination?: () => Promise<boolean>;
+  expectedUserId?: string;
+  /** Migration-only: stable-ID mutations and certified absence, including legacy. */
+  stableIdentity?: boolean;
+  requireGlobalAbsence?: boolean;
+  onVerifiedUser?: (user: PanelUser) => Promise<void>;
 }
 
 export type PanelErrorKind =
@@ -40,6 +48,8 @@ export type PanelErrorKind =
   | 'network'
   | 'timeout'
   | 'auth'
+  | 'permission'
+  | 'identity'
   | 'not_found'
   | 'rejected'
   | 'server'
@@ -52,6 +62,7 @@ export type PanelResult<T> =
 /** Subset of the panel user object this bot understands. */
 export interface PanelUser {
   id: string | null;
+  note?: string | null;
   username: string | null;
   status: string | null;
   subscriptionUrl: string | null;
@@ -62,6 +73,8 @@ export interface PanelUser {
   usedTraffic: number | null;
   /** Phase 18: concurrent-device cap as reported by the panel (null = unknown). */
   hwidLimit: number | null;
+  /** Features outside the bot's fixed finite plan model require explicit manual review. */
+  migrationRestrictions?: string[];
 }
 
 /**
@@ -151,7 +164,8 @@ function failure(status: number, detail: string, kind?: PanelErrorKind): { ok: f
 }
 
 function classifyStatus(status: number): PanelErrorKind {
-  if (status === 401 || status === 403) return 'auth';
+  if (status === 401) return 'auth';
+  if (status === 403) return 'permission';
   if (status === 404) return 'not_found';
   if (status >= 500) return 'server';
   return 'rejected'; // 4xx validation / business rejection
@@ -222,13 +236,22 @@ export function extractPanelUser(json: unknown): PanelUser | null {
     ) {
       return {
         id: stringField(record, ['id', 'user_id', 'userId']),
+        note: typeof record['note'] === 'string' ? record['note'] : null,
         username: stringField(record, ['username']),
         status: stringField(record, ['status']),
         subscriptionUrl: stringField(record, ['subscription_url', 'subscriptionUrl']),
         expire: coerceUnixSeconds(record['expire']),
         dataLimit: coerceBytes(numberField(record, ['data_limit'])),
-        usedTraffic: coerceBytes(numberField(record, ['used_traffic'])),
+        usedTraffic: (() => { const n = numberField(record, ['used_traffic']); return n !== null && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER ? Math.floor(n) : null; })(),
         hwidLimit: coerceBytes(numberField(record, ['hwid_limit'])),
+        ...(() => {
+          const features:string[]=[];
+          if(record['data_limit_reset_strategy'] && record['data_limit_reset_strategy']!=='no_reset')features.push('periodic_quota_reset');
+          if(record['next_plan']!=null)features.push('scheduled_next_plan');
+          if(typeof record['on_hold_expire_duration']==='number' && record['on_hold_expire_duration']>0)features.push('relative_on_hold_expiry');
+          if(typeof record['auto_delete_in_days']==='number' && record['auto_delete_in_days']>0)features.push('custom_auto_delete');
+          return features.length ? {migrationRestrictions:features} : {};
+        })(),
       };
     }
   }
@@ -246,25 +269,63 @@ export function resolveSubscriptionUrl(baseUrl: string, value: string | null): s
 export class PasarGuardClient {
   readonly #baseUrl: string;
   readonly #apiKey: string;
+  readonly #validateDestination?: () => Promise<boolean>;
+  readonly #strictAbsence: boolean;
+  readonly #requireGlobalAbsence: boolean;
+  readonly #expectedUserId?: string;
+  readonly #panelId?: string;
+  readonly #onVerifiedUser?: (user: PanelUser) => Promise<void>;
+  readonly baseUrl: string;
 
   constructor(config: PanelConfig) {
     this.#baseUrl = config.baseUrl;
     this.#apiKey = config.apiKey;
+    this.#validateDestination = config.validateDestination;
+    this.#strictAbsence = config.stableIdentity === true || (!!config.panelId && config.panelId !== 'legacy');
+    this.#requireGlobalAbsence = config.requireGlobalAbsence === true;
+    this.#onVerifiedUser = config.onVerifiedUser;
+    this.#expectedUserId = config.expectedUserId;
+    this.#panelId = config.panelId;
+    this.baseUrl = config.baseUrl;
+  }
+
+  /** Bind an already verified identity before any corrective mutation. */
+  withExpectedUserId(id: string): PasarGuardClient {
+    return new PasarGuardClient({ baseUrl: this.#baseUrl, apiKey: this.#apiKey,
+      panelId: this.#panelId, validateDestination: this.#validateDestination, expectedUserId: id,
+      stableIdentity: this.#strictAbsence, requireGlobalAbsence: this.#requireGlobalAbsence, onVerifiedUser: this.#onVerifiedUser });
+  }
+
+  /** Dynamic-panel mutations use the upstream stable-ID endpoints, avoiding
+   * username replacement races. Preserve the working legacy endpoint contract. */
+  #mutationPath(username: string, suffix = ''): string | null {
+    if (this.#strictAbsence && this.#expectedUserId) {
+      if (!/^[0-9]{1,20}$/.test(this.#expectedUserId)) return null;
+      return `/api/user/by-id/${encodeURIComponent(this.#expectedUserId)}${suffix}`;
+    }
+    return `/api/user/by-username/${encodeURIComponent(username)}${suffix}`;
   }
 
   /**
    * GET /api/user/by-username/{name}.
-   * 404 maps to ok+null (the service genuinely does not exist yet);
+   * 404 maps to a typed not_found (only a certified resource absence);
    * every other failure is a typed error (never treated as "absent").
    */
   getUserByUsername(username: string): Promise<PanelResult<PanelUser | null>> {
     if (!/^[A-Za-z0-9]{3,32}$/.test(username)) {
       return Promise.resolve(failure(0, 'username_charset', 'rejected'));
     }
-    return this.#request<PanelUser | null>(
-      'GET',
-      `/api/user/by-username/${encodeURIComponent(username)}`,
-    );
+    return (async () => {
+      const result = await this.#request<PanelUser | null>('GET', `/api/user/by-username/${encodeURIComponent(username)}`);
+      // A renamed resource is not a deleted resource. On dynamic panels, a
+      // known stable ID must also be absent before destructive reconciliation.
+      if (!result.ok && result.kind === 'not_found' && this.#strictAbsence && this.#expectedUserId) {
+        const byId = await this.getUserById(this.#expectedUserId);
+        if (byId.ok) return failure(0,'resource_username_changed','identity');
+        if (byId.kind !== 'not_found') return byId;
+      }
+      return result;
+    })();
   }
 
   /**
@@ -330,9 +391,11 @@ export class PasarGuardClient {
     ) {
       return Promise.resolve(failure(0, 'hwid_limit_range', 'rejected'));
     }
+    const path = this.#mutationPath(username);
+    if (!path) return Promise.resolve(failure(0, 'user_id_charset', 'identity'));
     return this.#request<PanelUser | null>(
       'PUT',
-      `/api/user/by-username/${encodeURIComponent(username)}`,
+      path,
       patch,
     );
   }
@@ -352,9 +415,11 @@ export class PasarGuardClient {
     if (!/^[A-Za-z0-9]{3,32}$/.test(username)) {
       return Promise.resolve(failure(0, 'username_charset', 'rejected'));
     }
+    const path = this.#mutationPath(username, '/reset');
+    if (!path) return Promise.resolve(failure(0, 'user_id_charset', 'identity'));
     return this.#request<PanelUser | null>(
       'POST',
-      `/api/user/by-username/${encodeURIComponent(username)}/reset`,
+      path,
     );
   }
 
@@ -368,30 +433,52 @@ export class PasarGuardClient {
     if (!/^[A-Za-z0-9]{3,32}$/.test(username)) {
       return Promise.resolve(failure(0, 'username_charset', 'rejected'));
     }
+    const path = this.#mutationPath(username);
+    if (!path) return Promise.resolve(failure(0, 'user_id_charset', 'identity'));
     return this.#request<PanelUser | null>(
       'DELETE',
-      `/api/user/by-username/${encodeURIComponent(username)}`,
+      path,
     );
+  }
+
+  getCurrentAdmin(): Promise<PanelResult<Record<string, unknown> | null>> {
+    return this.#request('GET', '/api/admin', undefined, asRecord);
+  }
+  /** An OWN-scoped 404 may hide an existing resource, not prove absence. */
+  async canVerifyAbsence(): Promise<boolean> {
+    const result = await this.getCurrentAdmin();
+    if (!result.ok || !result.data || typeof result.data.username !== 'string' || result.data.status !== 'active') return false;
+    const data = result.data as {is_owner?:boolean;role?:{is_owner?:boolean;permissions?:{users?:{read?:unknown}}}};
+    const read = data.role?.permissions?.users?.read;
+    return data.is_owner === true || data.role?.is_owner === true || read === true ||
+      (typeof read === 'object' && read !== null && (read as {scope?:unknown}).scope === 2);
+  }
+  getGroup(id: number): Promise<PanelResult<Record<string, unknown> | null>> {
+    if (!Number.isSafeInteger(id) || id < 1) return Promise.resolve(failure(0,'group_invalid','rejected'));
+    return this.#request('GET', `/api/group/${id}`, undefined, asRecord);
   }
 
   async #request<T>(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     body?: unknown,
+    parser?: (json: unknown) => T | null,
   ): Promise<PanelResult<T | null>> {
     const url = `${this.#baseUrl}${path}`;
     let response: Response;
     try {
-      response = await fetch(url, {
-        method,
+      if (this.#validateDestination && !await this.#validateDestination()) return failure(0,'destination_not_public','bad_url');
+      const send = () => fetch(url, {
+        method, redirect: 'error',
         headers: {
-          'x-api-key': this.#apiKey, // header only; the value is never logged
+          'x-api-key': this.#apiKey,
           accept: 'application/json',
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(body === undefined ? {} : {'content-type': 'application/json'}),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined ? {} : {body: JSON.stringify(body)}),
         signal: AbortSignal.timeout(PANEL_TIMEOUT_MS),
       });
+      response = await send();
     } catch (error) {
       const name = error instanceof Error ? error.name : '';
       const kind: PanelErrorKind = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network';
@@ -401,12 +488,23 @@ export class PasarGuardClient {
 
     let json: unknown = null;
     try {
-      json = await response.json();
+      json = JSON.parse(await limitedText(response));
     } catch {
       json = null;
     }
 
     if (!response.ok) {
+      if (response.status === 404 && this.#strictAbsence) {
+        const detail = asRecord(json)?.['detail'];
+        // Dynamic panels must return the supported user absence contract.
+        // A proxy/route 404 is not evidence that the user was deleted.
+        if (!path.startsWith('/api/user/') || typeof detail !== 'string' || !/^user not found$/i.test(detail.trim())) {
+          return failure(404,'unverified_resource_absence','parse');
+        }
+        if (this.#requireGlobalAbsence && !await this.canVerifyAbsence()) {
+          return failure(404,'resource_absence_scope_unverified','permission');
+        }
+      }
       const detail = errorDetail(json);
       console.error(
         `pasarguard_http_error method=${method} path=${path.slice(0, 60)} status=${String(response.status)}`,
@@ -418,7 +516,17 @@ export class PasarGuardClient {
       if (response.status === 204 || json === null) {
         return failure(0, 'parse', 'parse'); // 2xx GET without usable body
       }
-      return { ok: true, data: (extractPanelUser(json) ?? null) as T | null };
+      const data = parser ? parser(json) : extractPanelUser(json) as T | null;
+      if (data === null) return failure(response.status,'unexpected_response','parse');
+      if (!parser) {
+        const user = data as PanelUser;
+        if (!user.id || !user.username) return failure(response.status,'missing_identity','parse');
+        if (path.startsWith('/api/user/by-username/') && !path.endsWith('/reset') && user.username !== decodeURIComponent(path.slice('/api/user/by-username/'.length))) return failure(response.status,'username_identity_changed','identity');
+        if (path.startsWith('/api/user/by-id/') && user.id !== path.slice('/api/user/by-id/'.length)) return failure(response.status,'external_identity_changed','identity');
+        if (this.#expectedUserId && user.id !== this.#expectedUserId) return failure(response.status,'external_identity_changed','identity');
+        try { await this.#onVerifiedUser?.(user); } catch { /* Cache failure must not change a verified API read. */ }
+      }
+      return {ok:true,data};
     }
 
     // POST/PUT/DELETE: a 2xx with an unusable envelope is still a SUCCESS
@@ -426,27 +534,15 @@ export class PasarGuardClient {
     // (for DELETE the confirmation read must come back 404).
     if (json === null) return { ok: true, data: null as T | null };
     const parsed = extractPanelUser(json);
+    if (parsed && this.#expectedUserId && parsed.id !== this.#expectedUserId) return failure(response.status,'external_identity_changed','identity');
     return { ok: true, data: parsed as T | null };
   }
 }
 
-/** Pull a safe one-line message out of a panel error body (no secrets echo). */
+/** Never persist or relay untrusted error strings. */
 function errorDetail(json: unknown): string {
   const record = asRecord(json);
-  if (!record) return 'no_body';
-  for (const key of ['detail', 'message', 'error', 'description']) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim() !== '') {
-      return value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
-    }
-  }
-  // FastAPI-style `detail` arrays: keep field names only.
-  const detail = record['detail'];
-  if (Array.isArray(detail) && detail.length > 0) {
-    const first = asRecord(detail[0]);
-    const loc = Array.isArray(first?.['loc']) ? (first['loc'] as unknown[]).join('.') : '';
-    const msg = typeof first?.['msg'] === 'string' ? first['msg'] : 'invalid_payload';
-    return `${msg} (${loc || 'unknown field'})`;
-  }
-  return 'no_message';
+  const detail = record?.['detail'];
+  // Preserve the existing name-rejection UX without echoing any input.
+  return typeof detail === 'string' && /username/i.test(detail) ? 'username_rejected' : 'panel_request_rejected';
 }

@@ -1,3 +1,4 @@
+import { acquireServiceLock,releaseServiceLock } from '../panels/registry.ts';
 /**
  * Phase 18 repurchase ladder (same existing PasarGuard user, reset + reconfigure):
  *   WAITING_REPURCHASE_MODE --repurchase_same--> WAITING_REPURCHASE_CONFIRMATION
@@ -143,6 +144,8 @@ async function repurchasableService(
   if (!service) {
     return { ok: false, toast: ctx.ui.t.serviceNotFound, clearSession: true };
   }
+  const migration=await ctx.db.prepare("SELECT id FROM service_migrations WHERE service_id=?1 AND state IN ('review','creating','verified','activating')").bind(service.id).first<{id:string}>();
+  if(migration)return {ok:false,toast:ctx.ui.t.repInProgressNotice(migration.id.slice(0,10))};
   // A free test is never repurchasable — enforced from the claims table
   // (DB-authoritative), so a forged/hand-edited selections blob can't change
   // the class. The repurchase buttons are already hidden in the detail.
@@ -488,6 +491,12 @@ export async function confirmRepurchase(
     return;
   }
   const snapshotName = serviceSnapshotData(guard.service).name ?? ctx.ui.t.accountNone;
+  const checkoutOwner=crypto.randomUUID();
+  if(!await acquireServiceLock(ctx.db,guard.service.id,checkoutOwner)){
+    await ctx.api.answerCallbackQuery(callbackQueryId,ctx.ui.t.catalogUnavailable,true);return;
+  }
+  let checkoutLocked=true;
+  try {
 
   // Wallet-full: plan → claim the debit against the DRAFT TOKEN (the only id
   // that exists before the row; exactly-once by NOT EXISTS in the same
@@ -588,6 +597,7 @@ export async function confirmRepurchase(
       ctx.ui.t.walletPaidRepurchase(result.order.id, ctx.ui.f.price(wallet.creditIrt, 'IRT')),
       backToMenuKeyboard(ctx.ui),
     );
+    await releaseServiceLock(ctx.db,guard.service.id,checkoutOwner);checkoutLocked=false;
     const provisioning = provisionOrder(
       { env: ctx.env, db: ctx.db, api: ctx.api },
       { orderId: result.order.id },
@@ -635,6 +645,7 @@ export async function confirmRepurchase(
     backToMenuKeyboard(ctx.ui),
   );
   await sendPaymentInstructions(ctx, result.order);
+  } finally {if(checkoutLocked)await releaseServiceLock(ctx.db,guard.service.id,checkoutOwner);}
 }
 
 /** `wlt:full|wlt:part` while WAITING_REPURCHASE_CONFIRMATION. */

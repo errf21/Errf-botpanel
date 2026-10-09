@@ -1,3 +1,4 @@
+import { getOrderById } from '../db/orders.ts';
 /**
  * Phase 9: service notification sweep. Driven ONLY by the cron-triggered
  * `scheduled` handler (or tests with an explicit now). Independent legs:
@@ -31,7 +32,7 @@
  */
 import type { Env, TelegramApiLike, NoticeKind } from '../types.ts';
 import { TelegramApi } from '../telegram/api.ts';
-import { loadPanelConfig, PasarGuardClient } from '../pasarguard/client.ts';
+import { resolveServicePanel,clientFor,acquireServiceLock,releaseServiceLock } from '../panels/registry.ts';
 import { fa } from '../telegram/texts.ts';
 import { FA_UI, uiFor } from '../telegram/i18n.ts';
 import { serviceNoticeKeyboard } from '../telegram/menu.ts';
@@ -293,14 +294,6 @@ export async function runServiceNotificationSweep(
   }
 
   /* ———— leg 2: usage90 (panel-backed, fail-closed + bounded) ———— */
-  const panel = loadPanelConfig(env);
-  if (!panel.ok) {
-    // Zero reads: every existing path stays untouched; the expiry leg above
-    // already ran (it has no panel dependency by design).
-    console.error(`service_notice_usage_leg_skipped reason=${panel.kind}`);
-    return result;
-  }
-  const client = new PasarGuardClient(panel.config);
   let usageCandidates: NoticeCandidate[] = [];
   try {
     usageCandidates = await listUsageCandidates(db, nowIso, USAGE_CHECK_LIMIT);
@@ -309,10 +302,18 @@ export async function runServiceNotificationSweep(
     return result;
   }
   for (const row of usageCandidates) {
+    const readOwner=crypto.randomUUID();
+    if(!await acquireServiceLock(db,row.order_id,readOwner))continue;
+    const current=await getOrderById(db,row.order_id);
+    if(!current || current.panel_deleted_at){await releaseServiceLock(db,row.order_id,readOwner);continue;}
+    row.panel_id=current.panel_id??null;row.pasarguard_user_id=current.pasarguard_user_id;
+    row.pasarguard_username=current.pasarguard_username;
     const username = row.pasarguard_username;
-    if (username === null) continue; // cannot happen (query), but never guess
+    if (username === null) {await releaseServiceLock(db,row.order_id,readOwner);continue;} // cannot happen (query), but never guess
     try {
-      const read = await client.getUserByUsername(username);
+      const panel=row.panel_id ? await resolveServicePanel(env,current) : null;
+      if (!panel?.ok) { await stampUsageCheck(db,{orderId:row.order_id,kind:'usage90',nowIso}); continue; }
+      const read = await clientFor(panel.config,row.pasarguard_user_id).getUserByUsername(username);
       if (!read.ok) {
         if (read.kind === 'not_found') {
           // Genuinely deleted on the panel: terminal, stops the poll loop.
@@ -366,135 +367,64 @@ export async function runServiceNotificationSweep(
       }
     } catch {
       console.error(`service_notice_row_failed orderId=${row.order_id.slice(0, 32)}`);
-    }
+    } finally {await releaseServiceLock(db,row.order_id,readOwner);}
   }
 
-  /* ———— leg 2b: free_test_usage90 (TEST ONLY, isolated budget) ————
-   * Mirrors usage90 at >=90% with MB-level remaining. Separate candidate
-   * set, PK rows and per-run budget — the paid pool above is never shared,
-   * starved or re-gated. Unexpired test services only. */
-  let freeTestUsageCandidates: NoticeCandidate[] = [];
-  try {
-    freeTestUsageCandidates = await listFreeTestUsageCandidates(db, nowIso, FREE_TEST_USAGE_CHECK_LIMIT);
-  } catch {
-    console.error('service_notice_freetest_usage_query_failed');
-  }
-  for (const row of freeTestUsageCandidates) {
-    const username = row.pasarguard_username;
-    if (username === null) continue;
-    try {
-      const read = await client.getUserByUsername(username);
-      if (!read.ok) {
-        if (read.kind === 'not_found') {
-          await markSkipped(db, { orderId: row.order_id, kind: 'free_test_usage90', nowIso });
-          await markPanelDeleted(db, {
-            orderId: row.order_id,
-            panelUsername: username,
-            via: 'system:notice-sweep',
-          });
-          result.skipped += 1;
-        } else {
-          await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_usage90' });
-        }
-        continue;
-      }
-      if (read.data === null || read.data.status === 'expired') {
-        await markSkipped(db, { orderId: row.order_id, kind: 'free_test_usage90', nowIso });
-        result.skipped += 1;
-        continue;
-      }
-      const decision = usageNoticeDecision(read.data.usedTraffic, read.data.dataLimit);
-      if (decision.kind !== 'due') {
-        await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_usage90' });
-        continue;
-      }
-      await ensurePending(db, row.order_id, 'free_test_usage90');
-      if (
-        !(await claimNotice(db, { orderId: row.order_id, kind: 'free_test_usage90', nowIso }))
-      ) {
-        continue;
-      }
-      const ui = uiFor(row.language);
-      const text = ui.t.freeTestUsageNotice(
-        noticeServiceName(row.selections, ui.t.noticeServiceFallback),
-        ui.f.digits(decision.percent),
-        ui.f.digits(decision.remainingMb),
-      );
-      const outcome = await sendAndBook(db, api, row, 'free_test_usage90', nowIso, text);
-      if (outcome === 'sent') {
-        result.freeTestUsageSent += 1;
-      } else {
-        result.sendFailed += 1;
-        console.error(`service_notice_send_failed orderId=${row.order_id.slice(0, 32)}`);
-      }
-    } catch {
-      console.error(`service_notice_row_failed orderId=${row.order_id.slice(0, 32)}`);
+  /* Trial legs keep independent budgets and notice claims. Their fresh remote
+   * snapshot is shared ONLY inside one service lease in this sweep. */
+  let trialUsageCandidates: NoticeCandidate[] = [], exhaustedCandidates: NoticeCandidate[] = [];
+  try { trialUsageCandidates = await listFreeTestUsageCandidates(db,nowIso,FREE_TEST_USAGE_CHECK_LIMIT); }
+  catch { console.error('service_notice_freetest_usage_query_failed'); }
+  try { exhaustedCandidates = await listFreeTestExhaustedCandidates(db,nowIso,FREE_TEST_EXHAUSTED_CHECK_LIMIT); }
+  catch { console.error('service_notice_freetest_exhausted_query_failed'); }
+  const trials = new Map<string,{row:NoticeCandidate;kinds:('free_test_usage90'|'free_test_exhausted')[]}>();
+  for (const [rows,kind] of [[trialUsageCandidates,'free_test_usage90'],[exhaustedCandidates,'free_test_exhausted']] as const) {
+    for (const row of rows) {
+      const entry = trials.get(row.order_id) ?? {row,kinds:[]};
+      entry.kinds.push(kind); trials.set(row.order_id,entry);
     }
   }
-
-  /* ———— leg 2c: free_test_exhausted (TEST ONLY, isolated budget) ————
-   * Binary quota gate (used >= limit) on live panel bytes. Distinct PK row
-   * from usage90, so both can fire independently for one service.
-   * Unexpired test services only; panel-expired stays terminal-skipped. */
-  let freeTestExhaustedCandidates: NoticeCandidate[] = [];
-  try {
-    freeTestExhaustedCandidates = await listFreeTestExhaustedCandidates(
-      db,
-      nowIso,
-      FREE_TEST_EXHAUSTED_CHECK_LIMIT,
-    );
-  } catch {
-    console.error('service_notice_freetest_exhausted_query_failed');
-  }
-  for (const row of freeTestExhaustedCandidates) {
-    const username = row.pasarguard_username;
-    if (username === null) continue;
+  for (const {row,kinds} of trials.values()) {
+    const owner=crypto.randomUUID();
+    if (!await acquireServiceLock(db,row.order_id,owner)) continue;
     try {
-      const read = await client.getUserByUsername(username);
-      if (!read.ok) {
-        if (read.kind === 'not_found') {
-          await markSkipped(db, { orderId: row.order_id, kind: 'free_test_exhausted', nowIso });
-          await markPanelDeleted(db, {
-            orderId: row.order_id,
-            panelUsername: username,
-            via: 'system:notice-sweep',
-          });
-          result.skipped += 1;
-        } else {
-          await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_exhausted' });
+      const current=await getOrderById(db,row.order_id);
+      if (!current || current.panel_deleted_at || !current.pasarguard_username) continue;
+      row.panel_id=current.panel_id??null; row.pasarguard_user_id=current.pasarguard_user_id;
+      row.pasarguard_username=current.pasarguard_username;
+      const panel=current.panel_id ? await resolveServicePanel(env,current) : null;
+      const read=panel?.ok ? await clientFor(panel.config,current.pasarguard_user_id).getUserByUsername(current.pasarguard_username) : null;
+      // Nothing carrying this observation survives the finally/lease boundary.
+      for (const kind of kinds) {
+        if (!read || !read.ok) {
+          if (read && !read.ok && read.kind==='not_found') {
+            await markSkipped(db,{orderId:row.order_id,kind,nowIso}); result.skipped++;
+          } else await stampUsageCheck(db,{orderId:row.order_id,kind,nowIso});
+          continue;
         }
-        continue;
+        if (!read.data || read.data.status==='expired') {
+          await markSkipped(db,{orderId:row.order_id,kind,nowIso}); result.skipped++; continue;
+        }
+        const decision=kind==='free_test_usage90' ? usageNoticeDecision(read.data.usedTraffic,read.data.dataLimit)
+          : freeTestExhaustedDue(read.data.usedTraffic,read.data.dataLimit);
+        if (decision.kind!=='due') { await stampUsageCheck(db,{orderId:row.order_id,kind,nowIso}); continue; }
+        await ensurePending(db,row.order_id,kind);
+        if (!await claimNotice(db,{orderId:row.order_id,kind,nowIso})) continue;
+        const ui=uiFor(row.language),name=noticeServiceName(row.selections,ui.t.noticeServiceFallback);
+        const usage=usageNoticeDecision(read.data.usedTraffic,read.data.dataLimit);
+        const text=kind==='free_test_usage90' && usage.kind==='due'
+          ? ui.t.freeTestUsageNotice(name,ui.f.digits(usage.percent),ui.f.digits(usage.remainingMb))
+          : ui.t.freeTestExhaustedNotice(name);
+        const outcome=await sendAndBook(db,api,row,kind,nowIso,text);
+        if (outcome==='sent') {
+          if (kind==='free_test_usage90') result.freeTestUsageSent++; else result.freeTestExhaustedSent++;
+        } else { result.sendFailed++; console.error(`service_notice_send_failed orderId=${row.order_id.slice(0,32)}`); }
       }
-      if (read.data === null || read.data.status === 'expired') {
-        await markSkipped(db, { orderId: row.order_id, kind: 'free_test_exhausted', nowIso });
-        result.skipped += 1;
-        continue;
-      }
-      const decision = freeTestExhaustedDue(read.data.usedTraffic, read.data.dataLimit);
-      if (decision.kind !== 'due') {
-        await stampUsageCheck(db, { orderId: row.order_id, nowIso, kind: 'free_test_exhausted' });
-        continue;
-      }
-      await ensurePending(db, row.order_id, 'free_test_exhausted');
-      if (
-        !(await claimNotice(db, { orderId: row.order_id, kind: 'free_test_exhausted', nowIso }))
-      ) {
-        continue;
-      }
-      const ui = uiFor(row.language);
-      const text = ui.t.freeTestExhaustedNotice(
-        noticeServiceName(row.selections, ui.t.noticeServiceFallback),
-      );
-      const outcome = await sendAndBook(db, api, row, 'free_test_exhausted', nowIso, text);
-      if (outcome === 'sent') {
-        result.freeTestExhaustedSent += 1;
-      } else {
-        result.sendFailed += 1;
-        console.error(`service_notice_send_failed orderId=${row.order_id.slice(0, 32)}`);
-      }
-    } catch {
-      console.error(`service_notice_row_failed orderId=${row.order_id.slice(0, 32)}`);
-    }
+      if (read && !read.ok && read.kind==='not_found') await markPanelDeleted(db,{
+        orderId:row.order_id,panelUsername:current.pasarguard_username,via:'system:notice-sweep',
+      });
+    } catch { console.error(`service_notice_row_failed orderId=${row.order_id.slice(0,32)}`); }
+    finally { await releaseServiceLock(db,row.order_id,owner); }
   }
   return result;
 }
