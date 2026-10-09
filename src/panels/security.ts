@@ -10,7 +10,7 @@ export function panelOrigin(raw: string): string | null {
     try {
         const u = new URL(raw);
         if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash ||
-            (u.pathname !== '/' && u.pathname !== '') || (u.port && u.port !== '443'))
+            (u.pathname !== '/' && u.pathname !== '') || (u.port && u.port !== '443' && u.port !== '8000'))
             return null;
         const host = u.hostname.toLowerCase();
         // DNS names only; prohibit literal IPs, local names and ambiguous numeric hosts.

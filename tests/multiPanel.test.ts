@@ -318,6 +318,7 @@ test('public origin validation and declared permission/group tests fail closed',
     assert.equal(await testPanel(env,'secondary'),'ok');
     for(const url of ['http://second.example.com','https://127.0.0.1','https://localhost','https://second.example.com@evil.com','https://second.example.com/path','https://second.example.com?key=x','https://second.example.com:444'])
         assert.equal(panelOrigin(url),null);
+    assert.equal(panelOrigin('https://second.example.com:8000'),'https://second.example.com:8000');
     const original=fetch;
     globalThis.fetch=(async (input,init)=>String(input).endsWith('/api/admin') ? Response.json({username:'bot-user',status:'active',role:{permissions:{users:{read:true}}}}) : original(input,init)) as typeof fetch;
     assert.equal(await testPanel(env,'secondary'),'required_user_permissions_unverified');
