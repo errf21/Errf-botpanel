@@ -81,10 +81,16 @@ export class TelegramApi implements TelegramApiLike {
     let response:Response;
     try {
       response=await fetch(`https://api.telegram.org/bot${this.#token}/sendMessage`,{
-        method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),
+        // workerd supports follow/manual only. Reject redirects explicitly:
+        // never follow a token-bearing Telegram URL to another destination.
+        method:'POST',redirect:'manual',signal:AbortSignal.timeout(8000),
         headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chatId,text,
           ...(buttons?{reply_markup:buttons}:{}),...(parseMode?{parse_mode:parseMode}:{})})});
     }catch{return {kind:'unknown',code:'telegram_transport_uncertain'};}
+    if(response.status>=300 && response.status<400){
+      await response.body?.cancel().catch(()=>undefined);
+      return {kind:'configuration',code:'telegram_redirect_rejected'};
+    }
     let data:{ok?:unknown;result?:{message_id?:unknown};error_code?:number;parameters?:{retry_after?:unknown}}|null=null;
     try{data=JSON.parse(await limitedText(response,131072));}catch{}
     if(response.ok&&data?.ok===true&&Number.isSafeInteger(data.result?.message_id)&&Number(data.result?.message_id)>0)
