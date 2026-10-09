@@ -55,14 +55,16 @@ export type PanelErrorKind =
   | 'server'
   | 'parse';
 
+export interface GroupStatusAttempt { method:'GET'; endpoint:string; httpStatus:number|null; category:PanelErrorKind|'ok'; }
+
 export type PanelResult<T> =
   | { ok: true; data: T }
-  | { ok: false; kind: PanelErrorKind; status: number; detail: string };
+  | { ok: false; kind: PanelErrorKind; status: number; detail: string; groupStatusEvidence?:GroupStatusAttempt[] };
 
 /** Verified upstream GroupsResponse; expose no inbound/user/admin metadata. */
 export interface PanelGroup { id:number; name:string; disabled?:boolean; statusVerified?:false; }
 interface GroupPage { groups:PanelGroup[]; total:number; }
-function groupPage(value:unknown, simple=false):GroupPage|null {
+function groupPage(value:unknown, simple=false, requireStatus=false):GroupPage|null {
   const object=asRecord(value);
   if (!object || !Array.isArray(object.groups) || !Number.isSafeInteger(object.total) || Number(object.total)<0 || Number(object.total)>1000 || object.groups.length>100) return null;
   const groups:PanelGroup[]=[],seen=new Set<number>();
@@ -70,8 +72,8 @@ function groupPage(value:unknown, simple=false):GroupPage|null {
     const group=asRecord(value);
     if(!group || typeof group.id!=='number' || !Number.isSafeInteger(group.id) || group.id<1 || group.id>1000000 ||
       typeof group.name!=='string' || !group.name.trim() || group.name.length>64 || /[\x00-\x1f\x7f]/.test(group.name) || seen.has(group.id))return null;
-    if(group.is_disabled!==undefined && typeof group.is_disabled!=='boolean')return null;
-    seen.add(group.id);groups.push({id:group.id,name:group.name,...(simple?{statusVerified:false as const}:group.is_disabled===true?{disabled:true}:{})});
+    if((requireStatus||group.is_disabled!==undefined) && typeof group.is_disabled!=='boolean')return null;
+    seen.add(group.id);groups.push({id:group.id,name:group.name,...(simple?{statusVerified:false as const}:requireStatus?{disabled:group.is_disabled as boolean}:group.is_disabled===true?{disabled:true}:{})});
   }
   return {groups,total:Number(object.total)};
 }
@@ -478,19 +480,34 @@ export class PasarGuardClient {
     return this.#request('GET', `/api/group/${id}`, undefined, asRecord, timeoutMs);
   }
 
-  /** Verify ONLY explicitly selected IDs through the official group-detail
-   * endpoint. Simple lists/templates cannot certify group disabled status. */
+  /** Authoritative read-only status: detail first, then documented FULL list
+   * on detail 403/404. Never use simple-list/template fields as status proof. */
   async verifyGroupStatuses(ids:unknown):Promise<PanelResult<{id:number;disabled:boolean}[]>> {
     if(!Array.isArray(ids)||!ids.length||ids.length>50||ids.some(id=>!Number.isSafeInteger(id)||id<1||id>1000000)||new Set(ids).size!==ids.length)
       return failure(0,'group_selection_invalid','rejected');
-    const deadline=Date.now()+20000,statuses:{id:number;disabled:boolean}[]=[];
+    const deadline=Date.now()+20000,statuses:{id:number;disabled:boolean}[]=[],attempts:GroupStatusAttempt[]=[];
+    const fail=(result:Extract<PanelResult<unknown>,{ok:false}>)=>({...result,groupStatusEvidence:attempts});
     for(const id of ids){
-      const remaining=deadline-Date.now();if(remaining<=0)return failure(0,'group_status_timeout','timeout');
-      const result=await this.getGroup(id,remaining);
-      if(!result.ok)return result;
-      if(Date.now()>=deadline)return failure(0,'group_status_timeout','timeout');
-      if(!result.data||result.data.id!==id||typeof result.data.is_disabled!=='boolean')return failure(200,'group_status_unexpected','parse');
-      statuses.push({id,disabled:result.data.is_disabled});
+      const remaining=deadline-Date.now();if(remaining<=0)return fail(failure(0,'group_status_timeout','timeout'));
+      const endpoint=`/api/group/${id}`;let observed:number|null=null;
+      const result=await this.#request('GET',endpoint,undefined,value=>{
+        const row=asRecord(value);return row&&row.id===id&&typeof row.is_disabled==='boolean'?{id,disabled:row.is_disabled}:null;
+      },remaining,status=>{observed=status;});
+      attempts.push({method:'GET',endpoint,httpStatus:observed,category:result.ok?'ok':result.kind});
+      if(!result.ok){
+        if((result.kind==='permission'&&result.status===403)||(result.kind==='not_found'&&result.status===404)){
+          const full=await this.#groupList(false,deadline,true,attempts);
+          if(!full.ok)return fail(full);
+          const byId=new Map(full.data.map(group=>[group.id,group]));
+          if(ids.some(selected=>!byId.has(selected)))return fail(failure(200,'selected_group_not_listed','not_found'));
+          // Every full-list row passed an explicit boolean check. Verify the
+          // complete selected set, not a partial prefix or a guessed default.
+          return {ok:true,data:ids.map(selected=>({id:selected,disabled:byId.get(selected)!.disabled!}))};
+        }
+        return fail(result);
+      }
+      if(Date.now()>=deadline){attempts.at(-1)!.category='timeout';return fail(failure(0,'group_status_timeout','timeout'));}
+      statuses.push(result.data!);
     }
     return {ok:true,data:statuses};
   }
@@ -504,21 +521,26 @@ export class PasarGuardClient {
     return !full.ok && full.kind==='permission' && full.status===403
       ? this.#groupList(true,deadline) : full;
   }
-  async #groupList(simple:boolean,deadline:number):Promise<PanelResult<PanelGroup[]>> {
+  async #groupList(simple:boolean,deadline:number,requireStatus=false,attempts?:GroupStatusAttempt[]):Promise<PanelResult<PanelGroup[]>> {
     const groups:PanelGroup[]=[],seen=new Set<number>();let total:number|null=null;
     for(let page=0;page<10;page++) {
       const remaining=deadline-Date.now();if(remaining<=0)return failure(0,'group_discovery_timeout','timeout');
-      const result=await this.#request('GET',`/api/groups${simple?'/simple':''}?offset=${groups.length}&limit=100`,undefined,value=>groupPage(value,simple),remaining);
+      const endpoint=`/api/groups${simple?'/simple':''}?offset=${groups.length}&limit=100`;let observed:number|null=null;
+      const result=await this.#request('GET',endpoint,undefined,value=>groupPage(value,simple,requireStatus),remaining,status=>{observed=status;});
+      attempts?.push({method:'GET',endpoint,httpStatus:observed,category:result.ok?'ok':result.kind});
+      if(Date.now()>=deadline){if(attempts)attempts.at(-1)!.category='timeout';return failure(0,'group_discovery_timeout','timeout');}
       if(!result.ok)return result;
-      if(!result.data || (total!==null && total!==result.data.total))return failure(0,'group_list_changed','parse');
+      const invalid=(detail:string)=>{if(attempts)attempts.at(-1)!.category='parse';return failure(0,detail,'parse');};
+      if(!result.data || (total!==null && total!==result.data.total))return invalid('group_list_changed');
       total=result.data.total;
       for(const group of result.data.groups) {
-        if(seen.has(group.id))return failure(0,'group_list_changed','parse');
+        if(seen.has(group.id))return invalid('group_list_changed');
         seen.add(group.id);groups.push(group);
       }
       if(groups.length===total)return {ok:true,data:groups};
-      if(groups.length>total || !result.data.groups.length)return failure(0,'group_list_incomplete','parse');
+      if(groups.length>total || !result.data.groups.length)return invalid('group_list_incomplete');
     }
+    if(attempts?.length)attempts.at(-1)!.category='parse';
     return failure(0,'group_list_incomplete','parse');
   }
 
@@ -528,6 +550,7 @@ export class PasarGuardClient {
     body?: unknown,
     parser?: (json: unknown) => T | null,
     timeoutMs = PANEL_TIMEOUT_MS,
+    onResponseStatus?:(status:number)=>void,
   ): Promise<PanelResult<T | null>> {
     const url = `${this.#baseUrl}${path}`;
     let response: Response;
@@ -553,6 +576,7 @@ export class PasarGuardClient {
       return failure(0, kind, kind);
     }
 
+    onResponseStatus?.(response.status);
     if (response.status>=300 && response.status<400) {
       // Never inspect Location/redirect bodies or resend a key to another URL.
       await response.body?.cancel().catch(()=>undefined);
@@ -562,7 +586,12 @@ export class PasarGuardClient {
     let json: unknown = null;
     try {
       json = JSON.parse(await limitedText(response));
-    } catch {
+    } catch(error) {
+      // A timed-out GET body is not an invalid-schema permission failure.
+      // Preserve mutation unknown-outcome semantics: never turn an already
+      // successful POST/PUT/DELETE response into a blind retry recommendation.
+      if(method==='GET'&&error instanceof Error&&['TimeoutError','AbortError'].includes(error.name))
+        return failure(response.status,'response_body_timeout','timeout');
       json = null;
     }
 
@@ -587,7 +616,7 @@ export class PasarGuardClient {
 
     if (method === 'GET') {
       if (response.status === 204 || json === null) {
-        return failure(0, 'parse', 'parse'); // 2xx GET without usable body
+        return failure(response.status, 'parse', 'parse'); // Preserve actual HTTP evidence
       }
       const data = parser ? parser(json) : extractPanelUser(json) as T | null;
       if (data === null) return failure(response.status,'unexpected_response','parse');

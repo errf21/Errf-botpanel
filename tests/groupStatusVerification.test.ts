@@ -82,7 +82,7 @@ test('one selected group proof cannot authorize another unverified selection',as
  b.checkboxes()[1].checked=true;b.checkboxes()[1].onchange();assert.equal(b.get('save').disabled,true);await b.get('verify-groups').onclick();assert.equal(b.get('save').disabled,false);
 });
 test('status verification failure returns no partially verified selection',async()=>{
- const existing=fetch;globalThis.fetch=async(input,init)=>new URL(String(input)).pathname==='/api/group/18'?Response.json({detail:KEY},{status:403}):existing(input,init);
+ const existing=fetch;globalThis.fetch=async(input,init)=>['/api/group/18','/api/groups'].includes(new URL(String(input)).pathname)?Response.json({detail:KEY},{status:403}):existing(input,init);
  const r=await verify(await open(),[17,18]);assert.equal(r.status,403);assert.deepEqual(await r.json(),{code:'group_details_permission_denied'});
 });
 test('unauthorized, stale, wrong-owner and missing-token status requests fail before outbound access',async()=>{
@@ -107,8 +107,8 @@ test('stale in-flight status response cannot authorize changed selected IDs',asy
  globalThis.fetch=async(input,init)=>{if(new URL(String(input)).pathname==='/api/group/17'){entered();await wait;}return existing(input,init);};
  const verifying=b.get('verify-groups').onclick();await start;b.checkboxes()[1].checked=true;b.checkboxes()[1].onchange();release();await verifying;assert.equal(b.get('save').disabled,true);
 });
-for(const status of [401,404,500])test('official status endpoint failure '+status+' is accurately mapped with no fallback',async()=>{
- simpleOnly({details:status});const r=await verify(await open(),[17]);assert.equal(r.status,status===401?401:502);assert.deepEqual(await r.json(),{code:status===401?'key_rejected':status===404?'group_not_found':'status_verification_failed'});assert.equal(calls.length,1);assert.equal(calls[0]!.path,'/api/group/17');
+for(const status of [401,404,500])test('official status endpoint failure '+status+' is accurately mapped without unauthorized fallback',async()=>{
+ simpleOnly({details:status});const r=await verify(await open(),[17]);assert.equal(r.status,status===401?401:status===404?403:502);assert.deepEqual(await r.json(),{code:status===401?'key_rejected':status===404?'group_details_permission_denied':'status_verification_failed'});assert.equal(calls.length,status===404?2:1);assert.equal(calls[0]!.path,'/api/group/17');
 });
 
 test('a failed fresh verification invalidates the previously verified selected status',async()=>{

@@ -91,12 +91,12 @@ async function verifyConfiguration(config: PanelConfig, groups: number[] | null)
             if(discovered.data.every(group=>group.disabled===true))return 'groups_none_enabled';
             return 'groups_missing';
         }
-        for (const group of groups) {
-            const read = await client.getGroup(group);
-            if(!read.ok)return `group_read_${read.kind}_${read.status}`;
-            if(!read.data || read.data.id!==group || typeof read.data.is_disabled!=='boolean')return `group_response_unexpected_${group}`;
-            if(read.data.is_disabled)return `group_disabled_${group}`;
+        const read=await client.verifyGroupStatuses(groups);
+        if(!read.ok){
+            if(read.kind==='parse'){const failed=read.groupStatusEvidence?.find(a=>a.category==='parse');const id=failed?.endpoint.match(/^\/api\/group\/(\d+)$/)?.[1]??groups[0];return `group_response_unexpected_${id}`;}
+            return `group_read_${read.kind}_${read.status}`;
         }
+        const disabled=read.data.find(group=>group.disabled);if(disabled)return `group_disabled_${disabled.id}`;
     }
     return 'ok';
 }
@@ -107,7 +107,7 @@ function groupFailureCode(result:string):string {
     if(result==='groups_invalid_configuration')return 'groups_invalid_configuration';
     if(/^group_disabled_/.test(result))return 'group_disabled';
     if(/^group_response_unexpected_/.test(result))return 'group_response_unexpected';
-    if(/^group_read_not_found_404$/.test(result))return 'group_not_found';
+    if(/^group_read_not_found_/.test(result))return 'group_not_found';
     if(result==='groups_status_unverified')return 'groups_status_unverified';
     if(result==='group_read_permission_403')return 'group_details_permission_denied';
     if(/^test_permission_/.test(result))return 'account_permission_denied';
@@ -229,7 +229,7 @@ export async function panelCallback(ctx: UpdateContext,data:string,callbackId:st
 export async function panelAdminRoute(request:Request,env:Env): Promise<Response> {
     const url=new URL(request.url),origin=adminOrigin(env);
     const headers={
-        'x-errf-panel-ui':'cloudflare-bindings-v1','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff',
+        'x-errf-panel-ui':'cloudflare-bindings-v1','x-errf-group-status-ui':'status-evidence-v1','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff',
         'content-security-policy':"default-src 'none'; script-src https://telegram.org 'nonce-panel-form'; style-src 'nonce-panel-form'; connect-src 'self'; frame-ancestors https://web.telegram.org; base-uri 'none'; form-action 'self'",
     };
     const reply=(status:number,message:string,code?:string)=>new Response(JSON.stringify({message,...(code?{code}:{})}),{status,headers:{...headers,'content-type':'application/json'}});
@@ -280,8 +280,14 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
                 const client=clientFor({baseUrl:destination,apiKey:supplied,validateDestination:()=>publicDestination(destination)});
                 if(body.verifyIds!==undefined){
                     const result=await client.verifyGroupStatuses(body.verifyIds);
-                    if(!result.ok)return fail(result.kind==='auth'?401:result.kind==='permission'?403:result.kind==='rejected'?400:502,
-                        result.kind==='auth'?'key_rejected':result.kind==='permission'?'group_details_permission_denied':result.kind==='rejected'?'groups_invalid_configuration':result.kind==='parse'?'group_response_unexpected':result.status===404?'group_not_found':result.kind==='bad_url'?'destination_check_failed':'status_verification_failed');
+                    if(!result.ok){
+                        const unavailable=result.kind==='not_found'&&result.status===404&&result.groupStatusEvidence?.at(-1)?.endpoint.startsWith('/api/groups');
+                        const code=unavailable?'status_api_unavailable':result.kind==='auth'?'key_rejected':result.kind==='permission'?'group_details_permission_denied':result.kind==='rejected'?'groups_invalid_configuration':result.kind==='parse'?'group_response_unexpected':result.kind==='not_found'?'group_not_found':result.kind==='bad_url'?'destination_check_failed':'status_verification_failed';
+                        const reasons:Record<string,string>={auth:'authentication_rejected',permission:'status_read_denied',parse:'response_schema_invalid',not_found:'requested_group_not_found',timeout:'request_timed_out',network:'network_failure',bad_url:'unsafe_destination',rejected:'selection_or_redirect_rejected',server:'upstream_server_error'};
+                        const attempts=result.groupStatusEvidence??[],last=attempts.at(-1);
+                        return new Response(JSON.stringify({code,...(body.diagnostics===true?{diagnostic:{category:result.kind,reason:unavailable?'status_api_unavailable':result.kind==='not_found'&&result.status===200?'requested_group_not_in_authorized_list':reasons[result.kind]??'configuration_unavailable',httpStatus:last?.httpStatus??(result.status||null),attempts}}:{})}),
+                            {status:result.kind==='auth'?401:result.kind==='permission'?403:result.kind==='rejected'?400:502,headers:{...headers,'content-type':'application/json'}});
+                    }
                     // Never publish a stale status response after another request
                     // consumes the save nonce or changes this panel's revision.
                     const stillValid=await env.DB.prepare("SELECT nonce FROM panel_admin_sessions WHERE nonce=?1 AND actor=?2 AND action='configure' AND expires_at>?3 AND panel_revision=?4")

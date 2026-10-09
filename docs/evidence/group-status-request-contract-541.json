@@ -1,0 +1,54 @@
+{
+  "repository": "https://github.com/PasarGuard/panel",
+  "tag": "v5.4.1",
+  "commit": "b56ffe369f542152c52c69733205baeaf3f6e4cd",
+  "files": [
+    {
+      "path": "app/routers/group.py",
+      "sha256": "1aaeb7c180a3e17207d2af378837ff2c32c9a6063482a4cc5ca82eaca5aa1a3e"
+    },
+    {
+      "path": "app/models/group.py",
+      "sha256": "bcac871bfa5e62b945aec23c8f26cd7e7cbc00f48064c83eb293d2bb735fef1b"
+    },
+    {
+      "path": "app/routers/dependencies/group.py",
+      "sha256": "b8e1a133b312561d692b18144164c92e17f3ebe7786fe6f62c64137388091888"
+    },
+    {
+      "path": "app/routers/user_template.py",
+      "sha256": "013b72f2e05ba6d195b0b493d2f5536bf1e14df15f52d2ece3b2ca049ba7ab44"
+    },
+    {
+      "path": "app/models/user_template.py",
+      "sha256": "244ba5934c6254875e437ea4b8c65140aea73e5e01d870cd196601ae70456126"
+    },
+    {
+      "path": "app/routers/authentication.py",
+      "sha256": "009dc2f1d0b111efbfd1852054dda157d99fd994c8dc40b0a77b456f9cc8b388"
+    },
+    {
+      "path": "app/models/admin_role.py",
+      "sha256": "284a1bd10169ebe551fa4076e516cb692f40f89ffaaadbc33a39b35e2e4b6a29"
+    },
+    {
+      "path": "app/operation/group.py",
+      "sha256": "38d11edb611b19ab4955248cdb54f527415ef9924c3d724de4ada4e5fe685019"
+    },
+    {
+      "path": "app/db/crud/group.py",
+      "sha256": "08d296d968968df9a23c2cbb9735cea9eb3c1eaf2c2bed0c956b913b0088d78b"
+    }
+  ],
+  "contracts": {
+    "detail_status": "GET /api/group/{id}; groups.read; numeric id plus boolean is_disabled",
+    "full_status": "GET /api/groups?offset=N&limit=100; groups.read; explicit group is_disabled",
+    "simple_list": "GET /api/groups/simple; groups.read_simple; numeric id/name only",
+    "template_status": "templates.read/ read_simple do not expose referenced group disabled status",
+    "authentication": "X-Api-Key header; unchanged",
+    "runtime_failure_evidence": "GET method, exact validated path, observed HTTP status or null if none, controlled category; no raw body or host/key",
+    "cloudflare_new_settings_required": false
+  },
+  "live_mrapanel_verified": false,
+  "deployed_worker_version_verified": false
+}

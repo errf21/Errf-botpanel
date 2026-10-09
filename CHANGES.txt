@@ -1,3 +1,64 @@
+ERRF BotPanel — Authoritative group-status reads and actual HTTP evidence
+======================================================================
+Exact current public base: 56e4c0b0ee83bff3bcfbd80010a69270f0ea8ecb (243 files).
+This tree's src files match the delivered 4b8508d implementation byte-for-byte;
+GitHub recorded the same implementation under 56e4c0b, not that local commit hash.
+Baseline executed: 967 passed. Final: 991 passed, no failures/skips/cancellations.
+TypeScript, Worker dry-run and 24 new Worker/runtime regressions passed.
+
+PROVEN CODE FIXES
+- Shared authoritative verifier tries GET /api/group/{numeric_id}; only on
+  detail 403/404, tries the documented FULL /api/groups paginated endpoint.
+- Full-list status is accepted only with exact requested IDs and explicit boolean
+  is_disabled for every parsed row. Simple-list/template status is never a proof.
+- Configuration save/Test uses the same resolver as selected-group verification,
+  avoiding a successful preview followed by rejection of the same authorized path.
+- Capture actual observed HTTP status per request. No response => null, not a
+  fictional HTTP 0. Malformed 2xx GETs retain status; GET-body timeouts are classified
+  as timeout. Successful mutation unknown-outcome semantics are unchanged.
+- Updated form requests sanitized diagnostic evidence: GET path, observed HTTP
+  status and controlled category. No raw body, host, credential or key is exposed.
+- Distinguish authorized-list absence from both endpoints returning route 404.
+  No response is used as evidence of service deletion.
+- Added non-secret status-evidence-v1 header/meta marker, preserving older markers.
+
+CLOUDFLARE FINDINGS
+No additional environment setting, secret or migration is required. MraPanel
+simple discovery and status reads use the same resolved origin and secret binding.
+Dashboard URL normalizes to HTTPS origin; /api is appended exactly once. Numeric
+IDs are passed through JSON and strict validation, never derived from group names.
+Missing keys/admin authentication fail BEFORE an upstream status request.
+Required existing names are documented in docs/en/group-status-request-evidence-fix.md.
+Production bindings and deployed Worker version were NOT inspected or verified.
+
+UPSTREAM LIMITATION
+Official inspected PasarGuard v5.4.1 exposes group status only through full list
+or detail endpoints (groups.read authorization). The simple group list provides
+id/name only; template is_disabled is not a group status. If both full-status reads
+are denied, no bot/Cloudflare setting can safely grant the missing upstream API
+capability. No nonexistent UI toggle or replacement key is assumed or requested.
+The previous groups_status_unverified Test can arise WITHOUT a detail request;
+use the updated authenticated status action's actual per-request evidence instead.
+Live MraPanel API, exact fork/version/key scopes and Cloudflare deployment remain
+unverified. No live key or destructive test was used.
+
+CHANGED FILES
+src/pasarguard/client.ts; src/panels/admin.ts; src/panels/form.ts;
+src/telegram/texts.ts; src/telegram/texts.en.ts;
+tests/groupStatusVerification.test.ts; tests/mrapanelGroupsWorkflow.test.ts;
+tests/groupStatusEvidence.test.ts (new, 23 tests);
+tests/groupStatusEvidenceRuntime.test.ts (new, real local workerd/D1);
+docs/evidence/group-status-request-contract-541.json (new);
+docs/en/group-status-request-evidence-fix.md (new);
+docs/en/mrapanel-group-configuration-fix.md (current report reference); CHANGES.txt.
+Existing tests retained; denied-access fixtures now deny BOTH authoritative paths.
+
+Preserve all PANEL_n bindings, legacy configuration, encryption key, allowlists,
+origin, D1 data and migrations. No dependencies/config changes, deployment,
+production secret/data changes, or production migrations were performed.
+
+--- Previous change notes (preserved) ---
+
 ERRF BotPanel — Permission-aware group discovery (base 4757113)
 ============================================================
 Exact base: 4757113f85c3720348ef08c5dea39e7639fceb00, 239 tracked files.
