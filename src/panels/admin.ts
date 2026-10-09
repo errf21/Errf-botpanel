@@ -166,7 +166,7 @@ export async function panelCallback(ctx: UpdateContext,data:string,callbackId:st
             const guidance=groupFailureText(ctx,result),origin=adminOrigin(ctx.env);
             let buttons:TelegramInlineKeyboardMarkup|undefined;
             if((result==='groups_missing'||result==='groups_status_unverified')&&origin){const token=await arm(ctx.env,ctx.actor.id,'configure',p.id);
-                buttons={inline_keyboard:[[{text:ctx.ui.t.panelTestChooseGroups,web_app:{url:`${origin}/admin/panels?nonce=${token}&lang=${ctx.ui.locale}`}}]]};}
+                buttons={inline_keyboard:[[{text:result==='groups_status_unverified'?ctx.ui.t.panelGroupsReviewStatus:ctx.ui.t.panelTestChooseGroups,web_app:{url:`${origin}/admin/panels?nonce=${token}&lang=${ctx.ui.locale}`}}]]};}
             await ctx.api.sendMessage(ctx.chatId,`Panel ${p.name}: ${result}. Read-only test; declared permissions and groups, not live mutation proof.`+(guidance?'\n\n'+guidance:'')+(!origin&&(result==='groups_missing'||result==='groups_status_unverified')?'\n'+ctx.ui.t.panelTestFormUnavailable:''),buttons);return;
         }
         if(action==='delete' && p.credential_binding && (await configuredPanels(ctx.env)).entries.some(e=>e.id===p.id)){await ctx.api.answerCallbackQuery(callbackId,'Remove its Worker declaration first; historical associations still block deletion.',true);return;}
@@ -277,7 +277,20 @@ export async function panelAdminRoute(request:Request,env:Env): Promise<Response
                 if((supplied==='' || supplied===undefined) && p?.credentials && destination===p.origin)
                     supplied=(await decrypt<{apiKey:string}>(env,`panel:${p.id}:${p.revision}:${p.origin}:credentials`,p.credentials)).apiKey;
                 if(!validApiKey(supplied))return fail(400,'key_required');
-                const result=await clientFor({baseUrl:destination,apiKey:supplied,validateDestination:()=>publicDestination(destination)}).listGroups();
+                const client=clientFor({baseUrl:destination,apiKey:supplied,validateDestination:()=>publicDestination(destination)});
+                if(body.verifyIds!==undefined){
+                    const result=await client.verifyGroupStatuses(body.verifyIds);
+                    if(!result.ok)return fail(result.kind==='auth'?401:result.kind==='permission'?403:result.kind==='rejected'?400:502,
+                        result.kind==='auth'?'key_rejected':result.kind==='permission'?'group_details_permission_denied':result.kind==='rejected'?'groups_invalid_configuration':result.kind==='parse'?'group_response_unexpected':result.status===404?'group_not_found':result.kind==='bad_url'?'destination_check_failed':'status_verification_failed');
+                    // Never publish a stale status response after another request
+                    // consumes the save nonce or changes this panel's revision.
+                    const stillValid=await env.DB.prepare("SELECT nonce FROM panel_admin_sessions WHERE nonce=?1 AND actor=?2 AND action='configure' AND expires_at>?3 AND panel_revision=?4")
+                        .bind(token,String(actor),Date.now(),session.panel_revision).first();
+                    const latest=await getPanel(env.DB,session.panel_id);
+                    if(!stillValid||(latest?.revision??0)!==session.panel_revision)return fail(409,'session_changed');
+                    return new Response(JSON.stringify({statuses:result.data}),{status:200,headers:{...headers,'content-type':'application/json'}});
+                }
+                const result=await client.listGroups();
                 if(!result.ok)return fail(result.kind==='auth'?401:result.kind==='permission'?403:502,
                     result.kind==='auth'?'key_rejected':result.kind==='permission'?'permission_denied':result.status===404?'unsupported_api':result.kind==='bad_url'?'destination_check_failed':'discovery_failed');
                 // A malicious upstream must not reflect our credential in a group name.

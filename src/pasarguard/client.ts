@@ -478,6 +478,23 @@ export class PasarGuardClient {
     return this.#request('GET', `/api/group/${id}`, undefined, asRecord, timeoutMs);
   }
 
+  /** Verify ONLY explicitly selected IDs through the official group-detail
+   * endpoint. Simple lists/templates cannot certify group disabled status. */
+  async verifyGroupStatuses(ids:unknown):Promise<PanelResult<{id:number;disabled:boolean}[]>> {
+    if(!Array.isArray(ids)||!ids.length||ids.length>50||ids.some(id=>!Number.isSafeInteger(id)||id<1||id>1000000)||new Set(ids).size!==ids.length)
+      return failure(0,'group_selection_invalid','rejected');
+    const deadline=Date.now()+20000,statuses:{id:number;disabled:boolean}[]=[];
+    for(const id of ids){
+      const remaining=deadline-Date.now();if(remaining<=0)return failure(0,'group_status_timeout','timeout');
+      const result=await this.getGroup(id,remaining);
+      if(!result.ok)return result;
+      if(Date.now()>=deadline)return failure(0,'group_status_timeout','timeout');
+      if(!result.data||result.data.id!==id||typeof result.data.is_disabled!=='boolean')return failure(200,'group_status_unexpected','parse');
+      statuses.push({id,disabled:result.data.is_disabled});
+    }
+    return {ok:true,data:statuses};
+  }
+
   /** Upstream v5.4.1: full list uses groups.read; the documented simple
    * list uses groups.read_simple. Only a 403 permits this capability fallback,
    * on the same validated origin/key. Simple IDs/names do NOT prove status. */

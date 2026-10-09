@@ -492,3 +492,12 @@ test('slow destination group validation is bounded and cannot proceed to remote 
  Date.now=()=>now;globalThis.fetch=async(input,init)=>{const response=await f(input,init);if(String(input).startsWith(origins[1]+'/api/group/'))now+=30001;return response;};
  try{const done=await confirmOnce(env,ADMIN.id,draft.confirmation_token);assert.equal(done.state,'creating');assert.equal(done.error,'destination_groups_unverified');assert.equal(users[1]!.size,0);assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(users[0]!.size,1);}finally{Date.now=clock;globalThis.fetch=f;}
 });
+
+// A user-template's status never establishes its groups' enabled status.
+for(const stage of ['preview','before_create'])test('simple-list/template visibility cannot bypass migration status denial at '+stage,async()=>{
+ const draft=stage==='before_create'?await propose():null,existing=fetch;
+ const before=raw.prepare('SELECT balance_irt FROM customers WHERE id=1').get()!.balance_irt;
+ globalThis.fetch=async(input,init)=>{const u=new URL(String(input));if(u.origin===origins[1]&&u.pathname.startsWith('/api/group/'))return Response.json({detail:'Group status denied'},{status:403});if(u.origin===origins[1]&&u.pathname==='/api/groups/simple')return Response.json({groups:[{id:71,name:'Destination group'}],total:1});if(u.origin===origins[1]&&u.pathname.startsWith('/api/user_template'))return Response.json({id:1,group_ids:[71],is_disabled:false});return existing(input,init);};
+ if(draft){const blocked=await confirmOnce(env,ADMIN.id,draft.confirmation_token);assert.equal(blocked.error,'destination_groups_unverified');assert.equal(blocked.state,'creating');}else await assert.rejects(propose(),/destination_groups_unverified/);
+ assert.equal(users[1]!.size,0);assert.equal(users[0]!.size,1);assert.equal((await getOrderById(db,service))!.panel_id,'legacy');assert.equal(raw.prepare('SELECT balance_irt FROM customers WHERE id=1').get()!.balance_irt,before);assert.equal(raw.prepare('SELECT COUNT(*) n FROM wallet_entries').get()!.n,1);assert.equal(calls.filter(c=>c.method==='DELETE'||c.method==='PUT'||c.method==='POST').length,0);
+});
